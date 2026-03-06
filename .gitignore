@@ -1,0 +1,8 @@
+
+Builds/
+juce_LibraryCode/
+
+.DS_Store
+
+*.user
+*.jucer.user
