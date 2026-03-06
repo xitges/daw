@@ -42,8 +42,16 @@ void Sequencer::setBPM(double newBpm)
 void Sequencer::setStep(int channel, int step, bool active)
 {
     if (channel >= 0 && channel < CHANNEL_COUNT &&
-        step    >= 0 && step    < STEP_COUNT)
+        step    >= 0 && step    < stepCount &&
+        step    <  MAX_STEPS)
         pattern[channel][step] = active;
+}
+
+void Sequencer::setStepCount(int newCount)
+{
+    stepCount = juce::jlimit(1, MAX_STEPS, newCount);
+    if (currentStep >= stepCount)
+        currentStep = 0;
 }
 
 void Sequencer::recalcSamplesPerStep()
@@ -68,7 +76,10 @@ void Sequencer::processBlock(int numSamples)
 
 void Sequencer::advanceStep()
 {
-    currentStep = (currentStep + 1) % STEP_COUNT;
+    if (stepCount <= 0)
+        return;
+
+    currentStep = (currentStep + 1) % stepCount;
     
     for (int ch = 0; ch < CHANNEL_COUNT; ++ch)
         if (pattern[ch][currentStep])

@@ -51,6 +51,16 @@ ToolbarComponent::ToolbarComponent()
     titleLabel.setColour(juce::Label::textColourId,
                          juce::Colour(0xffecf0f1));
     titleLabel.setJustificationType(juce::Justification::centredRight);
+
+    // 재생 모드 (Pattern / Song)
+    addAndMakeVisible(playModeBox);
+    playModeBox.addItem("Pattern", (int)PlayMode::Pattern + 1);
+    playModeBox.addItem("Song",    (int)PlayMode::Song + 1);
+    playModeBox.setSelectedId((int)PlayMode::Pattern + 1, juce::dontSendNotification);
+    playModeBox.addListener(this);
+    playModeBox.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff0f3460));
+    playModeBox.setColour(juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
+    playModeBox.setColour(juce::ComboBox::textColourId, juce::Colours::white);
 }
 
 ToolbarComponent::~ToolbarComponent() {}
@@ -73,7 +83,12 @@ void ToolbarComponent::resized()
     stopButton.setBounds  (area.removeFromLeft(44).reduced(4));
     recordButton.setBounds(area.removeFromLeft(44).reduced(4));
 
-    area.removeFromLeft(16); // 여백
+    area.removeFromLeft(12); // 여백
+
+    // 재생 모드 콤보박스
+    playModeBox.setBounds(area.removeFromLeft(90).reduced(2));
+
+    area.removeFromLeft(12); // 여백
 
     // BPM
     bpmLabel.setBounds (area.removeFromLeft(40).reduced(2));
@@ -101,4 +116,18 @@ void ToolbarComponent::sliderValueChanged(juce::Slider* slider)
 {
     if (slider == &bpmSlider)
         if (onBPMChanged) onBPMChanged(bpmSlider.getValue());
+}
+
+void ToolbarComponent::comboBoxChanged(juce::ComboBox* comboBoxThatHasChanged)
+{
+    if (comboBoxThatHasChanged == &playModeBox)
+    {
+        auto id = playModeBox.getSelectedId();
+        playMode = (id == (int)PlayMode::Song + 1)
+            ? PlayMode::Song
+            : PlayMode::Pattern;
+
+        if (onPlayModeChanged)
+            onPlayModeChanged(playMode);
+    }
 }

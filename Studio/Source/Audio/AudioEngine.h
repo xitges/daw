@@ -10,6 +10,7 @@
 
 #pragma once
 #include <JuceHeader.h>
+#include "../ProjectModel.h"
 #include "SamplePlayer.h"
 #include "Sequencer.h"
 
@@ -26,7 +27,12 @@ public:
     void play();
     void stop();
     void setBPM(double bpm);
-    bool isPlaying() const { return sequencer.isPlaying(); }
+    bool isPlaying() const;
+
+    void setPatternStepCount(int stepCount);
+
+    void setPlayMode(PlayMode mode);
+    void setProject(Project* projectPtr);
 
     // 샘플 관리
     void loadSample(int channelIndex, const juce::File& file);
@@ -55,6 +61,19 @@ private:
 
     std::array<SamplePlayer, 16> players;
     Sequencer sequencer;
+
+    Project* project = nullptr;
+    PlayMode playMode = PlayMode::Pattern;
+
+    // Song 모드용 타임라인 상태
+    bool  songPlaying        = false;
+    long  songSamplePosition = 0;
+    double bpm               = 140.0;
+
+    void processPatternMode(juce::AudioBuffer<float>& buffer, int numSamples, int numOutputChannels);
+    void processSongMode(juce::AudioBuffer<float>& buffer, int numSamples, int numOutputChannels);
+
+    const Pattern* findPatternById(int patternId) const;
 
     double sampleRate = 44100.0;
     int    bufferSize = 512;

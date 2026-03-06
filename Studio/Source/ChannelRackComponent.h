@@ -1,11 +1,12 @@
 #pragma once
 #include <JuceHeader.h>
 #include <functional>
+#include "ProjectModel.h"
 
 struct ChannelRow
 {
     juce::String name;
-    std::array<bool, 16> steps {};
+    std::array<bool, Pattern::kMaxSteps> steps {};
     bool muted  = false;
     bool soloed = false;
     juce::String sampleName = "Drop Sample";
@@ -33,10 +34,13 @@ public:
 
     bool getStep(int channel, int step) const
     {
-        if (channel < (int)channels.size())
-            return channels[channel].steps[step];
+        if (channel < (int)channels.size()
+            && step >= 0 && step < stepCount)
+            return channels[channel].steps[(size_t)step];
         return false;
     }
+
+    int getStepCount() const { return stepCount; }
 
     void setPlaybackStep(int step)
     {
@@ -53,12 +57,14 @@ public:
 private:
     std::vector<ChannelRow> channels;
     juce::TextButton addChannelBtn { "+ Add Channel" };
+    juce::ComboBox   stepCountBox;
+
     int dragHoverChannel = -1;
     int currentPlayStep  = -1;
+    int stepCount        = 16;
 
     static constexpr int ROW_HEIGHT    = 40;
     static constexpr int LABEL_WIDTH   = 160;
-    static constexpr int STEP_COUNT    = 16;
     static constexpr int HEADER_HEIGHT = 30;
 
     void addChannel(const juce::String& name);

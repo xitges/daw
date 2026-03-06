@@ -24,8 +24,11 @@ public:
     void stop();
     void setBPM(double bpm);
     void setStep(int channel, int step, bool active);
+    void setStepCount(int newCount);
+
     bool isPlaying() const { return playing; }
     int  getCurrentStep() const { return currentStep; }
+    int  getStepCount() const { return stepCount; }
 
     // AudioEngine 콜백에서 매 버퍼마다 호출
     void processBlock(int numSamples);
@@ -34,13 +37,14 @@ private:
     TriggerCallback onTrigger;
 
     static constexpr int CHANNEL_COUNT = 16;
-    static constexpr int STEP_COUNT    = 16;
+    static constexpr int MAX_STEPS     = 64;
 
-    std::array<std::array<bool, STEP_COUNT>, CHANNEL_COUNT> pattern {};
+    std::array<std::array<bool, MAX_STEPS>, CHANNEL_COUNT> pattern {};
 
     double sampleRate       = 44100.0;
     double bpm              = 140.0;
     int    currentStep      = 0;
+    int    stepCount        = 16;
     double samplesPerStep   = 0.0;
     double sampleCounter    = 0.0;
     bool   playing          = false;

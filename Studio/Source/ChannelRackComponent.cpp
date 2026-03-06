@@ -29,6 +29,21 @@ ChannelRackComponent::ChannelRackComponent()
         repaint();
     };
 
+    // 스텝 개수 선택 콤보박스 (16 / 32 / 64)
+    addAndMakeVisible(stepCountBox);
+    stepCountBox.addItem("16 Steps", 16);
+    stepCountBox.addItem("32 Steps", 32);
+    stepCountBox.addItem("64 Steps", 64);
+    stepCountBox.setSelectedId(16, juce::dontSendNotification);
+    stepCountBox.onChange = [this]
+    {
+        int newCount = stepCountBox.getSelectedId();
+        newCount = juce::jlimit(1, Pattern::kMaxSteps, newCount);
+        stepCount = newCount;
+        repaint();
+    };
+    stepCount = 16;
+
     startTimerHz(30);
 }
 
@@ -63,9 +78,9 @@ void ChannelRackComponent::drawHeader(juce::Graphics& g)
     g.setColour(juce::Colour(0xff16213e));
     g.fillRect(0, 0, getWidth(), HEADER_HEIGHT);
 
-    float stepW = (getWidth() - LABEL_WIDTH) / (float)STEP_COUNT;
+    float stepW = (getWidth() - LABEL_WIDTH) / (float)stepCount;
 
-    for (int i = 0; i < STEP_COUNT; ++i)
+    for (int i = 0; i < stepCount; ++i)
     {
         int x = LABEL_WIDTH + (int)(i * stepW);
 
@@ -118,13 +133,13 @@ void ChannelRackComponent::drawChannelLabels(juce::Graphics& g)
 void ChannelRackComponent::drawStepGrid(juce::Graphics& g)
 {
     int stepAreaX = LABEL_WIDTH;
-    float stepW   = (getWidth() - stepAreaX) / (float)STEP_COUNT;
+    float stepW   = (getWidth() - stepAreaX) / (float)stepCount;
 
     for (int ch = 0; ch < (int)channels.size(); ++ch)
     {
         int y = HEADER_HEIGHT + ch * ROW_HEIGHT;
 
-        for (int s = 0; s < STEP_COUNT; ++s)
+        for (int s = 0; s < stepCount; ++s)
         {
             int x = stepAreaX + (int)(s * stepW);
             int w = (int)stepW - 2;
@@ -162,7 +177,7 @@ void ChannelRackComponent::drawStepGrid(juce::Graphics& g)
 void ChannelRackComponent::mouseDown(const juce::MouseEvent& e)
 {
     int stepAreaX = LABEL_WIDTH;
-    float stepW   = (getWidth() - stepAreaX) / (float)STEP_COUNT;
+    float stepW   = (getWidth() - stepAreaX) / (float)stepCount;
 
     int x = e.getPosition().getX();
     int y = e.getPosition().getY() - HEADER_HEIGHT;
@@ -173,7 +188,7 @@ void ChannelRackComponent::mouseDown(const juce::MouseEvent& e)
     int s  = (int)((x - stepAreaX) / stepW);
 
     if (ch >= 0 && ch < (int)channels.size() &&
-        s  >= 0 && s  < STEP_COUNT)
+        s  >= 0 && s  < stepCount)
     {
         channels[ch].steps[s] = !channels[ch].steps[s];
         repaint();
@@ -186,9 +201,15 @@ void ChannelRackComponent::resized()
     int contentH  = HEADER_HEIGHT + totalRows * ROW_HEIGHT + 50;
     setSize(getWidth(), juce::jmax(contentH, getParentHeight()));
 
+    int controlsY = HEADER_HEIGHT + totalRows * ROW_HEIGHT + 8;
+
     addChannelBtn.setBounds(10,
-                            HEADER_HEIGHT + totalRows * ROW_HEIGHT + 8,
+                            controlsY,
                             140, 30);
+
+    stepCountBox.setBounds(160,
+                           controlsY,
+                           120, 30);
 }
 
 int ChannelRackComponent::getChannelIndexAt(int y) const
