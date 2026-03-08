@@ -3,6 +3,6 @@ Builds/
 juce_LibraryCode/
 
 .DS_Store
-
+DEVLOG.md
 *.user
 *.jucer.user
