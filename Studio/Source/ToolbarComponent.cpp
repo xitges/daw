@@ -20,9 +20,11 @@ ToolbarComponent::ToolbarComponent()
     stopButton.addListener(this);
     recordButton.addListener(this);
 
-    playButton  .setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2ecc71));
-    stopButton  .setColour(juce::TextButton::buttonColourId, juce::Colour(0xffe74c3c));
-    recordButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffe74c3c));
+    playButton  .setColour(juce::TextButton::buttonColourId, juce::Colour(0xffb0b0b8));
+    playButton  .setColour(juce::TextButton::textColourOffId, juce::Colour(0xff000000));
+    stopButton  .setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3c));
+    recordButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffff453a));
+    recordButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffffffff));
 
     // ---- Row 1: Play mode combo
     addAndMakeVisible(playModeBox);
@@ -30,7 +32,7 @@ ToolbarComponent::ToolbarComponent()
     playModeBox.addItem("Song",    (int)PlayMode::Song    + 1);
     playModeBox.setSelectedId((int)PlayMode::Pattern + 1, juce::dontSendNotification);
     playModeBox.addListener(this);
-    playModeBox.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff0f3460));
+    playModeBox.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff142014));
     playModeBox.setColour(juce::ComboBox::outlineColourId,    juce::Colours::transparentBlack);
     playModeBox.setColour(juce::ComboBox::textColourId,       juce::Colours::white);
 
@@ -41,7 +43,7 @@ ToolbarComponent::ToolbarComponent()
     bpmSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     bpmSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 18);
     bpmSlider.addListener(this);
-    bpmSlider.setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xff3498db));
+    bpmSlider.setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xffb0b0b8));
 
     addAndMakeVisible(bpmLabel);
     bpmLabel.setText("BPM", juce::dontSendNotification);
@@ -64,7 +66,7 @@ ToolbarComponent::ToolbarComponent()
 
     // ---- Row 2: Pattern combo (items populated via updatePatternList)
     addAndMakeVisible(patternBox);
-    patternBox.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff0f3460));
+    patternBox.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff142014));
     patternBox.setColour(juce::ComboBox::outlineColourId,    juce::Colours::transparentBlack);
     patternBox.setColour(juce::ComboBox::textColourId,       juce::Colours::white);
     patternBox.onChange = [this]
@@ -77,63 +79,63 @@ ToolbarComponent::ToolbarComponent()
     // ---- Row 2: New / Duplicate / Delete pattern buttons
     addAndMakeVisible(newPatBtn);
     newPatBtn.setTooltip("New pattern");
-    newPatBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a6b3a));
+    newPatBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff484850));
     newPatBtn.onClick = [this] { if (onNewPattern) onNewPattern(); };
 
     addAndMakeVisible(dupPatBtn);
     dupPatBtn.setTooltip("Duplicate pattern");
-    dupPatBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff0f3460));
+    dupPatBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff323232));
     dupPatBtn.onClick = [this] { if (onDuplicatePattern) onDuplicatePattern(); };
 
     addAndMakeVisible(delPatBtn);
     delPatBtn.setTooltip("Delete pattern");
-    delPatBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff6b1a1a));
+    delPatBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff4a1414));
     delPatBtn.onClick = [this] { if (onDeletePattern) onDeletePattern(); };
 
     addAndMakeVisible(renamePatBtn);
     renamePatBtn.setTooltip("Rename pattern");
-    renamePatBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2c2c54));
+    renamePatBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff323232));
     renamePatBtn.onClick = [this] { if (onRenamePattern) onRenamePattern(); };
 
     // ---- M4: File buttons (row 2, right side)
     addAndMakeVisible(newFileBtn);
-    newFileBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2c2c54));
+    newFileBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff323232));
     newFileBtn.onClick = [this] { if (onNewFile) onNewFile(); };
 
     addAndMakeVisible(openFileBtn);
-    openFileBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2c2c54));
+    openFileBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff323232));
     openFileBtn.onClick = [this] { if (onOpenFile) onOpenFile(); };
 
     addAndMakeVisible(saveFileBtn);
-    saveFileBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a4a1a));
+    saveFileBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff484850));
     saveFileBtn.onClick = [this] { if (onSaveFile) onSaveFile(); };
 
     addAndMakeVisible(saveAsFileBtn);
-    saveAsFileBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2c2c54));
+    saveAsFileBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff323232));
     saveAsFileBtn.onClick = [this] { if (onSaveFileAs) onSaveFileAs(); };
 
     addAndMakeVisible(exportBtn);
-    exportBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff4a2c6b));
+    exportBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a4a1a));
     exportBtn.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
     exportBtn.onClick = [this] { if (onExport) onExport(); };
 
     addAndMakeVisible(mixerBtn);
-    mixerBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a4060));
+    mixerBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff323232));
     mixerBtn.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
     mixerBtn.onClick = [this] { if (onToggleMixer) onToggleMixer(); };
 
     addAndMakeVisible(midiBtn);
-    midiBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3d1a60));
+    midiBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff323232));
     midiBtn.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
     midiBtn.onClick = [this] { if (onMidiButton) onMidiButton(); };
 
     addAndMakeVisible(launchpadBtn);
-    launchpadBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a5040));
+    launchpadBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff323232));
     launchpadBtn.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
     launchpadBtn.onClick = [this] { if (onToggleLaunchpad) onToggleLaunchpad(); };
 
     addAndMakeVisible(browserBtn);
-    browserBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a2c1a));
+    browserBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff323232));
     browserBtn.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
     browserBtn.onClick = [this] { if (onToggleBrowser) onToggleBrowser(); };
 }
@@ -161,15 +163,16 @@ void ToolbarComponent::updatePatternList(const std::vector<Pattern>& patterns, i
 
 void ToolbarComponent::paint(juce::Graphics& g)
 {
-    g.fillAll(juce::Colour(0xff16213e));
+    // macOS toolbar: dark surface
+    g.fillAll(juce::Colour(0xff1c1c1e));
 
-    // Divider between row 1 and row 2
-    g.setColour(juce::Colour(0xff0f3460));
+    // Row divider — subtle white separator
+    g.setColour(juce::Colours::white.withAlpha(0.07f));
     g.drawLine(0.0f, 40.0f, (float)getWidth(), 40.0f, 1.0f);
 
-    // Bottom border
-    g.drawLine(0.0f, (float)(getHeight() - 1), (float)getWidth(),
-               (float)(getHeight() - 1), 2.0f);
+    // Bottom border — green accent line
+    g.setColour(juce::Colour(0xffb0b0b8).withAlpha(0.5f));
+    g.fillRect(0.0f, (float)(getHeight() - 2), (float)getWidth(), 2.0f);
 }
 
 void ToolbarComponent::resized()

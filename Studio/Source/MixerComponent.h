@@ -53,15 +53,15 @@ public:
 
     void paint(juce::Graphics& g) override
     {
-        g.fillAll(juce::Colour(0xff111120));
+        g.fillAll(juce::Colour(0xff1c1c1e));
 
         // Separator before master
         const int masterX = numTracks * stripW;
-        g.setColour(juce::Colour(0xff3498db).withAlpha(0.4f));
-        g.drawLine((float)masterX, 0.0f, (float)masterX, (float)getHeight(), 2.0f);
+        g.setColour(juce::Colour(0xffb0b0b8).withAlpha(0.2f));
+        g.drawLine((float)masterX, 0.0f, (float)masterX, (float)getHeight(), 1.5f);
 
         // Strip borders
-        g.setColour(juce::Colour(0xff0f1422));
+        g.setColour(juce::Colour(0xff282828));
         for (int t = 0; t <= numTracks; ++t)
         {
             const int x = (t < numTracks) ? t * stripW : masterX;
@@ -99,7 +99,7 @@ private:
         labels[t]->setText(isMaster ? "Master" : ("T" + juce::String(t + 1)),
                            juce::dontSendNotification);
         labels[t]->setColour(juce::Label::textColourId,
-                              isMaster ? juce::Colour(0xff3498db) : juce::Colours::white);
+                              isMaster ? juce::Colour(0xffb0b0b8) : juce::Colour(0xfff0f0f2));
         labels[t]->setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
         labels[t]->setJustificationType(juce::Justification::centred);
         addAndMakeVisible(*labels[t]);
@@ -109,9 +109,9 @@ private:
         faders[t]->setRange(0.0, 1.5, 0.01);
         faders[t]->setValue(1.0, juce::dontSendNotification);
         faders[t]->setColour(juce::Slider::thumbColourId,
-                              isMaster ? juce::Colour(0xff3498db) : juce::Colour(0xff2ecc71));
-        faders[t]->setColour(juce::Slider::trackColourId,       juce::Colour(0xff2c3e50));
-        faders[t]->setColour(juce::Slider::backgroundColourId,  juce::Colour(0xff1a1a2e));
+                              isMaster ? juce::Colour(0xffe0e0e8) : juce::Colour(0xffb0b0b8));
+        faders[t]->setColour(juce::Slider::trackColourId,       juce::Colour(0xffb0b0b8));
+        faders[t]->setColour(juce::Slider::backgroundColourId,  juce::Colour(0xff2c2c2e));
         faders[t]->onValueChange = [this, t, isMaster]
         {
             const float v = (float)faders[t]->getValue();
@@ -126,7 +126,7 @@ private:
         pans[t]->setValue(0.0, juce::dontSendNotification);
         pans[t]->setColour(juce::Slider::thumbColourId,       juce::Colour(0xffe67e22));
         pans[t]->setColour(juce::Slider::trackColourId,       juce::Colour(0xffe67e22));
-        pans[t]->setColour(juce::Slider::backgroundColourId,  juce::Colour(0xff1a1a2e));
+        pans[t]->setColour(juce::Slider::backgroundColourId,  juce::Colour(0xff2c2c2e));
         pans[t]->onValueChange = [this, t, isMaster]
         {
             const float p = (float)pans[t]->getValue();
@@ -138,7 +138,7 @@ private:
         if (!isMaster)
         {
             muteBtns[t] = std::make_unique<juce::TextButton>("M");
-            muteBtns[t]->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2c2c54));
+            muteBtns[t]->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3c));
             muteBtns[t]->setClickingTogglesState(true);
             muteBtns[t]->onClick = [this, t]
             {
@@ -149,7 +149,7 @@ private:
             addAndMakeVisible(*muteBtns[t]);
 
             soloBtns[t] = std::make_unique<juce::TextButton>("S");
-            soloBtns[t]->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2c2c54));
+            soloBtns[t]->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3c));
             soloBtns[t]->setClickingTogglesState(true);
             soloBtns[t]->onClick = [this, t]
             {
@@ -161,7 +161,7 @@ private:
 
             // M14 — FX button
             fxBtns[t] = std::make_unique<juce::TextButton>("FX");
-            fxBtns[t]->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2c2c54));
+            fxBtns[t]->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3c));
             fxBtns[t]->setColour(juce::TextButton::textColourOnId, juce::Colours::white);
             fxBtns[t]->onClick = [this, t]
             {
@@ -203,13 +203,13 @@ private:
     {
         if (!muteBtns[t]) return;
         muteBtns[t]->setColour(juce::TextButton::buttonColourId,
-            muteBtns[t]->getToggleState() ? juce::Colour(0xffe74c3c) : juce::Colour(0xff2c2c54));
+            muteBtns[t]->getToggleState() ? juce::Colour(0xff5a1414) : juce::Colour(0xff3a3a3c));
     }
     void syncSoloColour(int t)
     {
         if (!soloBtns[t]) return;
         soloBtns[t]->setColour(juce::TextButton::buttonColourId,
-            soloBtns[t]->getToggleState() ? juce::Colour(0xfff39c12) : juce::Colour(0xff2c2c54));
+            soloBtns[t]->getToggleState() ? juce::Colour(0xff6b5000) : juce::Colour(0xff3a3a3c));
     }
 
 public:

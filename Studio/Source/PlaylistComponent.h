@@ -215,8 +215,8 @@ inline void PlaylistComponent::paint(juce::Graphics& g)
 
 inline void PlaylistComponent::drawBackground(juce::Graphics& g)
 {
-    g.fillAll(juce::Colour(0xff11111f));
-    g.setColour(juce::Colour(0xff0f3460));
+    g.fillAll(juce::Colour(0xff0f0f0f));
+    g.setColour(juce::Colour(0xff1c1c1e));
     g.fillRect(0, 0, getWidth(), headerHeight);
 }
 
@@ -228,7 +228,7 @@ inline void PlaylistComponent::drawTimeRuler(juce::Graphics& g)
     // Sub-bar grid lines
     if (snapDivisor > 1)
     {
-        g.setColour(juce::Colour(0xff3498db).withAlpha(0.15f));
+        g.setColour(juce::Colour(0xffb0b0b8).withAlpha(0.08f));
         for (int bar = 0; bar < totalBars; ++bar)
             for (int sub = 1; sub < snapDivisor; ++sub)
             {
@@ -240,11 +240,11 @@ inline void PlaylistComponent::drawTimeRuler(juce::Graphics& g)
     for (int bar = 0; bar < totalBars; ++bar)
     {
         const int x = bar * barWidth;
-        g.setColour(bar % 4 == 0 ? juce::Colour(0xff3498db).withAlpha(0.4f)
-                                  : juce::Colour(0xff2c3e50).withAlpha(0.6f));
+        g.setColour(bar % 4 == 0 ? juce::Colour(0xffb0b0b8).withAlpha(0.2f)
+                                  : juce::Colour(0xff383838).withAlpha(0.8f));
         g.drawLine((float)x, 0.0f, (float)x, (float)getHeight(), 1.0f);
 
-        g.setColour(juce::Colours::white.withAlpha(0.9f));
+        g.setColour(bar % 4 == 0 ? juce::Colour(0xfff0f0f2) : juce::Colour(0xff888892));
         g.drawText(juce::String(bar + 1), x + 2, 0, barWidth - 4, headerHeight,
                    juce::Justification::centredLeft);
     }
@@ -257,12 +257,15 @@ inline void PlaylistComponent::drawTracks(juce::Graphics& g)
     {
         const int trackY = headerHeight + t * (trackHeight + trackGap);
 
-        g.setColour(t % 2 == 0 ? juce::Colour(0xff1b1b30) : juce::Colour(0xff151528));
+        g.setColour(t % 2 == 0 ? juce::Colour(0xff1c1c1e) : juce::Colour(0xff161618));
         g.fillRect(0, trackY, getWidth(), trackHeight);
 
-        // Track header label area
-        g.setColour(juce::Colour(0xff0f3460));
+        // Track header label area — slightly elevated
+        g.setColour(juce::Colour(0xff2c2c2e));
         g.fillRect(0, trackY, 80, trackHeight);
+        // Right separator line
+        g.setColour(juce::Colours::white.withAlpha(0.06f));
+        g.drawLine(79.5f, (float)trackY, 79.5f, (float)(trackY + trackHeight), 1.0f);
 
         const juce::String name = (project != nullptr && t < (int)project->playlistTracks.size())
                                   ? project->playlistTracks[(size_t)t].name
@@ -283,9 +286,9 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
 {
     // Colour palette: cycle per patternId so different patterns look distinct
     static const juce::Colour palette[] = {
-        juce::Colour(0xff27ae60), juce::Colour(0xff2980b9),
-        juce::Colour(0xff8e44ad), juce::Colour(0xffd35400),
-        juce::Colour(0xff16a085), juce::Colour(0xffc0392b),
+        juce::Colour(0xff5c7090), juce::Colour(0xff4e6888),
+        juce::Colour(0xff6870a0), juce::Colour(0xff527080),
+        juce::Colour(0xff486890), juce::Colour(0xff687898),
     };
     constexpr int paletteSize = (int)(sizeof(palette) / sizeof(palette[0]));
 

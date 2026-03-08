@@ -20,7 +20,7 @@ ChannelRackComponent::ChannelRackComponent()
 
     // Add Channel button
     addAndMakeVisible(addChannelBtn);
-    addChannelBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff0f3460));
+    addChannelBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff484850));
     addChannelBtn.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
     addChannelBtn.onClick = [this]
     {
@@ -36,7 +36,7 @@ ChannelRackComponent::ChannelRackComponent()
     stepCountSlider.setSliderStyle(juce::Slider::IncDecButtons);
     stepCountSlider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 40, 24);
     stepCountSlider.setColour(juce::Slider::textBoxTextColourId,       juce::Colours::white);
-    stepCountSlider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff16213e));
+    stepCountSlider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff1c1c1e));
     stepCountSlider.setColour(juce::Slider::textBoxOutlineColourId,    juce::Colour(0xff0f3460));
     stepCountSlider.onValueChange = [this]
     {
@@ -64,26 +64,26 @@ void ChannelRackComponent::addChannel(const juce::String& name)
 
     // ---- Mute button
     row.muteBtn = std::make_unique<juce::TextButton>("M");
-    row.muteBtn->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2c2c54));
+    row.muteBtn->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff323232));
     row.muteBtn->setColour(juce::TextButton::textColourOnId, juce::Colours::white);
     row.muteBtn->onClick = [this, ch]
     {
         channels[ch].muted = !channels[ch].muted;
         channels[ch].muteBtn->setColour(juce::TextButton::buttonColourId,
-            channels[ch].muted ? juce::Colour(0xffe74c3c) : juce::Colour(0xff2c2c54));
+            channels[ch].muted ? juce::Colour(0xff5a1414) : juce::Colour(0xff323232));
         if (onMuteChanged) onMuteChanged(ch, channels[ch].muted);
     };
     addAndMakeVisible(*row.muteBtn);
 
     // ---- Solo button
     row.soloBtn = std::make_unique<juce::TextButton>("S");
-    row.soloBtn->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2c2c54));
+    row.soloBtn->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff323232));
     row.soloBtn->setColour(juce::TextButton::textColourOnId, juce::Colours::white);
     row.soloBtn->onClick = [this, ch]
     {
         channels[ch].soloed = !channels[ch].soloed;
         channels[ch].soloBtn->setColour(juce::TextButton::buttonColourId,
-            channels[ch].soloed ? juce::Colour(0xfff39c12) : juce::Colour(0xff2c2c54));
+            channels[ch].soloed ? juce::Colour(0xff6b5000) : juce::Colour(0xff323232));
         if (onSoloChanged) onSoloChanged(ch, channels[ch].soloed);
     };
     addAndMakeVisible(*row.soloBtn);
@@ -97,9 +97,9 @@ void ChannelRackComponent::addChannel(const juce::String& name)
     row.volSlider->setValue(row.volume, juce::dontSendNotification);
     row.volSlider->setColour(juce::Slider::thumbColourId,             juce::Colour(0xff3498db));
     row.volSlider->setColour(juce::Slider::trackColourId,             juce::Colour(0xff3498db));
-    row.volSlider->setColour(juce::Slider::backgroundColourId,        juce::Colour(0xff1a1a2e));
+    row.volSlider->setColour(juce::Slider::backgroundColourId,        juce::Colour(0xff2c2c2e));
     row.volSlider->setColour(juce::Slider::textBoxTextColourId,       juce::Colours::white);
-    row.volSlider->setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff16213e));
+    row.volSlider->setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff1c1c1e));
     row.volSlider->setColour(juce::Slider::textBoxOutlineColourId,    juce::Colour(0xff0f3460));
     row.volSlider->onValueChange = [this, ch]
     {
@@ -118,9 +118,9 @@ void ChannelRackComponent::addChannel(const juce::String& name)
     row.panSlider->setValue(row.pan, juce::dontSendNotification);
     row.panSlider->setColour(juce::Slider::thumbColourId,             juce::Colour(0xffe67e22));
     row.panSlider->setColour(juce::Slider::trackColourId,             juce::Colour(0xffe67e22));
-    row.panSlider->setColour(juce::Slider::backgroundColourId,        juce::Colour(0xff1a1a2e));
+    row.panSlider->setColour(juce::Slider::backgroundColourId,        juce::Colour(0xff2c2c2e));
     row.panSlider->setColour(juce::Slider::textBoxTextColourId,       juce::Colours::white);
-    row.panSlider->setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff16213e));
+    row.panSlider->setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff1c1c1e));
     row.panSlider->setColour(juce::Slider::textBoxOutlineColourId,    juce::Colour(0xff0f3460));
     row.panSlider->onValueChange = [this, ch]
     {
@@ -140,9 +140,9 @@ void ChannelRackComponent::addChannel(const juce::String& name)
     row.pitchSlider->setValue(row.pitch, juce::dontSendNotification);
     row.pitchSlider->setColour(juce::Slider::thumbColourId,             juce::Colour(0xff2ecc71));
     row.pitchSlider->setColour(juce::Slider::trackColourId,             juce::Colour(0xff2ecc71));
-    row.pitchSlider->setColour(juce::Slider::backgroundColourId,        juce::Colour(0xff1a1a2e));
+    row.pitchSlider->setColour(juce::Slider::backgroundColourId,        juce::Colour(0xff2c2c2e));
     row.pitchSlider->setColour(juce::Slider::textBoxTextColourId,       juce::Colours::white);
-    row.pitchSlider->setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff16213e));
+    row.pitchSlider->setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff1c1c1e));
     row.pitchSlider->setColour(juce::Slider::textBoxOutlineColourId,    juce::Colour(0xff0f3460));
     row.pitchSlider->onValueChange = [this, ch]
     {
@@ -244,7 +244,7 @@ void ChannelRackComponent::timerCallback()
 
 void ChannelRackComponent::paint(juce::Graphics& g)
 {
-    g.fillAll(juce::Colour(0xff1a1a2e));
+    g.fillAll(juce::Colour(0xff0f0f0f));
     drawHeader(g);
     drawChannelLabels(g);
     drawStepGrid(g);
@@ -252,7 +252,7 @@ void ChannelRackComponent::paint(juce::Graphics& g)
 
 void ChannelRackComponent::drawHeader(juce::Graphics& g)
 {
-    g.setColour(juce::Colour(0xff16213e));
+    g.setColour(juce::Colour(0xff1c1c1e));
     g.fillRect(0, 0, getWidth(), HEADER_HEIGHT);
 
     const float stepW = (getWidth() - LABEL_WIDTH) / (float)stepCount;
@@ -263,11 +263,11 @@ void ChannelRackComponent::drawHeader(juce::Graphics& g)
 
         if (i == currentPlayStep)
         {
-            g.setColour(juce::Colour(0xff3498db).withAlpha(0.4f));
+            g.setColour(juce::Colour(0xffb0b0b8).withAlpha(0.25f));
             g.fillRect(x, 0, (int)stepW, HEADER_HEIGHT);
         }
 
-        g.setColour(i % 4 == 0 ? juce::Colours::white : juce::Colours::grey);
+        g.setColour(i % 4 == 0 ? juce::Colour(0xfff0f0f2) : juce::Colour(0xff888892));
         g.setFont(juce::Font(juce::FontOptions().withHeight(12.0f)));
         g.drawText(juce::String(i + 1), x, 0, (int)stepW, HEADER_HEIGHT,
                    juce::Justification::centred);
@@ -282,9 +282,9 @@ void ChannelRackComponent::drawChannelLabels(juce::Graphics& g)
 
         // Row background
         if (i == dragHoverChannel)
-            g.setColour(juce::Colour(0xff2ecc71).withAlpha(0.3f));
+            g.setColour(juce::Colour(0xffb0b0b8).withAlpha(0.15f));
         else
-            g.setColour(i % 2 == 0 ? juce::Colour(0xff1e1e3a) : juce::Colour(0xff16213e));
+            g.setColour(i % 2 == 0 ? juce::Colour(0xff2c2c2e) : juce::Colour(0xff161618));
         g.fillRect(0, y, LABEL_WIDTH, ROW_HEIGHT);
 
         // Channel name (top half, left area)
@@ -298,29 +298,29 @@ void ChannelRackComponent::drawChannelLabels(juce::Graphics& g)
                                  channelTypes[(size_t)i] == ChannelType::Melodic);
         if (isMelodic)
         {
-            g.setColour(juce::Colour(0xff2ecc71).withAlpha(0.25f));
+            g.setColour(juce::Colour(0xffb0b0b8).withAlpha(0.12f));
             g.fillRoundedRectangle(6.0f, (float)(y + 23), 38.0f, 14.0f, 3.0f);
-            g.setColour(juce::Colour(0xff2ecc71));
+            g.setColour(juce::Colour(0xffb0b0b8));
             g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
             g.drawText("MELODIC", 6, y + 23, 38, 14, juce::Justification::centred);
         }
         else
         {
-            g.setColour(juce::Colour(0xff3498db));
+            g.setColour(juce::Colour(0xffc8c8d0));
             g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
             g.drawText(channels[(size_t)i].sampleName, 8, y + 24, 86, 16,
                        juce::Justification::centredLeft);
         }
 
         // Small labels left of sliders
-        g.setColour(juce::Colours::grey);
+        g.setColour(juce::Colour(0xff888892));
         g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         g.drawText("V", 88, y + 4,  8, 10, juce::Justification::centred);
         g.drawText("P", 88, y + 22, 8, 10, juce::Justification::centred);
         g.drawText("T", 88, y + 40, 8, 10, juce::Justification::centred);
 
         // Separator line
-        g.setColour(juce::Colour(0xff0f3460));
+        g.setColour(juce::Colour(0xff282828));
         g.drawLine(0.0f, (float)(y + ROW_HEIGHT), (float)LABEL_WIDTH,
                    (float)(y + ROW_HEIGHT), 1.0f);
     }
@@ -346,21 +346,26 @@ void ChannelRackComponent::drawStepGrid(juce::Graphics& g)
             if (channels[ch].steps[s])
             {
                 juce::Colour c = isCurrentStep
-                    ? juce::Colour(0xffffffff)
-                    : (s % 4 == 0 ? juce::Colour(0xff3498db) : juce::Colour(0xff2980b9));
+                    ? juce::Colour(0xff8fffb0)
+                    : (s % 4 == 0 ? juce::Colour(0xffe8e8f0) : juce::Colour(0xff9898a0));
                 g.setColour(c);
                 g.fillRoundedRectangle(x + 1, y + 2, w, h, 4.0f);
+
+                // Subtle inner highlight on top
+                g.setColour(juce::Colours::white.withAlpha(0.12f));
+                g.drawLine((float)(x + 3), (float)(y + 3),
+                           (float)(x + w - 1), (float)(y + 3), 1.0f);
             }
             else
             {
-                juce::Colour c = isCurrentStep ? juce::Colour(0xff555588)
-                                               : juce::Colour(0xff2c2c54);
+                juce::Colour c = isCurrentStep ? juce::Colour(0xff1e1e28)
+                                               : juce::Colour(0xff111118);
                 g.setColour(c);
                 g.fillRoundedRectangle(x + 1, y + 2, w, h, 4.0f);
 
                 if (!isCurrentStep)
                 {
-                    g.setColour(juce::Colour(0xff3d3d6b));
+                    g.setColour(juce::Colour(0xff2a2a30));
                     g.drawRoundedRectangle(x + 1, y + 2, w, h, 4.0f, 1.0f);
                 }
             }
