@@ -25,6 +25,10 @@ public:
     bool isLoaded() const { return fileBuffer.getNumSamples() > 0; }
     void clear()          { fileBuffer.setSize(0, 0); playPosition = -1.0; }
 
+    // Copy pre-decoded audio data in (used by song-mode sample cache — no disk I/O)
+    void loadBuffer(const juce::AudioBuffer<float>& src) { fileBuffer.makeCopyOf(src); playPosition = -1.0; }
+    const juce::AudioBuffer<float>& getBuffer() const    { return fileBuffer; }
+
     // M1.1 — Volume & Pan
     void  setVolume(float v)  { volume = juce::jlimit(0.0f, 1.0f, v); }
     void  setPan(float p)     { pan    = juce::jlimit(-1.0f, 1.0f, p); }

@@ -143,6 +143,10 @@ private:
     double patternBeatPos  = 0.0;
     int    activePatternId = 0;
     float  channelBasePitch[16] = {};   // stores user pitch-slider values per channel
+    bool   channelMuted [16]   = {};   // user mute state (independent of solo)
+    bool   channelSoloed[16]   = {};   // user solo state
+
+    void applyChannelMuteLogic();      // recompute SamplePlayer mute from muted[]+soloed[]
 
     // M5 — mixer intermediate buffers
     juce::AudioBuffer<float> stagingBuf;                         // temp per-channel render
@@ -153,6 +157,12 @@ private:
     void mixToOutput       (juce::AudioBuffer<float>& buffer, int numSamples);  // M5
 
     const Pattern* findPatternById(int patternId) const;
+
+    // Song mode: pre-decoded audio cache built before playback starts
+    // Key = patternId, Value = one AudioBuffer per channel (empty if no sample assigned)
+    std::map<int, std::array<juce::AudioBuffer<float>, 16>> songSampleCache;
+    int songPlayerPatternId[16] = {};   // which patternId is currently loaded in players[ch]
+    void buildSongSampleCache();        // called on message thread before song play/render
 
     double sampleRate = 44100.0;
     int    bufferSize = 512;

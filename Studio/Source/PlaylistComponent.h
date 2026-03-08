@@ -38,7 +38,7 @@ public:
 
     void setSnapDivisor(int d) { snapDivisor = d; repaint(); }
 
-    int getNeededWidth()  const { return 200 * barWidth; }
+    int getNeededWidth()  const { return (int)(juce::jmax(200.0, getTotalBars() + 8.0)) * barWidth; }
     int getNeededHeight() const { return headerHeight + getTrackCount() * (trackHeight + trackGap); }
 
     // M11 — horizontal zoom (pixels per bar)
@@ -132,17 +132,6 @@ private:
 
 inline PlaylistComponent::PlaylistComponent()
 {
-    PlaylistClip c1; c1.id=1; c1.patternId=1; c1.name="Intro Beat";
-    c1.trackIndex=0; c1.startBar=0;  c1.lengthBars=4; localDemoClips.push_back(c1);
-
-    PlaylistClip c2; c2.id=2; c2.patternId=1; c2.name="Main Beat";
-    c2.trackIndex=0; c2.startBar=4;  c2.lengthBars=8; localDemoClips.push_back(c2);
-
-    PlaylistClip c3; c3.id=3; c3.patternId=1; c3.name="Break";
-    c3.trackIndex=1; c3.startBar=8;  c3.lengthBars=4; localDemoClips.push_back(c3);
-
-    PlaylistClip c4; c4.id=4; c4.patternId=1; c4.name="Fill";
-    c4.trackIndex=2; c4.startBar=12; c4.lengthBars=2; localDemoClips.push_back(c4);
 }
 
 inline void PlaylistComponent::resized() {}

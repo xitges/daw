@@ -45,6 +45,7 @@ void AudioEngine::play()
     }
     else
     {
+        buildSongSampleCache();
         songSamplePosition = 0;
         songPlaying        = true;
     }
@@ -60,23 +61,32 @@ void AudioEngine::stop()
 
 // ---- Mute / Solo -------------------------------------------------------
 
+void AudioEngine::applyChannelMuteLogic()
+{
+    // Check if any channel is soloed
+    bool anySoloed = false;
+    for (int i = 0; i < 16; ++i)
+        if (channelSoloed[i]) { anySoloed = true; break; }
+
+    for (int i = 0; i < 16; ++i)
+    {
+        bool silenced = channelMuted[i] || (anySoloed && !channelSoloed[i]);
+        players[i].setMuted(silenced);
+    }
+}
+
 void AudioEngine::setChannelMuted(int ch, bool muted)
 {
-    if (ch >= 0 && ch < 16)
-        players[ch].setMuted(muted);
+    if (ch < 0 || ch >= 16) return;
+    channelMuted[ch] = muted;
+    applyChannelMuteLogic();
 }
 
 void AudioEngine::setChannelSolo(int ch, bool soloed)
 {
     if (ch < 0 || ch >= 16) return;
-
-    for (int i = 0; i < 16; ++i)
-    {
-        if (soloed)
-            players[i].setMuted(i != ch);
-        else
-            players[i].setMuted(false);
-    }
+    channelSoloed[ch] = soloed;
+    applyChannelMuteLogic();
 }
 
 // ---- M1.1 Volume / Pan -------------------------------------------------
@@ -248,6 +258,32 @@ void AudioEngine::unloadSample(int channelIndex)
 {
     if (channelIndex >= 0 && channelIndex < 16)
         players[channelIndex].clear();
+}
+
+void AudioEngine::buildSongSampleCache()
+{
+    songSampleCache.clear();
+    std::fill_n(songPlayerPatternId, 16, -1);
+
+    if (project == nullptr) return;
+
+    for (const auto& pat : project->patterns)
+    {
+        auto& cache = songSampleCache[pat.id];   // default-constructs 16 empty AudioBuffers
+
+        for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
+        {
+            if (pat.samplePaths[ch].isEmpty()) continue;
+
+            // Decode the file on the message thread into a temporary player,
+            // then copy the decoded buffer into the cache (no disk I/O at runtime)
+            SamplePlayer helper;
+            helper.prepare(sampleRate, bufferSize);
+            helper.loadFile(juce::File(pat.samplePaths[ch]));
+            if (helper.isLoaded())
+                cache[(size_t)ch].makeCopyOf(helper.getBuffer());
+        }
+    }
 }
 
 void AudioEngine::triggerChannel(int channelIndex)
@@ -527,8 +563,74 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                                                        (int)std::floor(pos01 * (double)pattern->stepCount));
 
             for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
-                if (pattern->steps[ch][localStep])
-                    players[ch].trigger();
+            {
+                if (!pattern->steps[ch][localStep]) continue;
+
+                // Swap to this pattern's sample if not already loaded
+                if (songPlayerPatternId[ch] != clip.patternId)
+                {
+                    auto cit = songSampleCache.find(clip.patternId);
+                    if (cit != songSampleCache.end()
+                        && cit->second[(size_t)ch].getNumSamples() > 0)
+                        players[ch].loadBuffer(cit->second[(size_t)ch]);
+                    else
+                        players[ch].clear();
+                    songPlayerPatternId[ch] = clip.patternId;
+                }
+
+                players[ch].trigger();
+            }
+        }
+    }
+
+    // ---- Melodic NoteEvent pass (beat-accurate, per-clip) ------------------
+    {
+        const double startBeatSong = (double)startSample / samplesPerBeat;
+        const double endBeatSong   = (double)endSample   / samplesPerBeat;
+
+        for (const auto& clip : project->playlistClips)
+        {
+            const Pattern* pat = findPatternById(clip.patternId);
+            if (pat == nullptr || pat->stepCount <= 0) continue;
+
+            const double patternBeats  = pat->stepCount * 0.25;
+            const double clipStartBeat = clip.startBar * 4.0;
+            const double clipEndBeat   = (clip.startBar + clip.lengthBars) * 4.0;
+
+            if (endBeatSong <= clipStartBeat || startBeatSong >= clipEndBeat) continue;
+
+            for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
+            {
+                if (project->channelTypes[ch] != ChannelType::Melodic) continue;
+
+                for (const auto& note : pat->notes[ch])
+                {
+                    const double notePhase = std::fmod((double)note.startBeat, patternBeats);
+                    const double relStart  = startBeatSong - clipStartBeat;
+                    const double loopIdxD  = (relStart - notePhase) / patternBeats;
+                    const int    kStart    = (loopIdxD < 0.0) ? 0 : (int)loopIdxD;
+
+                    for (int k = kStart; k <= kStart + 1; ++k)
+                    {
+                        const double fireBeat = clipStartBeat + k * patternBeats + notePhase;
+                        if (fireBeat < clipStartBeat || fireBeat >= clipEndBeat) continue;
+                        if (fireBeat < startBeatSong  || fireBeat >= endBeatSong)  continue;
+
+                        const SynthParams& sp = project->synthParams[(size_t)ch];
+                        if (sp.enabled)
+                        {
+                            const int noteLenSamples = (int)(note.lengthBeats * samplesPerBeat);
+                            polySynths[(size_t)ch].noteOn(note.pitch, note.velocity,
+                                                          sampleRate, sp, noteLenSamples);
+                        }
+                        else
+                        {
+                            players[ch].setPitch(channelBasePitch[ch] + (float)(note.pitch - 60));
+                            players[ch].trigger();
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -672,10 +774,12 @@ bool AudioEngine::renderToFile(const juce::File& outputFile, PlayMode mode, int 
 
     if (mode == PlayMode::Pattern)
     {
+        patternBeatPos = 0.0;   // must reset before offline render
         sequencer.start();
     }
     else
     {
+        buildSongSampleCache();
         songSamplePosition = 0;
         songPlaying        = true;
     }

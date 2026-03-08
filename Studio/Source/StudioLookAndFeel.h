@@ -243,20 +243,6 @@ public:
     // -------------------------------------------------------------------------
     // AlertWindow — dark modal dialog
     // -------------------------------------------------------------------------
-    juce::AlertWindow* createAlertWindow(const juce::String& title,
-                                         const juce::String& message,
-                                         const juce::String& btn1,
-                                         const juce::String& btn2,
-                                         const juce::String& btn3,
-                                         juce::MessageBoxIconType iconType,
-                                         int numButtons,
-                                         juce::Component* associatedComp) override
-    {
-        auto* aw = LookAndFeel_V4::createAlertWindow(
-            title, message, btn1, btn2, btn3, iconType, numButtons, associatedComp);
-        return aw;
-    }
-
     void drawAlertBox(juce::Graphics& g, juce::AlertWindow& aw,
                       const juce::Rectangle<int>& textArea,
                       juce::TextLayout& textLayout) override

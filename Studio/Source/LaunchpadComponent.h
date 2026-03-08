@@ -27,7 +27,6 @@ public:
     {
         setWantsKeyboardFocus(true);
 
-        recBtn.setButtonText("REC");
         recBtn.setColour(juce::TextButton::buttonColourId,  juce::Colour(0xff8b0000));
         recBtn.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xffdd0000));
         recBtn.setClickingTogglesState(true);
@@ -40,7 +39,6 @@ public:
         barsBox.setSelectedId(2, juce::dontSendNotification);
         addAndMakeVisible(barsBox);
 
-        convertBtn.setButtonText("> Pattern");
         convertBtn.setEnabled(false);
         convertBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a4060));
         convertBtn.onClick = [this] { onConvertClicked(); };
