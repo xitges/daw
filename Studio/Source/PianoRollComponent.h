@@ -41,6 +41,9 @@ public:
     // Fired when the user clicks a piano key — wire to AudioEngine::previewNote
     std::function<void(int midiPitch)> onKeyPreview;
 
+    // Fired when Space is pressed — wire to MainComponent play/stop toggle
+    std::function<void()> onPlayStopToggle;
+
     // -----------------------------------------------------------------------
     int getNeededWidth() const
     {
@@ -58,6 +61,7 @@ public:
         g.fillAll(juce::Colour(0xff1a1a2e));
         drawPianoKeys(g);
         drawGrid(g);
+        drawCursor(g);
         drawRuler(g);
         drawNotes(g);
         drawPlayhead(g);
@@ -123,10 +127,14 @@ public:
             }
         }
 
-        // Empty space → add new note
+        // Empty space → move cursor + add new note
         const int   pitch     = pitchFromY(pos.y);
         const float beat      = snapBeat(beatFromX(pos.x));
         if (pitch < minPitch || pitch > maxPitch) return;
+
+        // Move keyboard cursor to clicked position
+        cursorBeat  = beat;
+        cursorPitch = pitch;
 
         NoteEvent n;
         n.pitch       = pitch;
@@ -199,6 +207,15 @@ public:
     bool keyPressed(const juce::KeyPress& key) override
     {
         const int kc = key.getKeyCode();
+
+        // Space — play / stop (forward to main window)
+        if (kc == juce::KeyPress::spaceKey)
+        {
+            if (onPlayStopToggle) onPlayStopToggle();
+            return true;
+        }
+
+        // Octave shift
         if (kc == 'z' || kc == 'Z')
         {
             octaveOffset = juce::jmax(-3, octaveOffset - 1);
@@ -211,6 +228,91 @@ public:
             repaint();
             return true;
         }
+
+        // Cursor navigation — Arrow keys
+        if (kc == juce::KeyPress::leftKey)
+        {
+            cursorBeat = juce::jmax(0.0f, cursorBeat - snapBeats);
+            repaint();
+            scrollToCursor();
+            return true;
+        }
+        if (kc == juce::KeyPress::rightKey)
+        {
+            const float maxBeat = pattern ? (float)(pattern->stepCount) * 0.25f : 4.0f;
+            cursorBeat = juce::jmin(maxBeat - snapBeats, cursorBeat + snapBeats);
+            repaint();
+            scrollToCursor();
+            return true;
+        }
+        if (kc == juce::KeyPress::upKey)
+        {
+            cursorPitch = juce::jmin(maxPitch, cursorPitch + 1);
+            repaint();
+            scrollToCursor();
+            return true;
+        }
+        if (kc == juce::KeyPress::downKey)
+        {
+            cursorPitch = juce::jmax(minPitch, cursorPitch - 1);
+            repaint();
+            scrollToCursor();
+            return true;
+        }
+
+        // Enter — place note at cursor
+        if (kc == juce::KeyPress::returnKey)
+        {
+            if (pattern == nullptr) return true;
+            auto& noteList = pattern->notes[channel];
+            // Only add if no note already exists at this exact beat+pitch
+            bool exists = false;
+            for (const auto& n : noteList)
+            {
+                if (n.pitch == cursorPitch &&
+                    cursorBeat >= n.startBeat &&
+                    cursorBeat <  n.startBeat + n.lengthBeats)
+                { exists = true; break; }
+            }
+            if (!exists)
+            {
+                NoteEvent n;
+                n.pitch       = cursorPitch;
+                n.startBeat   = cursorBeat;
+                n.lengthBeats = snapBeats;
+                n.velocity    = 0.8f;
+                noteList.push_back(n);
+                if (onNotesChanged) onNotesChanged();
+                repaint();
+            }
+            // Advance cursor by one snap unit
+            const float maxBeat = (float)(pattern->stepCount) * 0.25f;
+            cursorBeat = juce::jmin(maxBeat - snapBeats, cursorBeat + snapBeats);
+            scrollToCursor();
+            return true;
+        }
+
+        // Delete / Backspace — remove note at cursor
+        if (kc == juce::KeyPress::deleteKey || kc == juce::KeyPress::backspaceKey)
+        {
+            if (pattern == nullptr) return true;
+            auto& noteList = pattern->notes[channel];
+            for (int i = (int)noteList.size() - 1; i >= 0; --i)
+            {
+                const auto& n = noteList[(size_t)i];
+                if (n.pitch == cursorPitch &&
+                    cursorBeat >= n.startBeat &&
+                    cursorBeat <  n.startBeat + n.lengthBeats)
+                {
+                    noteList.erase(noteList.begin() + i);
+                    if (onNotesChanged) onNotesChanged();
+                    repaint();
+                    break;
+                }
+            }
+            return true;
+        }
+
         return false;
     }
 
@@ -273,6 +375,10 @@ private:
     int   octaveOffset    = 0;
     bool  heldKeyState[256] = {};
     bool  keyboardHeldPitch[128] = {};
+
+    // Keyboard cursor for note entry (arrow key navigation)
+    float cursorBeat  = 0.0f;
+    int   cursorPitch = 60;
 
     int   hoverPitch      = -1;
     int   draggingIdx     = -1;
@@ -519,6 +625,53 @@ private:
                            barX, barY - 12, 28, 11,
                            juce::Justification::centredLeft);
             }
+        }
+    }
+
+    void drawCursor(juce::Graphics& g)
+    {
+        // Draw keyboard cursor as a bright outline rectangle in the grid
+        const int x = xFromBeat(cursorBeat);
+        const int y = yFromPitch(cursorPitch);
+        const int w = juce::jmax(4, (int)(snapBeats * pixelsPerBeat));
+        const int h = noteH;
+
+        // Soft fill
+        g.setColour(juce::Colour(0xffb0b0ff).withAlpha(0.18f));
+        g.fillRect(x, y, w, h);
+
+        // Bright outline
+        g.setColour(juce::Colour(0xffb0b0ff).withAlpha(0.85f));
+        g.drawRect(x, y, w, h, 1);
+
+        // Small triangle marker at top-left corner
+        juce::Path marker;
+        marker.addTriangle((float)x, (float)y,
+                           (float)(x + 5), (float)y,
+                           (float)x, (float)(y + 5));
+        g.fillPath(marker);
+    }
+
+    void scrollToCursor()
+    {
+        // Scroll the parent Viewport to keep cursor visible
+        if (auto* vp = findParentComponentOfClass<juce::Viewport>())
+        {
+            const int cx     = xFromBeat(cursorBeat);
+            const int cy     = yFromPitch(cursorPitch);
+            const int margin = 40;
+            const auto va    = vp->getViewArea();
+            int nx = vp->getViewPositionX();
+            int ny = vp->getViewPositionY();
+
+            if (cx < nx + margin)                        nx = juce::jmax(0, cx - margin);
+            else if (cx > nx + va.getWidth() - margin)   nx = cx - va.getWidth() + margin;
+
+            if (cy < ny + margin)                        ny = juce::jmax(0, cy - margin);
+            else if (cy + noteH > ny + va.getHeight() - margin)
+                ny = cy + noteH - va.getHeight() + margin;
+
+            vp->setViewPosition(nx, ny);
         }
     }
 

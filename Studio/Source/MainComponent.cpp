@@ -523,6 +523,23 @@ MainComponent::MainComponent()
             {
                 audioEngine.previewNote(ch, pitch);
             };
+            pianoRollWindow->content.pianoRoll.onPlayStopToggle = [this]
+            {
+                if (audioEngine.isPlaying())
+                {
+                    audioEngine.stop();
+                    audioEngine.allSynthNotesOff();
+                    channelRack.setPlaybackStep(-1);
+                    playlist.setPlayheadBar(-1.0);
+                    if (pianoRollWindow != nullptr)
+                        pianoRollWindow->content.pianoRoll.setPlayheadBeat(-1.0);
+                }
+                else
+                {
+                    syncPatternToEngine();
+                    audioEngine.play();
+                }
+            };
         }
 
         pianoRollWindow->setVisible(true);

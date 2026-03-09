@@ -660,15 +660,17 @@ void AudioEngine::processPatternMode(juce::AudioBuffer<float>& buffer,
                         if (fires)
                         {
                             // M8 — VST/AU plugin path
+                            const int tp = juce::jlimit(0, 127,
+                                note.pitch + (int)std::round(channelBasePitch[ch]));
                             if (instrumentPlugins[(size_t)ch] != nullptr)
                             {
                                 instrumentMidiBuffers[ch].addEvent(
-                                    juce::MidiMessage::noteOn(1, note.pitch, note.velocity), 0);
+                                    juce::MidiMessage::noteOn(1, tp, note.velocity), 0);
                                 // Schedule note-off at endBeat
                                 const double absoluteEnd = startBeat +
                                     (ns - loopStart + (loopEnd < loopStart ? patternBeats : 0.0))
                                     + note.lengthBeats;
-                                activePluginNotes[ch].push_back({ absoluteEnd, note.pitch });
+                                activePluginNotes[ch].push_back({ absoluteEnd, tp });
                             }
                             else
                             {
@@ -676,7 +678,7 @@ void AudioEngine::processPatternMode(juce::AudioBuffer<float>& buffer,
                                 if (sp.enabled)
                                 {
                                     const int noteLenSamples = (int)(note.lengthBeats * samplesPerBeat);
-                                    polySynths[(size_t)ch].noteOn(note.pitch, note.velocity,
+                                    polySynths[(size_t)ch].noteOn(tp, note.velocity,
                                                                    sampleRate, sp, noteLenSamples);
                                 }
                                 else
@@ -815,10 +817,12 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                         if (fireBeat < startBeatSong  || fireBeat >= endBeatSong)  continue;
 
                         const SynthParams& sp = project->synthParams[(size_t)ch];
+                        const int tp2 = juce::jlimit(0, 127,
+                            note.pitch + (int)std::round(channelBasePitch[ch]));
                         if (sp.enabled)
                         {
                             const int noteLenSamples = (int)(note.lengthBeats * samplesPerBeat);
-                            polySynths[(size_t)ch].noteOn(note.pitch, note.velocity,
+                            polySynths[(size_t)ch].noteOn(tp2, note.velocity,
                                                           sampleRate, sp, noteLenSamples);
                         }
                         else
