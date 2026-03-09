@@ -35,6 +35,17 @@ public:
 
     void setSnapBeats(float s) { snapBeats = s; repaint(); }
 
+    // Horizontal zoom: pixelsPerBeat in [40, 400]
+    void setZoom(int newPixelsPerBeat)
+    {
+        const int clamped = juce::jlimit(40, 400, newPixelsPerBeat);
+        if (clamped == pixelsPerBeat) return;
+        pixelsPerBeat = clamped;
+        updateSizeForZoom();
+        repaint();
+    }
+    int getZoom() const { return pixelsPerBeat; }
+
     // Fired after any note edit so MainComponent can mark dirty
     std::function<void()> onNotesChanged;
 
@@ -238,6 +249,41 @@ public:
         if (changed) repaint();
     }
 
+    void mouseWheelMove(const juce::MouseEvent& e,
+                        const juce::MouseWheelDetails& wheel) override
+    {
+        // Ctrl / Cmd + scroll → horizontal zoom anchored to cursor beat
+        if (e.mods.isCommandDown() || e.mods.isCtrlDown())
+        {
+            const int   oldMouseX      = e.getPosition().x;
+            const float beatUnderMouse = beatFromX(oldMouseX);
+
+            // Delta sensitivity: ~25px per wheel notch
+            const int newPPB = juce::jlimit(40, 400,
+                                            pixelsPerBeat + (int)(wheel.deltaY * 25.0f));
+            if (newPPB == pixelsPerBeat) return;
+
+            pixelsPerBeat = newPPB;
+            updateSizeForZoom();
+
+            // Re-anchor: keep the beat under the cursor at the same screen x
+            if (auto* vp = findParentComponentOfClass<juce::Viewport>())
+            {
+                const int newMouseX   = xFromBeat(beatUnderMouse);
+                const int scrollDelta = newMouseX - oldMouseX;
+                const int newScrollX  = juce::jmax(0, vp->getViewPositionX() + scrollDelta);
+                vp->setViewPosition(newScrollX, vp->getViewPositionY());
+            }
+
+            repaint();
+            return;
+        }
+
+        // No modifier — pass to Viewport for normal scrolling
+        if (auto* vp = findParentComponentOfClass<juce::Viewport>())
+            vp->mouseWheelMove(e.getEventRelativeTo(vp), wheel);
+    }
+
     void mouseEnter(const juce::MouseEvent&) override
     {
         grabKeyboardFocus();
@@ -438,13 +484,13 @@ private:
     static constexpr int   keyWidth      = 60;
     static constexpr int   headerH      = 24;
     static constexpr int   noteH        = 12;
-    static constexpr int   pixelsPerBeat = 80;
     static constexpr int   minPitch     = 21;   // A0
     static constexpr int   maxPitch     = 108;  // C8
+    int pixelsPerBeat = 80;   // mutable: changed by setZoom / Ctrl+scroll
     static constexpr int   resizeZone   = 8;    // px from right edge
     static constexpr int   velLaneH     = 72;   // velocity lane height
     static constexpr int   velLaneSep   = 4;    // gap between note area and vel lane
-    static constexpr float kMinNoteLen  = 0.0625f; // 1/64 note minimum length
+    static constexpr float kMinNoteLen  = 0.05f;   // minimum note length (matches finest snap)
 
     int   octaveOffset    = 0;
     bool  heldKeyState[256] = {};
@@ -469,6 +515,21 @@ private:
     float dragStartLen    = 0.0f;
     int   dragStartMouseX = 0;
     int   dragStartMouseY = 0;
+
+    // Resize the component to match the current pixelsPerBeat, preserving Viewport fit
+    void updateSizeForZoom()
+    {
+        if (auto* vp = findParentComponentOfClass<juce::Viewport>())
+        {
+            const int cw = juce::jmax(vp->getWidth(),  getNeededWidth());
+            const int ch = juce::jmax(vp->getHeight(), getNeededHeight());
+            setSize(cw, ch);
+        }
+        else
+        {
+            setSize(getNeededWidth(), getNeededHeight());
+        }
+    }
 
     // ---- coordinate helpers -----------------------------------------------
     int   yFromPitch(int pitch)  const { return headerH + (maxPitch - pitch) * noteH; }
@@ -708,6 +769,17 @@ private:
                            r.getX(), r.getY() - 11, 30, 10,
                            juce::Justification::centredLeft);
             }
+
+            // Step-count hint when resizing (especially useful with Alt = free resize)
+            if (i == draggingIdx && resizingNote)
+            {
+                const float steps     = n.lengthBeats / 0.25f;
+                const juce::String txt = juce::String(steps, 2) + " steps";
+                g.setColour(juce::Colours::white.withAlpha(0.92f));
+                g.setFont(juce::Font(juce::FontOptions().withHeight(9.5f)));
+                g.drawText(txt, r.getX(), r.getY() - 13, 70, 11,
+                           juce::Justification::centredLeft);
+            }
         }
     }
 
@@ -877,20 +949,21 @@ class PianoRollWindow : public juce::DocumentWindow
             viewport.setScrollBarThickness(8);
             addAndMakeVisible(viewport);
 
-            snapBox.addItem("1/16",  1);
-            snapBox.addItem("1/8",   2);
-            snapBox.addItem("1/4",   3);
-            snapBox.addItem("1/2",   4);
-            snapBox.addItem("1 Bar", 5);
-            snapBox.setSelectedId(1, juce::dontSendNotification);
+            snapBox.addItem("0.05",  1);   // finest: 0.05 beats
+            snapBox.addItem("1/16",  2);
+            snapBox.addItem("1/8",   3);
+            snapBox.addItem("1/4",   4);
+            snapBox.addItem("1/2",   5);
+            snapBox.addItem("1 Bar", 6);
+            snapBox.setSelectedId(2, juce::dontSendNotification);   // default: 1/16
             snapBox.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff0f3460));
             snapBox.setColour(juce::ComboBox::textColourId,       juce::Colours::white);
             snapBox.setColour(juce::ComboBox::outlineColourId,    juce::Colours::transparentBlack);
             snapBox.onChange = [this]
             {
-                static const float beats[] = { 0.25f, 0.5f, 1.0f, 2.0f, 4.0f };
+                static const float beats[] = { 0.05f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f };
                 const int idx = snapBox.getSelectedId() - 1;
-                if (idx >= 0 && idx < 5)
+                if (idx >= 0 && idx < 6)
                     pianoRoll.setSnapBeats(beats[idx]);
             };
             addAndMakeVisible(snapBox);
