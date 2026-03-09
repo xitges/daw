@@ -43,6 +43,22 @@ bool ProjectSerializer::save(const Project& project, const juce::File& file)
             chEl->setAttribute("volume",     (double)pat.channelVolume[ch]);
             chEl->setAttribute("pan",        (double)pat.channelPan[ch]);
             chEl->setAttribute("pitch",      (double)pat.channelPitch[ch]);
+            chEl->setAttribute("type",       (int)pat.channelTypes[ch]);
+            chEl->setAttribute("name",       pat.channelNames[ch]);
+
+            // SynthParams per channel
+            const auto& sp = pat.synthParams[ch];
+            chEl->setAttribute("spEnabled",   sp.enabled   ? 1 : 0);
+            chEl->setAttribute("spWaveform",  sp.waveform);
+            chEl->setAttribute("spAttack",    (double)sp.attack);
+            chEl->setAttribute("spDecay",     (double)sp.decay);
+            chEl->setAttribute("spSustain",   (double)sp.sustain);
+            chEl->setAttribute("spRelease",   (double)sp.release);
+            chEl->setAttribute("spCutoff",    (double)sp.cutoff);
+            chEl->setAttribute("spResonance", (double)sp.resonance);
+            chEl->setAttribute("spLfoRate",   (double)sp.lfoRate);
+            chEl->setAttribute("spLfoDepth",  (double)sp.lfoDepth);
+            chEl->setAttribute("spLfoTarget", sp.lfoTarget);
         }
 
         // NoteEvents (M3)
@@ -61,11 +77,9 @@ bool ProjectSerializer::save(const Project& project, const juce::File& file)
         }
     }
 
-    // ---- Channel rack (count + names)
+    // ---- Channel rack (count only; names/types/synthParams now stored per-Pattern/Ch)
     auto* crEl = root.createNewChildElement("ChannelRack");
     crEl->setAttribute("count", project.channelCount);
-    for (int ch = 0; ch < project.channelCount && ch < 16; ++ch)
-        crEl->setAttribute("name" + juce::String(ch), project.channelNames[ch]);
 
     // ---- Playlist clips
     auto* clipsEl = root.createNewChildElement("PlaylistClips");
@@ -94,13 +108,12 @@ bool ProjectSerializer::save(const Project& project, const juce::File& file)
         mEl->setAttribute("soloed", mt.soloed ? 1 : 0);
     }
 
-    // ---- Channel types + routing (M3/M5)
+    // ---- Channel routing only (types/names/synth moved to per-Pattern/Ch)
     auto* chCfgEl = root.createNewChildElement("ChannelConfig");
     for (int ch = 0; ch < 16; ++ch)
     {
         auto* ctEl = chCfgEl->createNewChildElement("Ch");
         ctEl->setAttribute("i",        ch);
-        ctEl->setAttribute("type",     (int)project.channelTypes[ch]);
         ctEl->setAttribute("mixTrack", project.channelMixerRouting[ch]);
     }
 
@@ -113,25 +126,7 @@ bool ProjectSerializer::save(const Project& project, const juce::File& file)
         tEl->setAttribute("colour", (int)t.colour.getARGB());
     }
 
-    // ---- SynthParams (M13)
-    auto* synthEl = root.createNewChildElement("SynthParams");
-    for (int ch = 0; ch < 16; ++ch)
-    {
-        const auto& sp = project.synthParams[(size_t)ch];
-        auto* sEl = synthEl->createNewChildElement("Ch");
-        sEl->setAttribute("i",          ch);
-        sEl->setAttribute("enabled",    sp.enabled   ? 1 : 0);
-        sEl->setAttribute("waveform",   sp.waveform);
-        sEl->setAttribute("attack",     (double)sp.attack);
-        sEl->setAttribute("decay",      (double)sp.decay);
-        sEl->setAttribute("sustain",    (double)sp.sustain);
-        sEl->setAttribute("release",    (double)sp.release);
-        sEl->setAttribute("cutoff",     (double)sp.cutoff);
-        sEl->setAttribute("resonance",  (double)sp.resonance);
-        sEl->setAttribute("lfoRate",    (double)sp.lfoRate);
-        sEl->setAttribute("lfoDepth",   (double)sp.lfoDepth);
-        sEl->setAttribute("lfoTarget",  sp.lfoTarget);
-    }
+    // SynthParams are now stored per-Pattern/Ch — no separate section needed
 
     // ---- FXParams (M14)
     auto* fxEl = root.createNewChildElement("FXParams");
@@ -236,10 +231,27 @@ bool ProjectSerializer::load(juce::File& file, Project& projectOut)
                 for (int s = 0; s < juce::jmin(bits.length(), Pattern::kMaxSteps); ++s)
                     pat.steps[ch][s] = (bits[s] == '1');
 
-                pat.samplePaths[ch]    = chEl->getStringAttribute("samplePath");
-                pat.channelVolume[ch]  = (float)chEl->getDoubleAttribute("volume", 0.8);
-                pat.channelPan[ch]     = (float)chEl->getDoubleAttribute("pan",    0.0);
-                pat.channelPitch[ch]   = (float)chEl->getDoubleAttribute("pitch",  0.0);
+                pat.samplePaths[ch]   = chEl->getStringAttribute("samplePath");
+                pat.channelVolume[ch] = (float)chEl->getDoubleAttribute("volume", 0.8);
+                pat.channelPan[ch]    = (float)chEl->getDoubleAttribute("pan",    0.0);
+                pat.channelPitch[ch]  = (float)chEl->getDoubleAttribute("pitch",  0.0);
+                pat.channelTypes[ch]  = (ChannelType)chEl->getIntAttribute("type", 0);
+                pat.channelNames[ch]  = chEl->getStringAttribute(
+                    "name", "Channel " + juce::String(ch + 1));
+
+                // SynthParams per channel (new format; fall back to defaults if absent)
+                auto& sp       = pat.synthParams[ch];
+                sp.enabled     = chEl->getIntAttribute("spEnabled",   0) != 0;
+                sp.waveform    = chEl->getIntAttribute("spWaveform",  1);
+                sp.attack      = (float)chEl->getDoubleAttribute("spAttack",    5.0);
+                sp.decay       = (float)chEl->getDoubleAttribute("spDecay",     80.0);
+                sp.sustain     = (float)chEl->getDoubleAttribute("spSustain",   0.6);
+                sp.release     = (float)chEl->getDoubleAttribute("spRelease",   200.0);
+                sp.cutoff      = (float)chEl->getDoubleAttribute("spCutoff",    4000.0);
+                sp.resonance   = (float)chEl->getDoubleAttribute("spResonance", 0.3);
+                sp.lfoRate     = (float)chEl->getDoubleAttribute("spLfoRate",   2.0);
+                sp.lfoDepth    = (float)chEl->getDoubleAttribute("spLfoDepth",  0.0);
+                sp.lfoTarget   = chEl->getIntAttribute("spLfoTarget", 0);
             }
 
             // NoteEvents (M3)
@@ -263,12 +275,19 @@ bool ProjectSerializer::load(juce::File& file, Project& projectOut)
         }
     }
 
-    // ---- Channel rack (count + names)
+    // ---- Channel rack (count only — names/types live in Pattern since refactor)
     if (auto* crEl = xml->getChildByName("ChannelRack"))
     {
         loaded.channelCount = juce::jlimit(1, 16, crEl->getIntAttribute("count", 3));
+
+        // Legacy: old files stored names here; migrate them into every pattern
         for (int ch = 0; ch < loaded.channelCount; ++ch)
-            loaded.channelNames[ch] = crEl->getStringAttribute("name" + juce::String(ch));
+        {
+            const juce::String legacyName = crEl->getStringAttribute("name" + juce::String(ch));
+            if (legacyName.isNotEmpty())
+                for (auto& p : loaded.patterns)
+                    p.channelNames[ch] = legacyName;
+        }
     }
     else
     {
@@ -334,15 +353,21 @@ bool ProjectSerializer::load(juce::File& file, Project& projectOut)
         }
     }
 
-    // ---- Channel types + routing (M3/M5)
+    // ---- Channel routing (M5); types now per-pattern
     if (auto* chCfgEl = xml->getChildByName("ChannelConfig"))
     {
         for (auto* ctEl : chCfgEl->getChildIterator())
         {
             const int ch = ctEl->getIntAttribute("i", -1);
             if (ch < 0 || ch >= 16) continue;
-            loaded.channelTypes[ch]        = (ChannelType)ctEl->getIntAttribute("type",     0);
             loaded.channelMixerRouting[ch] = ctEl->getIntAttribute("mixTrack", ch % 8);
+
+            // Legacy: old files stored type here; migrate to all patterns
+            if (ctEl->hasAttribute("type"))
+            {
+                const auto t = (ChannelType)ctEl->getIntAttribute("type", 0);
+                for (auto& p : loaded.patterns) p.channelTypes[ch] = t;
+            }
         }
     }
 
@@ -360,14 +385,14 @@ bool ProjectSerializer::load(juce::File& file, Project& projectOut)
         }
     }
 
-    // ---- SynthParams (M13)
+    // Legacy SynthParams section: migrate to all patterns (new files store sp per-Ch)
     if (auto* synthEl = xml->getChildByName("SynthParams"))
     {
         for (auto* sEl : synthEl->getChildIterator())
         {
             const int ch = sEl->getIntAttribute("i", -1);
             if (ch < 0 || ch >= 16) continue;
-            auto& sp       = loaded.synthParams[(size_t)ch];
+            SynthParams sp;
             sp.enabled     = sEl->getIntAttribute("enabled",   0) != 0;
             sp.waveform    = sEl->getIntAttribute("waveform",  1);
             sp.attack      = (float)sEl->getDoubleAttribute("attack",    5.0);
@@ -379,6 +404,7 @@ bool ProjectSerializer::load(juce::File& file, Project& projectOut)
             sp.lfoRate     = (float)sEl->getDoubleAttribute("lfoRate",   2.0);
             sp.lfoDepth    = (float)sEl->getDoubleAttribute("lfoDepth",  0.0);
             sp.lfoTarget   = sEl->getIntAttribute("lfoTarget", 0);
+            for (auto& p : loaded.patterns) p.synthParams[ch] = sp;
         }
     }
 

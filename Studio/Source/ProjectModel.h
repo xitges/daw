@@ -117,11 +117,18 @@ struct Pattern
     float channelPan   [kMaxChannels];
     float channelPitch [kMaxChannels];
 
+    // per-pattern channel identity & instrument settings
+    ChannelType  channelTypes  [kMaxChannels] = {};     // all Drum by default
+    juce::String channelNames  [kMaxChannels];
+    SynthParams  synthParams   [kMaxChannels] = {};
+
     Pattern()
     {
         std::fill_n(channelVolume, kMaxChannels, 0.8f);
         std::fill_n(channelPan,    kMaxChannels, 0.0f);
         std::fill_n(channelPitch,  kMaxChannels, 0.0f);
+        for (int i = 0; i < kMaxChannels; ++i)
+            channelNames[i] = "Channel " + juce::String(i + 1);
     }
 };
 
@@ -177,25 +184,18 @@ struct Project
 {
     double bpm = 140.0;
 
-    // channel rack state (shared across patterns — count and names)
-    int          channelCount = 3;
-    juce::String channelNames[16];
+    // channel rack state (global: only count is global; names/types live in Pattern)
+    int channelCount = 3;
 
     std::vector<Pattern>      patterns;
     std::vector<PlaylistClip>  playlistClips;
     std::vector<PlaylistTrack> playlistTracks;   // M11 — dynamic track rows
-
-    // M3 — channel types (global, not per-pattern)
-    std::array<ChannelType, 16> channelTypes        = {};   // all Drum by default
 
     // M5 — mixer
     std::array<int, 16>       channelMixerRouting  = {};   // channel → mixer track (0-7)
     std::vector<MixerTrack>   mixerTracks;                  // 8 tracks initialised in MainComponent
     float                     masterVolume         = 1.0f;
     float                     masterPan            = 0.0f;
-
-    // M13 — per-channel synth params
-    std::array<SynthParams, 16> synthParams = {};
 
     // M14 — per-mixer-track FX params
     std::array<FXParams, 8> fxParams = {};

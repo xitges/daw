@@ -22,9 +22,6 @@ MainComponent::MainComponent()
     // ---- Seed project with initial data
     project.bpm          = 70.0;
     project.channelCount = 3;
-    project.channelNames[0] = "Kick";
-    project.channelNames[1] = "Snare";
-    project.channelNames[2] = "HiHat";
 
     // M5 — default 8 mixer tracks
     for (int t = 0; t < 8; ++t)
@@ -50,6 +47,9 @@ MainComponent::MainComponent()
 
     Pattern p1;
     p1.id = 1; p1.name = "Pattern 1"; p1.lengthBars = 1; p1.stepCount = 16;
+    p1.channelNames[0] = "Kick";
+    p1.channelNames[1] = "Snare";
+    p1.channelNames[2] = "HiHat";
     // Default beat
     p1.steps[0][0] = p1.steps[0][4] = p1.steps[0][8] = p1.steps[0][12] = true;
     p1.steps[1][4] = p1.steps[1][12] = true;
@@ -382,17 +382,20 @@ MainComponent::MainComponent()
             [this, patId, ch, step, newState]() -> bool {
                 if (auto* p = findPattern(patId)) {
                     p->steps[ch][step] = newState;
-                    // Only update the one step in the UI — no full reload
-                    if (patId == activePatternId)
+                    if (patId == activePatternId) {
                         channelRack.setStep(ch, step, newState);
+                        audioEngine.setStepPattern(ch, step, newState);  // live sync
+                    }
                 }
                 markDirty(); return true;
             },
             [this, patId, ch, step, oldState]() -> bool {
                 if (auto* p = findPattern(patId)) {
                     p->steps[ch][step] = oldState;
-                    if (patId == activePatternId)
+                    if (patId == activePatternId) {
                         channelRack.setStep(ch, step, oldState);
+                        audioEngine.setStepPattern(ch, step, oldState);  // live sync
+                    }
                 }
                 markDirty(); return true;
             }));
@@ -555,7 +558,8 @@ MainComponent::MainComponent()
 
     channelRack.onChannelTypeChanged = [this](int ch, ChannelType t)
     {
-        project.channelTypes[ch] = t;
+        if (auto* pat = findPattern(activePatternId))
+            pat->channelTypes[ch] = t;
         channelRack.setChannelType(ch, t);
         markDirty();
     };
@@ -574,11 +578,13 @@ MainComponent::MainComponent()
         synthEditorWindow->setChannelName(
             juce::String(ch + 1));   // simple "1"-based label for now
 
-        synthEditorWindow->panel.loadParams(project.synthParams[(size_t)ch]);
+        if (auto* pat = findPattern(activePatternId))
+            synthEditorWindow->panel.loadParams(pat->synthParams[(size_t)ch]);
 
         synthEditorWindow->panel.onParamsChanged = [this, ch]
         {
-            synthEditorWindow->panel.applyToParams(project.synthParams[(size_t)ch]);
+            if (auto* pat = findPattern(activePatternId))
+                synthEditorWindow->panel.applyToParams(pat->synthParams[(size_t)ch]);
             markDirty();
         };
 
@@ -888,7 +894,7 @@ void MainComponent::selectPattern(int id)
 
     activePatternId = id;
 
-    // Load new pattern into channel rack and restore its samples
+    // Load new pattern into channel rack, samples, and sync steps to engine immediately
     if (auto* newPat = findPattern(activePatternId))
     {
         channelRack.loadPattern(*newPat);
@@ -900,6 +906,12 @@ void MainComponent::selectPattern(int id)
             else
                 audioEngine.unloadSample(ch);
         }
+
+        // Sync step pattern to engine so it plays correctly immediately
+        audioEngine.setPatternStepCount(newPat->stepCount);
+        for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
+            for (int s = 0; s < newPat->stepCount; ++s)
+                audioEngine.setStepPattern(ch, s, newPat->steps[ch][s]);
     }
 
     toolbar.updatePatternList(project.patterns, activePatternId);
@@ -964,9 +976,11 @@ void MainComponent::reloadProjectIntoUI()
     // Set active pattern to first in list
     activePatternId = project.patterns.empty() ? 1 : project.patterns.front().id;
 
-    // Restore channel count and names, then load pattern data
+    // Restore channel count (names/types come from the pattern via loadPattern)
     {
-        channelRack.resetToChannelCount(project.channelCount, project.channelNames);
+        const juce::String* names = project.patterns.empty()
+            ? nullptr : project.patterns.front().channelNames;
+        channelRack.resetToChannelCount(project.channelCount, names);
     }
 
     // Load first pattern into channel rack and restore its samples
@@ -1019,9 +1033,7 @@ void MainComponent::reloadProjectIntoUI()
             project.playlistTracks.push_back(pt);
         }
 
-    // M3 — sync channel types to channel rack
-    for (int ch = 0; ch < 16; ++ch)
-        channelRack.setChannelType(ch, project.channelTypes[ch]);
+    // M3 — channel types are now per-pattern; loadPattern (above) already applied them
 
     // M8 — unload any previously active plugins, then reload from project
     for (int ch = 0; ch < 16; ++ch)
@@ -1142,12 +1154,14 @@ void MainComponent::openProject()
         });
 }
 
-// Sync channel rack's channel count + names into the project model before saving
+// Sync channel rack's channel count + names/types into the project model before saving.
+// Names & types live in the active pattern, so saveToPattern handles them.
 void MainComponent::syncChannelRackToProject()
 {
     project.channelCount = channelRack.getChannelCount();
-    for (int ch = 0; ch < project.channelCount && ch < 16; ++ch)
-        project.channelNames[ch] = channelRack.getChannelName(ch);
+    // Save current rack state (including names/types) into the active pattern
+    if (auto* pat = findPattern(activePatternId))
+        channelRack.saveToPattern(*pat);
 }
 
 void MainComponent::saveProject()

@@ -45,9 +45,24 @@ void AudioEngine::play()
     }
     else
     {
-        buildSongSampleCache();
+        // Stop any previous loader
+        if (cacheLoader_ != nullptr)
+        {
+            cacheLoader_->signalThreadShouldExit();
+            cacheLoader_->waitForThreadToExit(2000);
+        }
+
         songSamplePosition = 0;
-        songPlaying        = true;
+        songSampleCache.clear();
+        std::fill_n(songPlayerPatternId, 16, -1);
+
+        cacheLoader_ = std::make_unique<CacheLoader>(*this);
+        cacheLoader_->onDone = [this]
+        {
+            songPlaying = true;
+            if (onSongCacheReady) onSongCacheReady();
+        };
+        cacheLoader_->startThread();
     }
 }
 
@@ -56,7 +71,12 @@ void AudioEngine::stop()
     if (playMode == PlayMode::Pattern)
         sequencer.stop();
     else
+    {
         songPlaying = false;
+        // Abort any in-progress background cache build
+        if (cacheLoader_ != nullptr && cacheLoader_->isThreadRunning())
+            cacheLoader_->signalThreadShouldExit();
+    }
 }
 
 // ---- Mute / Solo -------------------------------------------------------
@@ -165,12 +185,13 @@ void AudioEngine::previewNote(int ch, int midiPitch)
 {
     if (ch < 0 || ch >= 16) return;
     // If channel has synth enabled, use PolySynth; otherwise use sample player
-    if (project && project->synthParams[(size_t)ch].enabled)
+    const Pattern* activePat = findPatternById(activePatternId);
+    if (activePat && activePat->synthParams[(size_t)ch].enabled)
     {
         const double samplesPerBeat = sampleRate * 60.0 / bpm;
         const int noteLenSamples = (int)(0.25 * samplesPerBeat);  // 16th note preview
         polySynths[(size_t)ch].noteOn(midiPitch, 0.8f, sampleRate,
-                                       project->synthParams[(size_t)ch], noteLenSamples);
+                                       activePat->synthParams[(size_t)ch], noteLenSamples);
     }
     else
     {
@@ -301,7 +322,8 @@ void AudioEngine::triggerChannel(int channelIndex)
     // If a synth is enabled on this channel, trigger a synth voice at the
     // pitch-slider note (channelBasePitch semitone offset from C4=60).
     // This lets Drum-mode channels use the synth engine with the step grid.
-    if (project != nullptr && project->synthParams[(size_t)channelIndex].enabled)
+    const Pattern* activePat2 = findPatternById(activePatternId);
+    if (activePat2 != nullptr && activePat2->synthParams[(size_t)channelIndex].enabled)
     {
         const int   midiPitch = juce::jlimit(0, 127,
                                     60 + (int)std::round(channelBasePitch[channelIndex]));
@@ -309,7 +331,7 @@ void AudioEngine::triggerChannel(int channelIndex)
                                     (int)(0.25 * sampleRate * 60.0 / bpm)); // 1/16 note
         polySynths[(size_t)channelIndex].noteOn(
             midiPitch, 0.8f, sampleRate,
-            project->synthParams[(size_t)channelIndex], noteLen);
+            activePat2->synthParams[(size_t)channelIndex], noteLen);
         return;
     }
 
@@ -406,12 +428,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 }
                 else
                 {
-                    const bool useSynth = (project != nullptr) &&
-                                           project->synthParams[(size_t)ch].enabled;
+                    const Pattern* midiPat = findPatternById(activePatternId);
+                    const bool useSynth = (midiPat != nullptr) &&
+                                           midiPat->synthParams[(size_t)ch].enabled;
                     if (useSynth)
                     {
                         polySynths[(size_t)ch].noteOn(pitch, vel, sampleRate,
-                                                       project->synthParams[(size_t)ch], 0);
+                                                       midiPat->synthParams[(size_t)ch], 0);
                     }
                     else
                     {
@@ -629,7 +652,7 @@ void AudioEngine::processPatternMode(juce::AudioBuffer<float>& buffer,
 
                 for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
                 {
-                    if (project->channelTypes[ch] != ChannelType::Melodic) continue;
+                    if (pat->channelTypes[ch] != ChannelType::Melodic) continue;
 
                     // M8 — flush pending note-offs for plugin channels
                     if (instrumentPlugins[(size_t)ch] != nullptr)
@@ -674,7 +697,7 @@ void AudioEngine::processPatternMode(juce::AudioBuffer<float>& buffer,
                             }
                             else
                             {
-                                const SynthParams& sp = project->synthParams[(size_t)ch];
+                                const SynthParams& sp = pat->synthParams[(size_t)ch];
                                 if (sp.enabled)
                                 {
                                     const int noteLenSamples = (int)(note.lengthBeats * samplesPerBeat);
@@ -801,7 +824,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
 
             for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
             {
-                if (project->channelTypes[ch] != ChannelType::Melodic) continue;
+                if (pat->channelTypes[ch] != ChannelType::Melodic) continue;
 
                 for (const auto& note : pat->notes[ch])
                 {
@@ -816,7 +839,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                         if (fireBeat < clipStartBeat || fireBeat >= clipEndBeat) continue;
                         if (fireBeat < startBeatSong  || fireBeat >= endBeatSong)  continue;
 
-                        const SynthParams& sp = project->synthParams[(size_t)ch];
+                        const SynthParams& sp = pat->synthParams[(size_t)ch];
                         const int tp2 = juce::jlimit(0, 127,
                             note.pitch + (int)std::round(channelBasePitch[ch]));
                         if (sp.enabled)
@@ -889,8 +912,9 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples)
         // M8 — VST/AU instrument plugin takes priority over synth / sample player
         const bool usePlugin = (instrumentPlugins[(size_t)ch] != nullptr);
         // M13 — PolySynth if synth enabled and no plugin
-        const bool useSynth  = !usePlugin && (project != nullptr) &&
-                                project->synthParams[(size_t)ch].enabled;
+        const Pattern* mixPat = findPatternById(activePatternId);
+        const bool useSynth  = !usePlugin && (mixPat != nullptr) &&
+                                mixPat->synthParams[(size_t)ch].enabled;
 
         if (usePlugin)
         {
@@ -915,7 +939,7 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples)
             float* L = stagingBuf.getWritePointer(0);
             float* R = stagingBuf.getWritePointer(1);
             polySynths[(size_t)ch].renderNextBlock(L, R, safe, sampleRate,
-                                                    project->synthParams[(size_t)ch]);
+                                                    mixPat->synthParams[(size_t)ch]);
         }
         else
         {

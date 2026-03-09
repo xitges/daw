@@ -4,5 +4,6 @@ juce_LibraryCode/
 
 .DS_Store
 DEVLOG.md
+howto.md
 *.user
 *.jucer.user

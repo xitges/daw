@@ -185,6 +185,10 @@ void ChannelRackComponent::loadPattern(const Pattern& pat)
             channels[ch].panSlider->setValue(pat.channelPan[ch], juce::sendNotification);
         if (channels[ch].pitchSlider)
             channels[ch].pitchSlider->setValue(pat.channelPitch[ch], juce::sendNotification);
+
+        // Restore channel name and type (now per-pattern)
+        channels[ch].name = pat.channelNames[ch];
+        setChannelType(ch, pat.channelTypes[ch]);
     }
 
     repaint();
@@ -202,6 +206,9 @@ void ChannelRackComponent::saveToPattern(Pattern& pat) const
         pat.channelVolume[ch] = channels[ch].volume;
         pat.channelPan[ch]    = channels[ch].pan;
         pat.channelPitch[ch]  = channels[ch].pitch;
+        pat.channelNames[ch]  = channels[ch].name;
+        pat.channelTypes[ch]  = (ch < (int)channelTypes.size())
+                                ? channelTypes[(size_t)ch] : ChannelType::Drum;
     }
 }
 

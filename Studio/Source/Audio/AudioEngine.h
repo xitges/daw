@@ -50,6 +50,9 @@ public:
     long   getSongSamplePosition() const { return songSamplePosition; }
     double getPatternBeatPos()     const { return patternBeatPos; }   // M3
 
+    // Fired on the message thread when the Song-mode sample cache is ready
+    std::function<void()> onSongCacheReady;
+
     // Seek song playback to an arbitrary bar position
     void seekSongToBar(double bar)
     {
@@ -198,11 +201,26 @@ private:
 
     const Pattern* findPatternById(int patternId) const;
 
-    // Song mode: pre-decoded audio cache built before playback starts
-    // Key = patternId, Value = one AudioBuffer per channel (empty if no sample assigned)
+    // Song mode: pre-decoded audio cache built in background before playback
     std::map<int, std::array<juce::AudioBuffer<float>, 16>> songSampleCache;
-    int songPlayerPatternId[16] = {};   // which patternId is currently loaded in players[ch]
-    void buildSongSampleCache();        // called on message thread before song play/render
+    int songPlayerPatternId[16] = {};
+
+    // Background cache loader — avoids UI freeze on Play in Song mode
+    struct CacheLoader : public juce::Thread
+    {
+        AudioEngine& engine;
+        std::function<void()> onDone;
+        CacheLoader(AudioEngine& e) : juce::Thread("SampleCacheLoader"), engine(e) {}
+        void run() override
+        {
+            engine.buildSongSampleCache();
+            if (!threadShouldExit())
+                juce::MessageManager::callAsync([this] { if (onDone) onDone(); });
+        }
+    };
+    std::unique_ptr<CacheLoader> cacheLoader_;
+
+    void buildSongSampleCache();   // may run on background thread
 
     double sampleRate = 44100.0;
     int    bufferSize = 512;
