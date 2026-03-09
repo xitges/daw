@@ -662,6 +662,24 @@ MainComponent::MainComponent()
         fxEditorWindow->toFront(true);
     };
 
+    // Dynamic EQ windows (0-7 = track, 8 = master)
+    mixer.onEQButtonClicked = [this](int t)
+    {
+        const bool isMaster = (t == MixerComponent::numTracks);
+        const juce::String name = isMaster ? "Master" : ("Track " + juce::String(t + 1));
+
+        DynamicEQProcessor& proc = isMaster
+            ? audioEngine.getMasterDynEQ()
+            : audioEngine.getTrackDynEQ(t);
+
+        const int idx = isMaster ? 8 : t;
+        if (dynEQWindows[(size_t)idx] == nullptr)
+            dynEQWindows[(size_t)idx] = std::make_unique<DynamicEQWindow>(proc, name);
+
+        dynEQWindows[(size_t)idx]->setVisible(true);
+        dynEQWindows[(size_t)idx]->toFront(true);
+    };
+
     toolbar.onToggleMixer   = [this] { showMixer   = !showMixer;   resized(); };
     toolbar.onToggleBrowser = [this] { showBrowser = !showBrowser; resized(); };
 

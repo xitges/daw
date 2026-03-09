@@ -296,8 +296,13 @@ void AudioEngine::buildSongSampleCache()
 
 void AudioEngine::triggerChannel(int channelIndex)
 {
-    if (channelIndex >= 0 && channelIndex < 16)
-        players[channelIndex].trigger();
+    if (channelIndex < 0 || channelIndex >= 16) return;
+    // Always restore the slider-based pitch before triggering.
+    // NoteEvent playback overwrites players[ch].pitchRatio with a note offset;
+    // without this reset, drum hits played after a Melodic→Drum switch would
+    // fire at the wrong pitch.
+    players[channelIndex].setPitch(channelBasePitch[channelIndex]);
+    players[channelIndex].trigger();
 }
 
 void AudioEngine::setStepPattern(int channelIndex, int stepIndex, bool active)

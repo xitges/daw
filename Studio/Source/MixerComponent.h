@@ -24,6 +24,7 @@ public:
     std::function<void(float)>                  onMasterVolumeChanged;
     std::function<void(float)>                  onMasterPanChanged;
     std::function<void(int track)>              onFXButtonClicked;    // M14
+    std::function<void(int track)>              onEQButtonClicked;    // DynEQ (0-7=tracks, 8=master)
 
     MixerComponent()
     {
@@ -89,6 +90,7 @@ private:
     std::unique_ptr<juce::TextButton> muteBtns  [numTracks + 1];
     std::unique_ptr<juce::TextButton> soloBtns  [numTracks + 1];
     std::unique_ptr<juce::TextButton> fxBtns    [numTracks];     // M14 FX open button
+    std::unique_ptr<juce::TextButton> eqBtns    [numTracks + 1]; // DynEQ (inserts + master)
     std::unique_ptr<juce::Label>      routeLabel[numTracks];     // "ch: 0,8" info
 
     void buildStrip(int t)
@@ -169,11 +171,27 @@ private:
             };
             addAndMakeVisible(*fxBtns[t]);
 
+            // Dynamic EQ button
+            eqBtns[t] = std::make_unique<juce::TextButton>("EQ");
+            eqBtns[t]->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a2a4a));
+            eqBtns[t]->setColour(juce::TextButton::textColourOnId, juce::Colour(0xff8888ff));
+            eqBtns[t]->onClick = [this, t] { if (onEQButtonClicked) onEQButtonClicked(t); };
+            addAndMakeVisible(*eqBtns[t]);
+
             routeLabel[t] = std::make_unique<juce::Label>();
             routeLabel[t]->setFont(juce::Font(juce::FontOptions().withHeight(8.5f)));
             routeLabel[t]->setColour(juce::Label::textColourId, juce::Colour(0xff7f8c8d));
             routeLabel[t]->setJustificationType(juce::Justification::centred);
             addAndMakeVisible(*routeLabel[t]);
+        }
+        else
+        {
+            // Master strip EQ button (index = numTracks)
+            eqBtns[t] = std::make_unique<juce::TextButton>("EQ");
+            eqBtns[t]->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a2a4a));
+            eqBtns[t]->setColour(juce::TextButton::textColourOnId, juce::Colour(0xff8888ff));
+            eqBtns[t]->onClick = [this, t] { if (onEQButtonClicked) onEQButtonClicked(t); };
+            addAndMakeVisible(*eqBtns[t]);
         }
     }
 
@@ -185,6 +203,9 @@ private:
         labels[t]->setBounds(area.removeFromTop(16));
         if (!isMaster && routeLabel[t])
             routeLabel[t]->setBounds(area.removeFromBottom(14));
+        // EQ button
+        if (eqBtns[t])
+            eqBtns[t]->setBounds(area.removeFromBottom(18).reduced(1, 0));
         // FX button row (M14)
         if (!isMaster && fxBtns[t])
             fxBtns[t]->setBounds(area.removeFromBottom(18).reduced(1, 0));
