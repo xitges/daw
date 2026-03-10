@@ -81,12 +81,19 @@ public:
     // Fired whenever RecState changes (wire to ContentPane UI update)
     std::function<void()> onRecordingStateChanged;
 
+    // Wire to audioEngine.isPlaying() for punch-in detection
+    std::function<bool()> isPlayingCallback;
+
     void setRecording(bool r)
     {
         if (r)
         {
-            if (triggerEnabled) enterArmed();
-            else                startRecording();
+            // Punch-in: if transport already running, bypass trigger → record immediately
+            const bool engineRunning = isPlayingCallback && isPlayingCallback();
+            if (!engineRunning && triggerEnabled)
+                enterArmed();
+            else
+                startRecording();
         }
         else
         {
@@ -509,6 +516,7 @@ public:
                 if (currentRecState == RecState::Armed)
                 {
                     startRecording();
+                    playheadBeat = 0.0;  // engine will start at beat 0; pin local state
                     if (onStartTransport) onStartTransport();
                 }
 
@@ -791,8 +799,12 @@ private:
 
     void drawRuler(juce::Graphics& g)
     {
-        // Background — red tint when recording, dark blue otherwise
-        g.setColour(recording_ ? juce::Colour(0xff3a0a0a) : juce::Colour(0xff0f3460));
+        // Background — colour by state: orange=Armed, red=Recording, blue=normal
+        g.setColour(currentRecState == RecState::Armed
+                        ? juce::Colour(0xff2e1800)
+                        : recording_
+                            ? juce::Colour(0xff3a0a0a)
+                            : juce::Colour(0xff0f3460));
         g.fillRect(0, 0, getWidth(), headerH);
 
         // Hover step tick mark in the ruler
@@ -804,8 +816,19 @@ private:
             g.fillRect(hx, 0, hw, headerH);
         }
 
-        // REC indicator
-        if (recording_ && playheadBeat >= 0.0)
+        // State indicator (ARM or REC)
+        if (currentRecState == RecState::Armed)
+        {
+            if (armedBlink)
+            {
+                g.setColour(juce::Colour(0xffff8800));
+                g.fillEllipse(4.0f, 5.0f, 8.0f, 8.0f);
+            }
+            g.setColour(juce::Colour(0xffff8800).withAlpha(0.90f));
+            g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
+            g.drawText("ARM", 15, 0, 36, headerH, juce::Justification::centredLeft);
+        }
+        else if (recording_ && playheadBeat >= 0.0)
         {
             g.setColour(juce::Colour(0xffff2222));
             g.fillEllipse(4.0f, 5.0f, 8.0f, 8.0f);
@@ -1017,6 +1040,24 @@ private:
 
     void drawPlayhead(juce::Graphics& g)
     {
+        // Armed state: frozen blinking playhead at beat 0
+        if (currentRecState == RecState::Armed)
+        {
+            if (armedBlink)
+            {
+                const int x = xFromBeat(0.0f);
+                g.setColour(juce::Colour(0xffff8800).withAlpha(0.70f));
+                g.drawLine((float)x, 0.0f, (float)x, (float)getHeight(), 2.5f);
+                juce::Path cap;
+                cap.addTriangle((float)(x - 5), 0.0f,
+                                (float)(x + 5), 0.0f,
+                                (float)x,       6.0f);
+                g.setColour(juce::Colour(0xffff8800));
+                g.fillPath(cap);
+            }
+            return;
+        }
+
         if (playheadBeat < 0.0) return;
 
         // Active step background tint — highlight the 1/16-step column being played
@@ -1085,6 +1126,38 @@ private:
 
     void stopRecording()
     {
+        // Commit every held note at current playhead position (prevents note loss)
+        if (recording_ && pattern != nullptr && playheadBeat >= 0.0)
+        {
+            bool anyCommitted = false;
+            for (int pidx = 0; pidx < 128; ++pidx)
+            {
+                auto& prn = pendingRecNotes_[(size_t)pidx];
+                if (!prn.active) continue;
+
+                prn.active = false;
+                float len  = (float)playheadBeat - prn.startBeat;
+                if (len <= 0.0f)
+                    len += (float)pattern->stepCount * 0.25f;
+
+                if (prn.wasQuantized)
+                    len = juce::jmax(prn.capturedGrid,
+                                     std::round(len / prn.capturedGrid) * prn.capturedGrid);
+                else
+                    len = juce::jmax(kMinNoteLen, len);
+
+                NoteEvent n;
+                n.pitch       = pidx;
+                n.startBeat   = prn.startBeat;
+                n.lengthBeats = len;
+                n.velocity    = 0.8f;
+                pattern->notes[channel].push_back(n);
+                sessionEndIdx = (int)pattern->notes[channel].size() - 1;
+                anyCommitted  = true;
+            }
+            if (anyCommitted && onNotesChanged) onNotesChanged();
+        }
+
         currentRecState = RecState::Idle;
         recording_      = false;
         armedBlink      = false;

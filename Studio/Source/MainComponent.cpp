@@ -558,17 +558,33 @@ MainComponent::MainComponent()
             {
                 if (audioEngine.isPlaying())
                 {
+                    // Commit any held recording notes before stopping
+                    pianoRollWindow->content.pianoRoll.setRecording(false);
                     audioEngine.stop();
                     audioEngine.allSynthNotesOff();
                     channelRack.setPlaybackStep(-1);
                     playlist.setPlayheadBar(-1.0);
-                    if (pianoRollWindow != nullptr)
-                        pianoRollWindow->content.pianoRoll.setPlayheadBeat(-1.0);
+                    pianoRollWindow->content.pianoRoll.setPlayheadBeat(-1.0);
                 }
                 else
                 {
-                    syncPatternToEngine();
-                    audioEngine.play();
+                    auto& pr = pianoRollWindow->content.pianoRoll;
+                    if (pr.getRecState() == PianoRollComponent::RecState::Armed)
+                    {
+                        // Space again while Armed → cancel → Idle
+                        pr.setRecording(false);
+                    }
+                    else if (pr.isTriggerEnabled() &&
+                             pianoRollWindow->content.recBtn.getToggleState())
+                    {
+                        // Trigger ON + REC active → enter Armed (engine stays stopped)
+                        pr.setRecording(true);
+                    }
+                    else
+                    {
+                        syncPatternToEngine();
+                        audioEngine.play();
+                    }
                 }
             };
 
@@ -577,6 +593,12 @@ MainComponent::MainComponent()
             {
                 syncPatternToEngine();
                 audioEngine.play();
+            };
+
+            // Punch-in detection: piano roll checks if engine is already running
+            pianoRollWindow->content.pianoRoll.isPlayingCallback = [this]
+            {
+                return audioEngine.isPlaying();
             };
         }
 
@@ -1337,12 +1359,35 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
     {
         if (audioEngine.isPlaying())
         {
+            // Commit held notes first (playheadBeat still valid), then stop engine
+            if (pianoRollWindow != nullptr)
+                pianoRollWindow->content.pianoRoll.setRecording(false);
             audioEngine.stop();
             audioEngine.allSynthNotesOff();
             channelRack.setPlaybackStep(-1);
             playlist.setPlayheadBar(-1.0);
             if (pianoRollWindow != nullptr)
                 pianoRollWindow->content.pianoRoll.setPlayheadBeat(-1.0);
+        }
+        else if (pianoRollWindow != nullptr && pianoRollWindow->isVisible())
+        {
+            auto& pr = pianoRollWindow->content.pianoRoll;
+
+            if (pr.getRecState() == PianoRollComponent::RecState::Armed)
+            {
+                // Space again while Armed → cancel; back to Idle
+                pr.setRecording(false);
+            }
+            else if (pr.isTriggerEnabled() && pianoRollWindow->content.recBtn.getToggleState())
+            {
+                // Trigger ON + REC active → enter Armed (do NOT start engine yet)
+                pr.setRecording(true);
+            }
+            else
+            {
+                syncPatternToEngine();
+                audioEngine.play();
+            }
         }
         else
         {
