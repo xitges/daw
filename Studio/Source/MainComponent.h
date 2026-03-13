@@ -54,6 +54,8 @@ private:
     std::unique_ptr<PianoRollWindow> pianoRollWindow;
     int  pianoRollChannel = -1;
     bool showMixer = false;
+    bool pianoRollPlaybackOverridesPlayMode = false;
+    PlayMode playModeBeforePianoRollPlayback = PlayMode::Pattern;
 
     // M13/M14 — floating synth + FX editors
     std::unique_ptr<SynthEditorWindow> synthEditorWindow;
@@ -80,6 +82,10 @@ private:
     void     selectPattern(int id);
     void     syncPatternToEngine();
     void     syncChannelRackToProject();
+    int      ensureAutoBassChannel();
+    void     focusPianoRollChannel(int channel);
+    void     beginPianoRollPatternPlayback();
+    void     restorePlayModeAfterPianoRollPlayback();
     void     exportCurrentPianoRollToMidi();
     void     importCurrentPianoRollFromMidi();
 

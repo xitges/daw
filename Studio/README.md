@@ -299,34 +299,181 @@ Projects are saved as `.studioproj` files (XML format). Saved data includes: pat
 
 ## Milestone Progress
 
-| # | Feature | Status |
-|---|---|---|
-| M1 | Channel Rack — Vol, Pan, Pitch, Mute/Solo, Scroll, Rename | **Done** |
-| M2 | Multiple Patterns, Clip Editing, Pattern-to-Playlist link | **Done** |
-| M3 | Piano Roll (melodic note editor) | **Done** |
-| M4 | Save / Load (XML project file) | **Done** |
-| M5 | Mixer (per-track faders, sends, FX slots) | **Done** |
-| M6 | Undo / Redo | **Done** |
-| M7 | Audio Recording (mic / line-in → clip) | Planned |
-| M8 | VST / AU Plugin Hosting | Planned |
-| M9 | Automation (parameter curves on timeline) | Planned |
-| M10 | Export / Render to WAV | **Done** |
-| M11 | UI Polish, Zoom, Track Management, Pattern Preview | **Partial** (dark theme, zoom, track management done) |
-| M12 | MIDI Input / Output | **Partial** (MIDI input device selection + live trigger done) |
-| M13 | Built-in Instruments (synth, sampler) | **Done** |
-| M14 | Built-in FX (EQ, Compressor, Reverb, Delay) | **Partial** (Compressor, Delay, Reverb done — no EQ yet) |
-| M15 | Sample Browser / Library Panel | Planned |
-| M16 | Auto-save, Recent Files, Project Templates | Planned |
-| — | Launchpad (8×8 sample pads + sequence recording) | **Done** |
-| — | Per-pattern sample isolation | **Done** |
-| M17 | Piano Roll Recording — MIDI Audio-Thread Timestamps | Planned |
-| M18 | MVC Architecture — Quantize / Grid settings in ProjectModel | Planned |
+현재 프로젝트는 **패턴 기반 시퀀싱 + 플레이리스트 + 기본 믹싱 + 내장 신스/샘플러**
+축은 이미 usable한 수준까지 올라왔고, 앞으로는 **FL Studio형 워크플로우를 완성하는
+고급 편집 / 믹서 라우팅 / 오디오 클립 / 정밀 재생** 영역이 핵심 과제다.
+
+| # | Feature | Status | Current State |
+|---|---|---|---|
+| M1 | Channel Rack — Vol, Pan, Pitch, Mute/Solo, Scroll, Rename | **Done** | 채널 기본 제어, 이름 변경, per-pattern sample isolation까지 반영 |
+| M2 | Multiple Patterns, Clip Editing, Pattern-to-Playlist link | **Done** | 다중 패턴, 클립 생성/이동/리사이즈, 패턴 detach, unassigned clip 흐름 지원 |
+| M3 | Piano Roll (melodic note editor) | **Done** | 선택/다중선택, marquee, nudging, MIDI import/export, scale/key, note preview 포함 |
+| M4 | Save / Load (XML project file) | **Done** | 패턴, 노트, 클립, 믹서, FX, 런치패드, 주요 UI 상태 저장/복원 |
+| M5 | Mixer (per-track faders, routing, FX slots) | **Partial** | insert-style mixing과 track FX는 있으나 send/return/sidechain은 아직 없음 |
+| M6 | Undo / Redo | **Done** | 주요 편집 작업에 대한 undo/redo 흐름 존재 |
+| M7 | Audio Recording (mic / line-in → clip) | Planned | 오디오 clip 기반 녹음 경로는 아직 미구현 |
+| M8 | VST / AU Plugin Hosting | **Partial** | plugin scan/load/editor/state 저장은 있으나 latency/PDC·고급 routing은 미완 |
+| M9 | Automation (parameter curves on timeline) | **Partial** | automation lane 기초는 있으나 범위/대상/편집 UX는 확장 필요 |
+| M10 | Export / Render to WAV | **Done** | pattern/song render 지원 |
+| M11 | UI Polish, Zoom, Track Management, Pattern Preview | **Partial** | dark theme, zoom, clip note preview, audio device UI, track management 반영 |
+| M12 | MIDI Input / Output | **Partial** | MIDI input device 선택 + live trigger는 구현, MIDI output/정밀 timestamp recording은 남음 |
+| M13 | Built-in Instruments (synth, sampler) | **Done** | built-in synth/sampler와 프리셋, sample voice pool, preview 경로 구현 |
+| M14 | Built-in FX (EQ, Compressor, Reverb, Delay) | **Partial** | compressor, reverb, delay, dynamic EQ 경로는 있으나 FL급 FX ecosystem은 아직 부족 |
+| M15 | Sample Browser / Library Panel | **Partial** | 브라우저/preview/bookmark는 있으나 라이브러리 관리와 asset workflow는 확장 필요 |
+| M16 | Auto-save, Recent Files, Project Templates | Planned | 프로젝트 운영성 기능은 아직 없음 |
+| — | Launchpad (8×8 sample pads + sequence recording) | **Done** | 8×8 pad trigger, sample assignment, 녹음 변환 지원 |
+| — | Per-pattern sample isolation | **Done** | 패턴별 샘플/채널 설정 독립성 확보 |
+| M17 | Piano Roll Recording — MIDI Audio-Thread Timestamps | Planned | 현재보다 더 정확한 MIDI capture용 정밀 타임스탬프 계층 필요 |
+| M18 | MVC Architecture — Quantize / Grid settings in ProjectModel | Planned | quantize/grid 등 editor state를 모델로 승격하는 단계 |
+| M19 | Audio Clips — Trim, Fade, Gain, Stretch-ready Playlist Clips | Planned | 오디오 중심 DAW 워크플로우의 핵심 공백 |
+| M20 | Mixer Routing — Send/Return Bus, Sidechain Workflow | Planned | FL형 믹싱 워크플로우로 가기 위한 최우선 기능 중 하나 |
+| M21 | Synth Articulation — Legato, Slide, Mono Priority | Planned | 808/lead 표현과 note transition 안정화의 핵심 |
+| M22 | Playback Accuracy — Plugin Delay Compensation (PDC) | Planned | plugin latency가 커질수록 필수 |
+| M23 | Advanced Piano Roll Tools — Ghost Notes, Strum, Flam, Randomize | Planned | FL Studio식 작곡 보조 툴 세트 |
 
 ---
 
-## Planned Milestones — Detail
+## Milestones — Detail
 
-### M17 · Piano Roll Recording: MIDI Audio-Thread Timestamps
+### Completed Core
+
+#### M1 · Channel Rack
+
+채널별 볼륨, 팬, 피치, 뮤트/솔로, 샘플 로드, 이름 변경, step 편집이 가능한 기본
+Channel Rack 워크플로우가 구현되어 있다. 현재는 패턴별 채널 상태가 독립적으로
+유지되어, FL Studio식 pattern-local instrument 설정에 더 가까워졌다.
+
+#### M2 · Patterns / Playlist Clips
+
+패턴 생성/복제/삭제, 플레이리스트 클립 생성/이동/리사이즈, 클립-패턴 연결,
+detach-to-new-pattern 흐름이 작동한다. 최근에는 **unassigned clip** 개념과
+클립 라벨에 패턴명 표시, 늘어난 클립의 looped preview까지 반영됐다.
+
+#### M3 · Piano Roll
+
+피아노롤은 단순 note editor를 넘어, 선택/다중선택, marquee selection,
+keyboard nudging, vertical/horizontal note move, MIDI import/export, key/scale
+표시, session note move까지 포함하는 편집 도구로 확장됐다. 아직 FL 수준의
+ghost notes / strum / legato / slide는 남아 있다.
+
+#### M4 · Save / Load
+
+`.studioproj` 기반 XML 저장/불러오기로 패턴, 노트, 클립, 믹서, FX, 런치패드,
+신스 설정, 프로젝트 메타를 복원할 수 있다. 최근에는 활성 패턴, 일부 UI 재동기화,
+미할당 클립 default 처리 등 실제 사용 흐름을 더 잘 반영하도록 보강됐다.
+
+#### M6 · Undo / Redo
+
+핵심 편집 작업에 대해 undo/redo 기반이 들어가 있어 기본적인 비파괴 편집 흐름이
+가능하다. 앞으로 audio clip editing과 automation이 확장되면 적용 범위를 더
+넓혀야 한다.
+
+#### M10 · Export / Render
+
+Pattern / Song 모드 모두 WAV 렌더가 가능하다. 이후 freeze / render in place /
+stem export 같은 FL형 생산성 기능으로 확장할 여지가 크다.
+
+#### M13 · Built-in Instruments
+
+built-in synth와 sampler, sample voice pool, launchpad/browser preview, 패턴별
+신스 파라미터가 동작한다. 최근에는 note-on/off click 완화를 위해 de-click
+보호가 여러 단계 추가되었지만, legato/mono articulation은 아직 다음 단계다.
+
+#### Launchpad / Per-pattern Sample Isolation
+
+런치패드는 성능용 보조 패드이자 시퀀스 기록 입력원으로 동작하며, 패턴 변환도
+지원한다. 또한 패턴별 sample isolation이 들어가 있어 “패턴이 바뀌면 채널 성격도
+달라지는” FL Studio식 작업 흐름에 더 가까워졌다.
+
+---
+
+### Partial Milestones
+
+#### M5 · Mixer
+
+**현재 상태:** per-track volume/pan/mute/solo, insert FX, routing 기반은 있다.  
+**부족한 점:** send/return bus, sidechain source, pre/post-fader routing, PDC가 없다.  
+**다음 단계:** M20, M22와 강하게 연결해 mixer를 “playback sum”이 아니라
+실제 production mixer로 확장한다.
+
+#### M8 · VST / AU Plugin Hosting
+
+**현재 상태:** plugin scan/load/editor/state 저장이 가능하다.  
+**부족한 점:** plugin latency 보정, 고급 bus routing, instrument/effect workflow
+정교화가 필요하다.  
+**다음 단계:** M22(PDC)와 함께 실제 프로젝트에서 timing이 무너지지 않도록
+재생 정렬을 완성해야 한다.
+
+#### M9 · Automation
+
+**현재 상태:** automation lane 구조와 timeline 상의 기본 표현은 있다.  
+**부족한 점:** 대상 파라미터 확장, 곡선 편집, clip automation, smoothing, 더 나은
+UX가 필요하다.  
+**다음 단계:** mixer / synth / FX / plugin parameter를 일관되게 automation
+대상으로 묶는 공통 계층이 필요하다.
+
+#### M11 · UI Polish
+
+**현재 상태:** dark theme, zoom, track management, playlist note preview, 오디오
+디바이스 선택 UI, piano roll selection tool 등 실사용 기능이 많이 들어갔다.  
+**부족한 점:** 레이아웃 정제, 작은 팝업 UI 품질, FL형 툴바 일관성, 더 높은 정보
+밀도와 시각적 정리가 필요하다.
+
+#### M12 · MIDI I/O
+
+**현재 상태:** MIDI input device 선택과 live note trigger는 동작한다.  
+**부족한 점:** MIDI output, sample-accurate timestamp capture, 외부 clock/sync,
+더 좋은 recording pipeline이 아직 없다.  
+**다음 단계:** M17과 연결해서 오디오 스레드 기반 timestamp capture로 간다.
+
+#### M14 · Built-in FX
+
+**현재 상태:** compressor, reverb, delay, dynamic EQ 경로는 존재한다.  
+**부족한 점:** FL의 폭넓은 FX 선택지, sidechain-centric workflow, bus send 활용이
+부족하다.  
+**다음 단계:** M20과 결합해 공용 FX return / ducking workflow를 만든다.
+
+#### M15 · Sample Browser
+
+**현재 상태:** sample browser, preview, bookmark 기반은 들어가 있다.  
+**부족한 점:** 대형 라이브러리 탐색, tag/search, 빠른 drag-drop placement,
+프로젝트 asset 관리가 아직 약하다.
+
+---
+
+### Next Milestones
+
+#### M7 · Audio Recording: mic / line-in → clip
+
+**문제:** 현재는 패턴/MIDI 중심이라 보컬, 기타, 외부 입력 녹음의 DAW 핵심
+워크플로우가 빠져 있다.
+
+**목표:** 입력 소스를 timeline clip으로 녹음하고, 이후 trim/fade/edit 가능한
+audio clip 기반 작업 흐름을 만든다.
+
+**주요 작업:**
+- input device / monitoring / armed track 개념 추가
+- recording take를 playlist audio clip으로 생성
+- clip split/trim/fade와 연결
+- metronome / count-in / latency 보정 검토
+
+---
+
+#### M16 · Auto-save / Recent Files / Project Templates
+
+**문제:** 프로젝트 운영 편의성이 아직 개발용 수준에 머물러 있다.
+
+**목표:** 실제 사용 중 크래시 복구, 최근 파일 접근, 템플릿 시작 워크플로우를 지원한다.
+
+**주요 작업:**
+- 주기적 autosave와 recovery file 정책
+- recent files 메뉴와 최근 프로젝트 로드
+- default template / genre template / empty template 흐름
+- dirty state와 저장 UX 정리
+
+---
+
+#### M17 · Piano Roll Recording: MIDI Audio-Thread Timestamps
 
 **문제:** `keyStateChanged`는 UI(메시지) 스레드에서 호출되어 OS 메시지 큐 지연이
 발생할 수 있다. CPU 부하가 높을 때 실제 연주 시점보다 늦게 `playheadBeat`가
@@ -339,28 +486,108 @@ note-on/off 타임스탬프를 고정밀로 기록하고, lock-free 큐(예: `ju
 **주요 작업:**
 - AudioEngine에 lock-free MIDI event FIFO 추가
 - 오디오 콜백에서 sample-accurate beat position 계산
-- PianoRollComponent의 timerCallback(30 Hz)에서 FIFO를 drain하여 NoteEvent 커밋
-- 기존 `keyStateChanged` 경로는 fallback으로 유지(MIDI 장치 없는 환경)
+- PianoRollComponent의 timerCallback에서 FIFO를 drain하여 NoteEvent 커밋
+- 기존 UI thread 경로는 fallback으로 유지
 
 ---
 
-### M18 · MVC Architecture: Quantize / Grid를 ProjectModel로 이동
+#### M18 · MVC Architecture: Quantize / Grid를 ProjectModel로 이동
 
-**문제:** `quantizeEnabled`, `quantizeGrid` 등 녹음 설정이 `PianoRollComponent`
-내부에 저장되어 있어, 다른 컴포넌트(Step Sequencer, Launchpad 녹음 등)와
-공유하거나 프로젝트 파일에 저장하려면 중복 코드가 생긴다.
+**문제:** `quantizeEnabled`, `quantizeGrid` 등 편집/녹음 설정이 컴포넌트 내부에
+분산되어 있어 여러 입력 경로와 저장 포맷 간 정합성이 떨어질 수 있다.
 
-**목표:** 녹음·퀀타이즈 관련 설정을 `ProjectModel`(또는 별도 `RecordingSettings`
-구조체)로 이동시키고, UI는 해당 모델을 참조만 하는 단방향 흐름을 강화한다.
+**목표:** 녹음·퀀타이즈·그리드 관련 설정을 모델 계층으로 이동시키고, UI는 해당
+모델을 참조/표시하는 방향으로 정리한다.
 
 **주요 작업:**
-- `ProjectModel.h`에 `RecordingSettings { bool quantizeEnabled; float quantizeGrid; }` 추가
+- `ProjectModel`에 recording/editor settings 구조체 추가
 - `ProjectSerializer`에 저장/불러오기 연동
-- `PianoRollComponent`, `LaunchpadComponent` 등이 모델을 포인터로 참조
-- `onSettingsChanged` 콜백으로 UI 동기화
+- `PianoRollComponent`, `LaunchpadComponent`, 기타 입력 경로가 공통 모델 참조
+- `onSettingsChanged` 기반 UI 동기화
 
 ---
 
+#### M19 · Audio Clips: Trim / Fade / Gain / Stretch-ready Playlist Clips
+
+**문제:** 현재 플레이리스트는 패턴 클립 중심이라 오디오 파일을 직접 배치하고
+트리밍/페이드/게인 조절하는 DAW형 워크플로우가 부족하다.
+
+**목표:** 오디오 클립을 플레이리스트에 직접 배치하고, clip 단위의 시작/끝 trim,
+fade-in/out, gain, 이후 time-stretch 확장이 가능한 데이터 구조를 마련한다.
+
+**주요 작업:**
+- `ProjectModel`에 audio clip 전용 구조체 또는 clip type 구분 추가
+- 플레이리스트에서 audio clip 파형 preview 렌더링
+- clip trim / fade / gain 편집 핸들 추가
+- AudioEngine Song 모드에서 audio clip 재생 경로 추가
+
+---
+
+#### M20 · Mixer Routing: Send / Return Bus, Sidechain Workflow
+
+**문제:** 현재 믹서는 insert 중심이라 공용 reverb/delay bus, send 양 조절,
+sidechain trigger 같은 실제 믹싱 흐름이 제한적이다.
+
+**목표:** 각 채널/트랙이 send bus로 신호를 보내고, return track에서 공용 FX를
+처리하며, compressor 등에서 sidechain source를 받을 수 있게 한다.
+
+**주요 작업:**
+- mixer track 간 send amount / routing 데이터 모델 추가
+- return bus 렌더 경로와 pre/post-fader routing 정의
+- compressor sidechain 입력 버스 추가
+- Mixer UI에 send knob / sidechain source selector 추가
+
+---
+
+#### M21 · Synth Articulation: Legato / Slide / Mono Priority
+
+**문제:** 현재 built-in synth는 note-on 시 위상/필터/ADSR를 재시작하는 구조라
+lead, bass, 808 계열에서 FL Studio식 glide / legato 표현이 부족하고 note
+transition 안정화도 더 필요하다.
+
+**목표:** 채널 또는 패치 단위로 mono / legato / slide 모드를 제공하고, 겹치거나
+붙은 노트 사이를 재트리거 대신 연속 pitch transition으로 처리한다.
+
+**주요 작업:**
+- `SynthParams`에 mono, legato, glide time 등 articulation 옵션 추가
+- overlap note 해석 정책(재트리거 vs sustain vs slide) 정의
+- PolySynth에 mono voice priority / pitch glide 경로 추가
+- Piano Roll에서 slide note 또는 tie-like overlap UX 검토
+
+---
+
+#### M22 · Playback Accuracy: Plugin Delay Compensation (PDC)
+
+**문제:** VST/AU 또는 lookahead FX가 생기면 트랙별 latency가 달라져 timing이
+밀리고, 병렬 routing 시 위상/정렬 문제가 발생할 수 있다.
+
+**목표:** plugin / FX chain latency를 수집해 mixer 및 song playback 전체를
+자동 정렬하는 PDC를 도입한다.
+
+**주요 작업:**
+- plugin instance / FX chain latency query 수집
+- mixer track / master 기준 latency 정렬 정책 설계
+- delayed audio/midi buffering 경로 추가
+- 렌더와 실시간 playback 모두 동일한 정렬 보장
+
+---
+
+#### M23 · Advanced Piano Roll Tools: Ghost Notes / Strum / Flam / Randomize
+
+**문제:** 현재 Piano Roll은 직접 편집 기능은 갖췄지만, FL Studio의 강점인
+작곡 보조 툴(ghost notes, strum, flam, randomize, humanize)이 부족하다.
+
+**목표:** 빠른 아이디어 스케치와 human feel 부여를 위한 고급 편집 툴을 추가해
+피아노롤을 단순 note editor에서 composition tool로 확장한다.
+
+**주요 작업:**
+- 다른 채널/패턴 노트를 희미하게 표시하는 ghost notes 추가
+- 선택 노트 대상 strum / flam / randomize / humanize commands 추가
+- velocity, timing, length를 범위 기반으로 변형하는 dialog/tooling 추가
+- scale/key snapping과 함께 동작하는 일관된 note transform pipeline 정리
+
+---
+ 
 ## Tech Stack
 
 - **Language:** C++17

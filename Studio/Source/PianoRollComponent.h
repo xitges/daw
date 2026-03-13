@@ -12,6 +12,9 @@
 class PianoRollComponent : public juce::Component
 {
 public:
+    enum class ChordVoicing { Close, Open, FirstInversion, SecondInversion, Drop2 };
+    enum class BasslinePattern { RootNotes, OctaveBounce, Pulse8ths, PassingTone };
+
     PianoRollComponent()
     {
         setSize(getNeededWidth(), getNeededHeight());
@@ -59,6 +62,8 @@ public:
     }
     KeySignature getKeySignature() const { return keySignature; }
     int getKeyboardWidth() const { return keyWidth; }
+    Pattern* getPatternModel() const { return pattern; }
+    int getChannelIndex() const { return channel; }
 
     void clearNotes()
     {
@@ -67,6 +72,72 @@ public:
         clearSelection(false);
         if (onNotesChanged) onNotesChanged();
         repaint();
+    }
+
+    bool fillWithChordProgression(const MusicTheory::ChordProgressionPreset& preset,
+                                  ChordVoicing voicing,
+                                  float strumStepBeats)
+    {
+        if (pattern == nullptr || preset.steps.empty() || preset.scale != keySignature.scale)
+            return false;
+
+        auto& noteList = pattern->notes[channel];
+        noteList.clear();
+        selectedNoteIndices.clearQuick();
+        sessionStartIdx = 0;
+        sessionEndIdx = -1;
+
+        const float totalBeats = pattern->stepCount * 0.25f;
+        if (totalBeats <= 0.0f)
+            return false;
+
+        for (int chordIndex = 0; chordIndex < (int)preset.steps.size(); ++chordIndex)
+        {
+            const float startBeat = totalBeats * (float)chordIndex / (float)preset.steps.size();
+            const float endBeat = totalBeats * (float)(chordIndex + 1) / (float)preset.steps.size();
+            const auto pitches = buildChordPitches(preset.steps[(size_t)chordIndex], voicing);
+
+            for (int noteIndex = 0; noteIndex < (int)pitches.size(); ++noteIndex)
+            {
+                const float noteOffset = juce::jmax(0.0f, strumStepBeats) * (float)noteIndex;
+                const float noteStart = juce::jmin(startBeat + noteOffset, endBeat - kMinNoteLen);
+                const float noteLength = juce::jmax(kMinNoteLen, endBeat - noteStart);
+                const float velocity = juce::jlimit(0.5f, 1.0f, 0.84f - 0.03f * (float)noteIndex);
+                selectedNoteIndices.add(appendNote(pitches[(size_t)noteIndex], noteStart, noteLength, velocity));
+            }
+        }
+
+        notifySelectionChanged();
+        if (onNotesChanged) onNotesChanged();
+        repaint();
+        return true;
+    }
+
+    bool generateBasslineToChannel(int targetChannel, BasslinePattern basslinePattern)
+    {
+        if (pattern == nullptr || targetChannel < 0 || targetChannel >= Pattern::kMaxChannels || targetChannel == channel)
+            return false;
+
+        const auto regions = extractChordRegions();
+        if (regions.empty())
+            return false;
+
+        auto& targetNotes = pattern->notes[targetChannel];
+        targetNotes.clear();
+
+        for (int regionIndex = 0; regionIndex < (int)regions.size(); ++regionIndex)
+        {
+            const auto& region = regions[(size_t)regionIndex];
+            const int nextRoot = regionIndex + 1 < (int)regions.size()
+                ? regions[(size_t)regionIndex + 1].rootPitch
+                : region.rootPitch;
+            appendBassRegion(targetNotes, region.startBeat, region.endBeat,
+                             region.rootPitch, nextRoot, basslinePattern);
+        }
+
+        if (onNotesChanged) onNotesChanged();
+        repaint();
+        return true;
     }
 
     //Quantize
@@ -1027,6 +1098,222 @@ private:
         selectedNoteDragStates.clear();
     }
 
+    int progressionTonicMidi() const
+    {
+        int tonicMidi = 60 + keySignature.tonic;
+        while (tonicMidi > 64)
+            tonicMidi -= 12;
+        while (tonicMidi < 48)
+            tonicMidi += 12;
+        return tonicMidi;
+    }
+
+    std::vector<int> buildChordPitches(const MusicTheory::ProgressionStep& step,
+                                       ChordVoicing voicing) const
+    {
+        const auto& scaleIntervals = MusicTheory::getScaleIntervals(keySignature.scale);
+        const int baseTonic = progressionTonicMidi();
+        const int safeDegree = juce::jlimit(0, 6, step.degree);
+        const int chordTones = juce::jlimit(3, 4, step.chordTones);
+
+        std::vector<int> pitches;
+        pitches.reserve((size_t)chordTones);
+
+        for (int toneIndex = 0; toneIndex < chordTones; ++toneIndex)
+        {
+            const int stackedDegree = safeDegree + toneIndex * 2;
+            const int octave = stackedDegree / 7;
+            const int scaleIndex = stackedDegree % 7;
+            int pitch = baseTonic + scaleIntervals[(size_t)scaleIndex] + octave * 12;
+
+            if (! pitches.empty())
+                while (pitch <= pitches.back())
+                    pitch += 12;
+
+            pitches.push_back(juce::jlimit(minPitch, maxPitch, pitch));
+        }
+
+        auto raiseLowest = [&pitches]
+        {
+            if (pitches.empty())
+                return;
+
+            pitches.front() += 12;
+            std::sort(pitches.begin(), pitches.end());
+        };
+
+        switch (voicing)
+        {
+            case ChordVoicing::Close:
+                break;
+
+            case ChordVoicing::Open:
+                if (pitches.size() >= 3)
+                {
+                    pitches[1] += 12;
+                    std::sort(pitches.begin(), pitches.end());
+                }
+                break;
+
+            case ChordVoicing::FirstInversion:
+                raiseLowest();
+                break;
+
+            case ChordVoicing::SecondInversion:
+                raiseLowest();
+                raiseLowest();
+                break;
+
+            case ChordVoicing::Drop2:
+                if (pitches.size() >= 4)
+                {
+                    pitches[pitches.size() - 2] -= 12;
+                    std::sort(pitches.begin(), pitches.end());
+                }
+                else if (pitches.size() >= 3)
+                {
+                    pitches[1] -= 12;
+                    std::sort(pitches.begin(), pitches.end());
+                }
+                break;
+        }
+
+        for (auto& pitch : pitches)
+            pitch = juce::jlimit(minPitch, maxPitch, pitch);
+
+        std::sort(pitches.begin(), pitches.end());
+
+        return pitches;
+    }
+
+    struct ChordRegion
+    {
+        float startBeat = 0.0f;
+        float endBeat = 0.0f;
+        int rootPitch = 36;
+    };
+
+    int bassRegisterPitch(int sourcePitch) const
+    {
+        int bassPitch = 36 + (((sourcePitch % 12) + 12) % 12);
+        while (bassPitch > 43)
+            bassPitch -= 12;
+        while (bassPitch < 31)
+            bassPitch += 12;
+        return juce::jlimit(minPitch, maxPitch, bassPitch);
+    }
+
+    std::vector<ChordRegion> extractChordRegions() const
+    {
+        std::vector<ChordRegion> regions;
+        if (pattern == nullptr)
+            return regions;
+
+        const auto& noteList = pattern->notes[channel];
+        if (noteList.empty())
+            return regions;
+
+        struct SourceNote
+        {
+            float startBeat = 0.0f;
+            int pitch = 60;
+        };
+
+        std::vector<SourceNote> sorted;
+        sorted.reserve(noteList.size());
+        for (const auto& note : noteList)
+            sorted.push_back({ note.startBeat, note.pitch });
+
+        std::sort(sorted.begin(), sorted.end(), [](const SourceNote& a, const SourceNote& b)
+        {
+            if (std::abs(a.startBeat - b.startBeat) > 0.0001f)
+                return a.startBeat < b.startBeat;
+            return a.pitch < b.pitch;
+        });
+
+        const float totalBeats = pattern->stepCount * 0.25f;
+        size_t i = 0;
+        while (i < sorted.size())
+        {
+            const float groupStart = sorted[i].startBeat;
+            int rootPitch = sorted[i].pitch;
+            size_t j = i + 1;
+            while (j < sorted.size() && std::abs(sorted[j].startBeat - groupStart) < 0.0001f)
+            {
+                rootPitch = juce::jmin(rootPitch, sorted[j].pitch);
+                ++j;
+            }
+
+            const float groupEnd = j < sorted.size() ? sorted[j].startBeat : totalBeats;
+            if (groupEnd > groupStart + 0.0001f)
+                regions.push_back({ groupStart, groupEnd, bassRegisterPitch(rootPitch) });
+
+            i = j;
+        }
+
+        return regions;
+    }
+
+    void appendBassNote(std::vector<NoteEvent>& noteList, int pitch, float startBeat, float lengthBeats, float velocity) const
+    {
+        NoteEvent note;
+        note.pitch = juce::jlimit(minPitch, maxPitch, pitch);
+        note.startBeat = juce::jmax(0.0f, startBeat);
+        note.lengthBeats = juce::jmax(kMinNoteLen, lengthBeats);
+        note.velocity = juce::jlimit(0.2f, 1.0f, velocity);
+        noteList.push_back(note);
+    }
+
+    void appendBassRegion(std::vector<NoteEvent>& noteList,
+                          float startBeat,
+                          float endBeat,
+                          int rootPitch,
+                          int nextRootPitch,
+                          BasslinePattern basslinePattern) const
+    {
+        const float regionLength = juce::jmax(kMinNoteLen, endBeat - startBeat);
+        const float pulse = 0.5f;
+
+        switch (basslinePattern)
+        {
+            case BasslinePattern::RootNotes:
+                appendBassNote(noteList, rootPitch, startBeat, regionLength, 0.9f);
+                break;
+
+            case BasslinePattern::OctaveBounce:
+            {
+                int stepIndex = 0;
+                for (float beat = startBeat; beat < endBeat - 0.0001f; beat += pulse, ++stepIndex)
+                {
+                    const float noteLen = juce::jmin(pulse, endBeat - beat);
+                    const int pitch = (stepIndex % 2 == 0) ? rootPitch : juce::jmin(maxPitch, rootPitch + 12);
+                    appendBassNote(noteList, pitch, beat, noteLen, stepIndex % 2 == 0 ? 0.92f : 0.74f);
+                }
+                break;
+            }
+
+            case BasslinePattern::Pulse8ths:
+                for (float beat = startBeat; beat < endBeat - 0.0001f; beat += pulse)
+                    appendBassNote(noteList, rootPitch, beat, juce::jmin(pulse, endBeat - beat), 0.86f);
+                break;
+
+            case BasslinePattern::PassingTone:
+            {
+                const float leadLength = juce::jmin(0.5f, regionLength * 0.33f);
+                const float holdLength = juce::jmax(kMinNoteLen, regionLength - leadLength);
+                appendBassNote(noteList, rootPitch, startBeat, holdLength, 0.9f);
+
+                if (nextRootPitch != rootPitch && regionLength > (kMinNoteLen + 0.1f))
+                {
+                    const int direction = nextRootPitch > rootPitch ? 1 : -1;
+                    const int passingPitch = MusicTheory::moveScaleStep(rootPitch, keySignature, direction);
+                    appendBassNote(noteList, passingPitch, endBeat - leadLength, leadLength, 0.72f);
+                }
+                break;
+            }
+        }
+    }
+
     void captureSelectedNoteDragState()
     {
         selectedNoteDragStates.clear();
@@ -1763,6 +2050,13 @@ class PianoRollWindow : public juce::DocumentWindow
         juce::ComboBox     quantizeBox;
         juce::ComboBox     keyRootBox;
         juce::ComboBox     keyScaleBox;
+        juce::ComboBox     chordVoicingBox;
+        juce::ComboBox     chordStrumBox;
+        juce::ComboBox     progressionBox;
+        juce::TextButton   progressionBtn { "Apply Chords" };
+        juce::ComboBox     bassPatternBox;
+        juce::ComboBox     bassTargetBox;
+        juce::TextButton   basslineBtn    { "Generate Bass" };
         juce::TextButton   loadMidiBtn   { "Load MIDI" };
         juce::TextButton   saveMidiBtn   { "Save MIDI" };
         juce::TextButton   clearBtn      { "Clear" };
@@ -1776,9 +2070,14 @@ class PianoRollWindow : public juce::DocumentWindow
         std::function<void(const KeySignature&)> onKeySignatureChanged;
         std::function<void()> onImportMidi;
         std::function<void()> onExportMidi;
+        std::function<int()> onEnsureBassChannel;
+        std::function<void(int)> onBasslineApplied;
 
         bool blinkState = false;
         bool clampingHorizontalScroll = false;
+        PianoRollComponent::ChordVoicing chordVoicing = PianoRollComponent::ChordVoicing::Close;
+        float chordStrumBeats = 0.0f;
+        PianoRollComponent::BasslinePattern basslinePattern = PianoRollComponent::BasslinePattern::RootNotes;
 
         ContentPane()
         {
@@ -2005,6 +2304,84 @@ class PianoRollWindow : public juce::DocumentWindow
             keyScaleBox.onChange = [this] { applySelectedKeySignature(); };
             addAndMakeVisible(keyScaleBox);
 
+            chordVoicingBox.addItem("Close", 1);
+            chordVoicingBox.addItem("Open", 2);
+            chordVoicingBox.addItem("1st Inv", 3);
+            chordVoicingBox.addItem("2nd Inv", 4);
+            chordVoicingBox.addItem("Drop2", 5);
+            chordVoicingBox.setSelectedId(1, juce::dontSendNotification);
+            chordVoicingBox.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff2f405e));
+            chordVoicingBox.setColour(juce::ComboBox::textColourId, juce::Colours::white);
+            chordVoicingBox.setColour(juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
+            chordVoicingBox.onChange = [this]
+            {
+                chordVoicing = voicingForComboId(chordVoicingBox.getSelectedId());
+                updateChordButtonText();
+            };
+            addAndMakeVisible(chordVoicingBox);
+
+            chordStrumBox.addItem("Straight", 1);
+            chordStrumBox.addItem("Light", 2);
+            chordStrumBox.addItem("Medium", 3);
+            chordStrumBox.addItem("Heavy", 4);
+            chordStrumBox.setSelectedId(1, juce::dontSendNotification);
+            chordStrumBox.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff2f405e));
+            chordStrumBox.setColour(juce::ComboBox::textColourId, juce::Colours::white);
+            chordStrumBox.setColour(juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
+            chordStrumBox.onChange = [this]
+            {
+                chordStrumBeats = strumForComboId(chordStrumBox.getSelectedId());
+                updateChordButtonText();
+            };
+            addAndMakeVisible(chordStrumBox);
+
+            progressionBox.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff27405f));
+            progressionBox.setColour(juce::ComboBox::textColourId, juce::Colours::white);
+            progressionBox.setColour(juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
+            addAndMakeVisible(progressionBox);
+
+            progressionBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff27405f));
+            progressionBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xfff3f7ff));
+            progressionBtn.onClick = [this]
+            {
+                applySelectedChordProgression();
+                pianoRoll.grabKeyboardFocus();
+            };
+            addAndMakeVisible(progressionBtn);
+            updateChordButtonText();
+
+            bassPatternBox.addItem("Root Notes", 1);
+            bassPatternBox.addItem("Octave Bounce", 2);
+            bassPatternBox.addItem("Pulse 8ths", 3);
+            bassPatternBox.addItem("Passing Tone", 4);
+            bassPatternBox.setSelectedId(1, juce::dontSendNotification);
+            bassPatternBox.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff2d4d2f));
+            bassPatternBox.setColour(juce::ComboBox::textColourId, juce::Colours::white);
+            bassPatternBox.setColour(juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
+            bassPatternBox.onChange = [this]
+            {
+                basslinePattern = basslinePatternForComboId(bassPatternBox.getSelectedId());
+                updateBasslineButtonText();
+            };
+            addAndMakeVisible(bassPatternBox);
+
+            bassTargetBox.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff2d4d2f));
+            bassTargetBox.setColour(juce::ComboBox::textColourId, juce::Colours::white);
+            bassTargetBox.setColour(juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
+            addAndMakeVisible(bassTargetBox);
+
+            basslineBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2d4d2f));
+            basslineBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffeef9ee));
+            basslineBtn.onClick = [this]
+            {
+                applyBasslineGeneration();
+                pianoRoll.grabKeyboardFocus();
+            };
+            addAndMakeVisible(basslineBtn);
+            updateBasslineButtonText();
+            refreshProgressionOptions();
+            refreshBassTargetOptions();
+
             loadMidiBtn.setColour(juce::TextButton::buttonColourId,  juce::Colour(0xff20324a));
             loadMidiBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffd6e4ff));
             loadMidiBtn.onClick = [this]
@@ -2029,43 +2406,54 @@ class PianoRollWindow : public juce::DocumentWindow
             keyRootBox.setSelectedId(key.tonic + 1, juce::dontSendNotification);
             keyScaleBox.setSelectedId(key.scale == ScaleType::Minor ? 2 : 1, juce::dontSendNotification);
             pianoRoll.setKeySignature(key);
+            refreshProgressionOptions();
             keyboardOverlay.repaint();
+        }
+
+        void setPattern(Pattern* pat, int ch, double bpmValue)
+        {
+            pianoRoll.setPattern(pat, ch, bpmValue);
+            refreshProgressionOptions();
+            refreshBassTargetOptions();
         }
 
         void resized() override
         {
-            const int snapH = 26;
+            const int rowH = 26;
 
-            // Left side: [Q toggle | quantize grid | key root | key scale]
-            quantizeBtn.setBounds(4,   1, 28, snapH - 2);
-            quantizeBox.setBounds(34,  0, 68, snapH);
-            keyRootBox.setBounds(108, 0, 76, snapH);
-            keyScaleBox.setBounds(188, 0, 72, snapH);
+            // Row 1: tonal helpers
+            quantizeBtn.setBounds(4, 1, 28, rowH - 2);
+            quantizeBox.setBounds(34, 0, 68, rowH);
+            keyRootBox.setBounds(106, 0, 70, rowH);
+            keyScaleBox.setBounds(180, 0, 74, rowH);
+            chordVoicingBox.setBounds(258, 0, 90, rowH);
+            chordStrumBox.setBounds(352, 0, 88, rowH);
+            progressionBtn.setBounds(getWidth() - 110, 0, 106, rowH);
+            progressionBox.setBounds(444, 0, juce::jmax(120, getWidth() - 444 - 114), rowH);
 
-            // Right side: [Load MIDI | Save MIDI | Clear | Sel | REC | edit snap]
+            // Row 2: session + bass + utility
             int rightX = getWidth();
-            snapBox    .setBounds(rightX - 90, 0, 90, snapH); rightX -= 96;
-            recBtn     .setBounds(rightX - 48, 0, 48, snapH); rightX -= 52;
-            selectBtn  .setBounds(rightX - 44, 0, 44, snapH); rightX -= 48;
-            clearBtn   .setBounds(rightX - 46, 0, 46, snapH); rightX -= 50;
-            saveMidiBtn.setBounds(rightX - 78, 0, 78, snapH); rightX -= 82;
-            loadMidiBtn.setBounds(rightX - 78, 0, 78, snapH);
+            snapBox    .setBounds(rightX - 84, rowH, 84, rowH); rightX -= 88;
+            recBtn     .setBounds(rightX - 44, rowH, 44, rowH); rightX -= 48;
+            selectBtn  .setBounds(rightX - 42, rowH, 42, rowH); rightX -= 46;
+            clearBtn   .setBounds(rightX - 44, rowH, 44, rowH); rightX -= 48;
+            saveMidiBtn.setBounds(rightX - 68, rowH, 68, rowH); rightX -= 72;
+            loadMidiBtn.setBounds(rightX - 68, rowH, 68, rowH);
 
-            // Centre: [Trigger | < | > | ^ | v | Align]  — session controls
-            {
-                const int totalW  = 56 + 28 + 28 + 28 + 28 + 44;
-                int mx = (getWidth() - totalW) / 2;
-                triggerBtn   .setBounds(mx, 0, 54, snapH);  mx += 58;
-                nudgeLeftBtn .setBounds(mx, 0, 26, snapH);  mx += 30;
-                nudgeRightBtn.setBounds(mx, 0, 26, snapH);  mx += 30;
-                nudgeUpBtn   .setBounds(mx, 0, 26, snapH);  mx += 30;
-                nudgeDownBtn .setBounds(mx, 0, 26, snapH);  mx += 30;
-                alignBtn     .setBounds(mx, 0, 42, snapH);
-            }
+            triggerBtn.setBounds(4, rowH, 54, rowH);
+            nudgeLeftBtn.setBounds(62, rowH, 26, rowH);
+            nudgeRightBtn.setBounds(92, rowH, 26, rowH);
+            nudgeUpBtn.setBounds(122, rowH, 26, rowH);
+            nudgeDownBtn.setBounds(152, rowH, 26, rowH);
+            alignBtn.setBounds(182, rowH, 42, rowH);
+
+            bassPatternBox.setBounds(232, rowH, 120, rowH);
+            bassTargetBox.setBounds(356, rowH, 170, rowH);
+            basslineBtn.setBounds(530, rowH, 110, rowH);
 
             const int keyboardW = pianoRoll.getKeyboardWidth();
-            keyboardOverlay.setBounds(0, snapH, keyboardW, getHeight() - snapH);
-            viewport.setBounds(keyboardW, snapH, getWidth() - keyboardW, getHeight() - snapH);
+            keyboardOverlay.setBounds(0, rowH * 2, keyboardW, getHeight() - rowH * 2);
+            viewport.setBounds(keyboardW, rowH * 2, getWidth() - keyboardW, getHeight() - rowH * 2);
 
             const int cw = juce::jmax(viewport.getWidth(),  pianoRoll.getNeededWidth());
             const int ch = juce::jmax(viewport.getHeight(), pianoRoll.getNeededHeight());
@@ -2101,12 +2489,191 @@ class PianoRollWindow : public juce::DocumentWindow
         }
 
     private:
+        void refreshProgressionOptions()
+        {
+            const auto key = pianoRoll.getKeySignature();
+            const auto presets = MusicTheory::getChordProgressionPresets(key.scale);
+            const int previousId = progressionBox.getSelectedId();
+
+            progressionBox.clear(juce::dontSendNotification);
+            int itemId = 1;
+            for (const auto& preset : presets)
+                progressionBox.addItem("[" + preset.category + "] "
+                                           + preset.name
+                                           + " - "
+                                           + MusicTheory::chordSymbolsForProgression(key, preset),
+                                       itemId++);
+
+            const int clampedId = juce::jlimit(1, juce::jmax(1, (int)presets.size()), previousId > 0 ? previousId : 1);
+            progressionBox.setSelectedId(clampedId, juce::dontSendNotification);
+        }
+
+        void applySelectedChordProgression()
+        {
+            const auto presets = MusicTheory::getChordProgressionPresets(pianoRoll.getKeySignature().scale);
+            const int selectedId = progressionBox.getSelectedId();
+            if (selectedId <= 0 || selectedId > (int)presets.size())
+                return;
+
+            if (pianoRoll.fillWithChordProgression(presets[(size_t)(selectedId - 1)],
+                                                   chordVoicing,
+                                                   chordStrumBeats))
+                pianoRoll.grabKeyboardFocus();
+        }
+
+        void refreshBassTargetOptions(int preferredChannel = -1)
+        {
+            auto* pat = pianoRoll.getPatternModel();
+            const int currentSelection = bassTargetBox.getSelectedId();
+            bassTargetBox.clear(juce::dontSendNotification);
+            bassTargetBox.addItem("Auto / Create Bass", 1);
+
+            if (pat == nullptr)
+            {
+                bassTargetBox.setSelectedId(1, juce::dontSendNotification);
+                return;
+            }
+
+            for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
+            {
+                if (ch == pianoRoll.getChannelIndex())
+                    continue;
+                if (pat->channelTypes[ch] != ChannelType::Melodic)
+                    continue;
+
+                const auto name = pat->channelNames[ch].isNotEmpty()
+                    ? pat->channelNames[ch]
+                    : ("Channel " + juce::String(ch + 1));
+                bassTargetBox.addItem(name, 100 + ch);
+            }
+
+            if (preferredChannel >= 0)
+                bassTargetBox.setSelectedId(100 + preferredChannel, juce::dontSendNotification);
+            else if (currentSelection > 0 && bassTargetBox.indexOfItemId(currentSelection) >= 0)
+                bassTargetBox.setSelectedId(currentSelection, juce::dontSendNotification);
+            else
+                bassTargetBox.setSelectedId(1, juce::dontSendNotification);
+        }
+
+        void applyBasslineGeneration()
+        {
+            int targetChannel = -1;
+            const int selection = bassTargetBox.getSelectedId();
+            if (selection == 1)
+            {
+                if (onEnsureBassChannel)
+                    targetChannel = onEnsureBassChannel();
+            }
+            else if (selection >= 100)
+            {
+                targetChannel = selection - 100;
+            }
+
+            if (targetChannel < 0)
+                return;
+
+            refreshBassTargetOptions(targetChannel);
+
+            if (pianoRoll.generateBasslineToChannel(targetChannel, basslinePattern))
+            {
+                if (onBasslineApplied)
+                    onBasslineApplied(targetChannel);
+                pianoRoll.grabKeyboardFocus();
+            }
+            else
+            {
+                juce::AlertWindow::showMessageBoxAsync(
+                    juce::MessageBoxIconType::WarningIcon,
+                    "Bassline Generation",
+                    "Create or keep chord notes in the current piano roll first, then generate the bassline.");
+            }
+        }
+
+        static PianoRollComponent::ChordVoicing voicingForComboId(int itemId)
+        {
+            switch (itemId)
+            {
+                case 2: return PianoRollComponent::ChordVoicing::Open;
+                case 3: return PianoRollComponent::ChordVoicing::FirstInversion;
+                case 4: return PianoRollComponent::ChordVoicing::SecondInversion;
+                case 5: return PianoRollComponent::ChordVoicing::Drop2;
+                default:   return PianoRollComponent::ChordVoicing::Close;
+            }
+        }
+
+        static float strumForComboId(int itemId)
+        {
+            switch (itemId)
+            {
+                case 2: return 0.02f;
+                case 3: return 0.05f;
+                case 4: return 0.09f;
+                default:   return 0.0f;
+            }
+        }
+
+        juce::String chordVoicingLabel() const
+        {
+            switch (chordVoicing)
+            {
+                case PianoRollComponent::ChordVoicing::Open:            return "Open";
+                case PianoRollComponent::ChordVoicing::FirstInversion:  return "1st Inv";
+                case PianoRollComponent::ChordVoicing::SecondInversion: return "2nd Inv";
+                case PianoRollComponent::ChordVoicing::Drop2:           return "Drop2";
+                default:                                                return "Close";
+            }
+        }
+
+        juce::String chordStrumLabel() const
+        {
+            if (chordStrumBeats >= 0.085f) return "Heavy";
+            if (chordStrumBeats >= 0.045f) return "Medium";
+            if (chordStrumBeats >= 0.015f) return "Light";
+            return "Straight";
+        }
+
+        static PianoRollComponent::BasslinePattern basslinePatternForComboId(int itemId)
+        {
+            switch (itemId)
+            {
+                case 2: return PianoRollComponent::BasslinePattern::OctaveBounce;
+                case 3: return PianoRollComponent::BasslinePattern::Pulse8ths;
+                case 4: return PianoRollComponent::BasslinePattern::PassingTone;
+                default:   return PianoRollComponent::BasslinePattern::RootNotes;
+            }
+        }
+
+        juce::String basslinePatternLabel() const
+        {
+            switch (basslinePattern)
+            {
+                case PianoRollComponent::BasslinePattern::OctaveBounce: return "Bounce";
+                case PianoRollComponent::BasslinePattern::Pulse8ths:    return "Pulse";
+                case PianoRollComponent::BasslinePattern::PassingTone:  return "Passing";
+                default:                                               return "Root";
+            }
+        }
+
+        void updateChordButtonText()
+        {
+            progressionBtn.setButtonText("Apply Chords");
+            progressionBtn.setTooltip("Apply the selected chord progression using voicing "
+                                      + chordVoicingLabel() + " and strum " + chordStrumLabel() + ".");
+        }
+
+        void updateBasslineButtonText()
+        {
+            basslineBtn.setButtonText("Generate Bass");
+            basslineBtn.setTooltip("Generate a bassline using the " + basslinePatternLabel() + " pattern.");
+        }
+
         void applySelectedKeySignature()
         {
             KeySignature key;
             key.tonic = juce::jlimit(0, 11, keyRootBox.getSelectedId() - 1);
             key.scale = keyScaleBox.getSelectedId() == 2 ? ScaleType::Minor : ScaleType::Major;
             pianoRoll.setKeySignature(key);
+            refreshProgressionOptions();
             keyboardOverlay.repaint();
             if (onKeySignatureChanged)
                 onKeySignatureChanged(key);

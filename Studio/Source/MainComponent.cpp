@@ -675,7 +675,7 @@ MainComponent::MainComponent()
 
         if (auto* pat = findPattern(activePatternId))
         {
-            pianoRollWindow->content.pianoRoll.setPattern(pat, ch, project.bpm);
+            pianoRollWindow->content.setPattern(pat, ch, project.bpm);
             pianoRollWindow->content.setKeySignature(project.keySignature);
             pianoRollWindow->content.pianoRoll.onNotesChanged = [this] { markDirty(); };
             pianoRollWindow->content.pianoRoll.onNoteDeleted  = [this, ch](int pitch)
@@ -700,6 +700,7 @@ MainComponent::MainComponent()
                     channelRack.setPlaybackStep(-1);
                     playlist.setPlayheadBar(-1.0);
                     pianoRollWindow->content.pianoRoll.setPlayheadBeat(-1.0);
+                    restorePlayModeAfterPianoRollPlayback();
                 }
                 else
                 {
@@ -717,6 +718,7 @@ MainComponent::MainComponent()
                     }
                     else
                     {
+                        beginPianoRollPatternPlayback();
                         syncPatternToEngine();
                         audioEngine.play();
                     }
@@ -726,6 +728,7 @@ MainComponent::MainComponent()
             // Smart Record: armed trigger fires transport from beat 0
             pianoRollWindow->content.pianoRoll.onStartTransport = [this]
             {
+                beginPianoRollPatternPlayback();
                 syncPatternToEngine();
                 audioEngine.play();
             };
@@ -738,6 +741,17 @@ MainComponent::MainComponent()
             pianoRollWindow->content.onKeySignatureChanged = [this](const KeySignature& key)
             {
                 project.keySignature = key;
+                markDirty();
+            };
+            pianoRollWindow->content.onEnsureBassChannel = [this]() -> int
+            {
+                return ensureAutoBassChannel();
+            };
+            pianoRollWindow->content.onBasslineApplied = [this](int ch)
+            {
+                focusPianoRollChannel(ch);
+                syncPatternToEngine();
+                audioEngine.updatePatternSnapshot();
                 markDirty();
             };
             pianoRollWindow->content.onExportMidi = [this] { exportCurrentPianoRollToMidi(); };
@@ -1133,7 +1147,7 @@ void MainComponent::selectPattern(int id)
     if (pianoRollWindow != nullptr && pianoRollWindow->isVisible() && pianoRollChannel >= 0)
         if (auto* pat = findPattern(activePatternId))
         {
-            pianoRollWindow->content.pianoRoll.setPattern(pat, pianoRollChannel, project.bpm);
+            pianoRollWindow->content.setPattern(pat, pianoRollChannel, project.bpm);
             pianoRollWindow->content.setKeySignature(project.keySignature);
         }
 }
@@ -1354,7 +1368,7 @@ void MainComponent::importCurrentPianoRollFromMidi()
                 channelRack.loadPattern(*importPat);
 
             if (pianoRollWindow != nullptr)
-                pianoRollWindow->content.pianoRoll.setPattern(importPat, importChannel, project.bpm);
+                pianoRollWindow->content.setPattern(importPat, importChannel, project.bpm);
 
             markDirty();
         });
@@ -1495,7 +1509,7 @@ void MainComponent::reloadProjectIntoUI()
     {
         if (auto* pat = findPattern(activePatternId))
         {
-            pianoRollWindow->content.pianoRoll.setPattern(pat, pianoRollChannel, project.bpm);
+            pianoRollWindow->content.setPattern(pat, pianoRollChannel, project.bpm);
             pianoRollWindow->content.setKeySignature(project.keySignature);
         }
     }
@@ -1595,6 +1609,93 @@ void MainComponent::syncChannelRackToProject()
     // Save current rack state (including names/types) into the active pattern
     if (auto* pat = findPattern(activePatternId))
         channelRack.saveToPattern(*pat);
+}
+
+int MainComponent::ensureAutoBassChannel()
+{
+    auto* activePat = findPattern(activePatternId);
+    if (activePat == nullptr)
+        return -1;
+
+    channelRack.saveToPattern(*activePat);
+
+    for (int ch = 0; ch < project.channelCount && ch < Pattern::kMaxChannels; ++ch)
+    {
+        const auto name = activePat->channelNames[ch].trim().toLowerCase();
+        if (activePat->channelTypes[ch] == ChannelType::Melodic
+            && (name == "bass" || name.contains("bass")))
+            return ch;
+    }
+
+    if (project.channelCount >= Pattern::kMaxChannels)
+    {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::MessageBoxIconType::WarningIcon,
+            "Bassline Generation",
+            "No free channel is available for a bassline. Reuse another melodic channel or remove one first.");
+        return -1;
+    }
+
+    const int newChannel = project.channelCount;
+    const auto presets = SynthPresets::getAll();
+    const auto bassPresetIt = std::find_if(presets.begin(), presets.end(),
+                                           [](const SynthPresets::Preset& preset)
+                                           {
+                                               return preset.name == "Fat Bass";
+                                           });
+    const SynthParams bassParams = bassPresetIt != presets.end() ? bassPresetIt->params : SynthParams{};
+
+    for (auto& pat : project.patterns)
+    {
+        pat.channelNames[newChannel] = "Bass";
+        pat.channelTypes[newChannel] = ChannelType::Melodic;
+        pat.synthParams[newChannel] = bassParams;
+        pat.samplePaths[newChannel].clear();
+        pat.notes[newChannel].clear();
+    }
+
+    project.channelCount = newChannel + 1;
+    channelRack.resetToChannelCount(project.channelCount, activePat->channelNames);
+    channelRack.loadPattern(*activePat);
+    channelRack.setChannelType(newChannel, ChannelType::Melodic);
+    audioEngine.unloadSample(newChannel);
+    audioEngine.updatePatternSnapshot();
+    markDirty();
+    return newChannel;
+}
+
+void MainComponent::focusPianoRollChannel(int channelIndex)
+{
+    pianoRollChannel = channelIndex;
+    if (pianoRollWindow == nullptr)
+        return;
+
+    if (auto* pat = findPattern(activePatternId))
+    {
+        pianoRollWindow->content.setPattern(pat, channelIndex, project.bpm);
+        pianoRollWindow->content.setKeySignature(project.keySignature);
+    }
+}
+
+void MainComponent::beginPianoRollPatternPlayback()
+{
+    if (toolbar.getPlayMode() == PlayMode::Pattern)
+        return;
+
+    pianoRollPlaybackOverridesPlayMode = true;
+    playModeBeforePianoRollPlayback = toolbar.getPlayMode();
+    toolbar.setPlayMode(PlayMode::Pattern);
+    audioEngine.setPlayMode(PlayMode::Pattern);
+}
+
+void MainComponent::restorePlayModeAfterPianoRollPlayback()
+{
+    if (! pianoRollPlaybackOverridesPlayMode)
+        return;
+
+    pianoRollPlaybackOverridesPlayMode = false;
+    toolbar.setPlayMode(playModeBeforePianoRollPlayback);
+    audioEngine.setPlayMode(playModeBeforePianoRollPlayback);
 }
 
 void MainComponent::saveProject()

@@ -96,6 +96,139 @@ namespace MusicTheory
     {
         return scale == ScaleType::Minor ? "Minor" : "Major";
     }
+
+    inline juce::String tonicName(const KeySignature& key)
+    {
+        return noteNameForPitch(60 + key.tonic, key);
+    }
+
+    inline juce::String diatonicTriadSuffix(ScaleType scale, int degree)
+    {
+        static const std::array<const char*, 7> major
+            { "", "m", "m", "", "", "m", "dim" };
+        static const std::array<const char*, 7> minor
+            { "m", "dim", "", "m", "m", "", "" };
+
+        const auto& suffixes = scale == ScaleType::Minor ? minor : major;
+        return suffixes[(size_t)juce::jlimit(0, 6, degree)];
+    }
+
+    struct ProgressionStep
+    {
+        int degree = 0;      // 0 = I/i, 1 = II/ii, ... 6 = VII/vii
+        int chordTones = 3;  // triad by default, 4 = seventh chord
+    };
+
+    struct ChordProgressionPreset
+    {
+        juce::String category;
+        juce::String name;
+        juce::String roman;
+        ScaleType    scale = ScaleType::Major;
+        std::vector<ProgressionStep> steps;
+    };
+
+    inline ChordProgressionPreset makeChordProgressionPreset(const char* category,
+                                                             const char* name,
+                                                             const char* roman,
+                                                             ScaleType scale,
+                                                             std::initializer_list<ProgressionStep> steps)
+    {
+        ChordProgressionPreset preset;
+        preset.category = category;
+        preset.name = name;
+        preset.roman = roman;
+        preset.scale = scale;
+        preset.steps.assign(steps.begin(), steps.end());
+        return preset;
+    }
+
+    inline juce::String chordSymbolForDegree(const KeySignature& key, int degree)
+    {
+        const auto& scaleIntervals = getScaleIntervals(key.scale);
+        const int safeDegree = juce::jlimit(0, 6, degree);
+        const int chordPitch = 60 + key.tonic + scaleIntervals[(size_t)safeDegree];
+        return noteNameForPitch(chordPitch, key) + diatonicTriadSuffix(key.scale, safeDegree);
+    }
+
+    inline juce::String chordSymbolsForProgression(const KeySignature& key, const ChordProgressionPreset& preset)
+    {
+        juce::StringArray names;
+        for (const auto& step : preset.steps)
+            names.add(chordSymbolForDegree(key, step.degree));
+        return names.joinIntoString("-");
+    }
+
+    inline const std::vector<ChordProgressionPreset>& getChordProgressionPresets(ScaleType scale)
+    {
+        static const std::vector<ChordProgressionPreset> majorPresets
+        {
+            makeChordProgressionPreset("Pop", "Axis Pop", "I-V-vi-IV", ScaleType::Major,
+                                       { { 0, 3 }, { 4, 3 }, { 5, 3 }, { 3, 3 } }),
+            makeChordProgressionPreset("Pop", "50s Pop", "I-vi-IV-V", ScaleType::Major,
+                                       { { 0, 3 }, { 5, 3 }, { 3, 3 }, { 4, 3 } }),
+            makeChordProgressionPreset("Pop", "Sensitive Pop", "vi-IV-I-V", ScaleType::Major,
+                                       { { 5, 3 }, { 3, 3 }, { 0, 3 }, { 4, 3 } }),
+            makeChordProgressionPreset("Pop", "Lifted Chorus", "I-IV-vi-V", ScaleType::Major,
+                                       { { 0, 3 }, { 3, 3 }, { 5, 3 }, { 4, 3 } }),
+            makeChordProgressionPreset("Pop", "Big Hook", "IV-I-V-vi", ScaleType::Major,
+                                       { { 3, 3 }, { 0, 3 }, { 4, 3 }, { 5, 3 } }),
+            makeChordProgressionPreset("Pop", "Radio Climb", "I-iii-vi-IV", ScaleType::Major,
+                                       { { 0, 3 }, { 2, 3 }, { 5, 3 }, { 3, 3 } }),
+            makeChordProgressionPreset("Cadence", "Soul Turnaround", "I-vi-ii-V", ScaleType::Major,
+                                       { { 0, 3 }, { 5, 3 }, { 1, 3 }, { 4, 3 } }),
+            makeChordProgressionPreset("Cadence", "Jazz Cadence", "ii-V-I", ScaleType::Major,
+                                       { { 1, 4 }, { 4, 4 }, { 0, 4 } }),
+            makeChordProgressionPreset("Cadence", "Circle Resolve", "vi-ii-V-I", ScaleType::Major,
+                                       { { 5, 4 }, { 1, 4 }, { 4, 4 }, { 0, 4 } }),
+            makeChordProgressionPreset("Cadence", "Bright Walk", "I-ii-IV-V", ScaleType::Major,
+                                       { { 0, 3 }, { 1, 3 }, { 3, 3 }, { 4, 3 } }),
+            makeChordProgressionPreset("Cadence", "Folk Loop", "I-IV-I-V", ScaleType::Major,
+                                       { { 0, 3 }, { 3, 3 }, { 0, 3 }, { 4, 3 } }),
+            makeChordProgressionPreset("Cadence", "Classic Verse", "I-V-IV-V", ScaleType::Major,
+                                       { { 0, 3 }, { 4, 3 }, { 3, 3 }, { 4, 3 } }),
+            makeChordProgressionPreset("Long Form", "Canon", "I-V-vi-iii-IV-I-IV-V", ScaleType::Major,
+                                       { { 0, 3 }, { 4, 3 }, { 5, 3 }, { 2, 3 }, { 3, 3 }, { 0, 3 }, { 3, 3 }, { 4, 3 } }),
+            makeChordProgressionPreset("Long Form", "Climbing Story", "I-iii-IV-I-ii-V-I", ScaleType::Major,
+                                       { { 0, 3 }, { 2, 3 }, { 3, 3 }, { 0, 3 }, { 1, 3 }, { 4, 3 }, { 0, 3 } }),
+            makeChordProgressionPreset("Long Form", "Neo Soul", "ii-V-I-vi", ScaleType::Major,
+                                       { { 1, 4 }, { 4, 4 }, { 0, 4 }, { 5, 4 } })
+        };
+
+        static const std::vector<ChordProgressionPreset> minorPresets
+        {
+            makeChordProgressionPreset("Dark", "Dark Pop", "i-VI-III-VII", ScaleType::Minor,
+                                       { { 0, 3 }, { 5, 3 }, { 2, 3 }, { 6, 3 } }),
+            makeChordProgressionPreset("Dark", "Minor Rise", "i-VII-VI-VII", ScaleType::Minor,
+                                       { { 0, 3 }, { 6, 3 }, { 5, 3 }, { 6, 3 } }),
+            makeChordProgressionPreset("Dark", "Cinematic", "i-iv-VI-VII", ScaleType::Minor,
+                                       { { 0, 3 }, { 3, 3 }, { 5, 3 }, { 6, 3 } }),
+            makeChordProgressionPreset("Dark", "Trap Loop", "i-VI-iv-VII", ScaleType::Minor,
+                                       { { 0, 3 }, { 5, 3 }, { 3, 3 }, { 6, 3 } }),
+            makeChordProgressionPreset("Dark", "Midnight", "i-III-VII-VI", ScaleType::Minor,
+                                       { { 0, 3 }, { 2, 3 }, { 6, 3 }, { 5, 3 } }),
+            makeChordProgressionPreset("Dark", "Shadow Story", "i-VI-III-VII-i", ScaleType::Minor,
+                                       { { 0, 3 }, { 5, 3 }, { 2, 3 }, { 6, 3 }, { 0, 3 } }),
+            makeChordProgressionPreset("Emotional", "Sad Hook", "VI-III-VII-i", ScaleType::Minor,
+                                       { { 5, 3 }, { 2, 3 }, { 6, 3 }, { 0, 3 } }),
+            makeChordProgressionPreset("Emotional", "Minor Turn", "i-iv-v-i", ScaleType::Minor,
+                                       { { 0, 3 }, { 3, 3 }, { 4, 3 }, { 0, 3 } }),
+            makeChordProgressionPreset("Emotional", "Minor Path", "i-VII-VI-v", ScaleType::Minor,
+                                       { { 0, 3 }, { 6, 3 }, { 5, 3 }, { 4, 3 } }),
+            makeChordProgressionPreset("Emotional", "Minor Lift", "iv-VI-III-VII", ScaleType::Minor,
+                                       { { 3, 3 }, { 5, 3 }, { 2, 3 }, { 6, 3 } }),
+            makeChordProgressionPreset("Cadence", "Dark Cadence", "ii-v-i", ScaleType::Minor,
+                                       { { 1, 4 }, { 4, 4 }, { 0, 4 } }),
+            makeChordProgressionPreset("Cadence", "Aeolian Circle", "i-iv-VII-III", ScaleType::Minor,
+                                       { { 0, 3 }, { 3, 3 }, { 6, 3 }, { 2, 3 } }),
+            makeChordProgressionPreset("Cadence", "Minor Resolve", "VI-VII-i-i", ScaleType::Minor,
+                                       { { 5, 3 }, { 6, 3 }, { 0, 3 }, { 0, 3 } }),
+            makeChordProgressionPreset("Cadence", "Minor Neo Soul", "iv-VII-III-VI", ScaleType::Minor,
+                                       { { 3, 4 }, { 6, 4 }, { 2, 4 }, { 5, 4 } })
+        };
+
+        return scale == ScaleType::Minor ? minorPresets : majorPresets;
+    }
 }
 
 // M3 — one note in a melodic channel's piano roll

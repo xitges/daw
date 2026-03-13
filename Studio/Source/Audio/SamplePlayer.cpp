@@ -148,6 +148,16 @@ void SamplePlayer::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                 residualTailL = residualTailR = 0.0f;
         }
 
+        if (playPosition < 0.0)
+        {
+            outputBuffer.addSample(0, i, mixedL);
+            if (outChannels > 1)
+                outputBuffer.addSample(1, i, mixedR);
+            lastOutputL = mixedL;
+            lastOutputR = mixedR;
+            continue;
+        }
+
         const int pos0 = (int)playPosition;
         if (pos0 >= srcSamples)
         {
@@ -155,6 +165,7 @@ void SamplePlayer::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             smoothVolume_.skip(safeSamples - i);
             smoothPan_.skip(safeSamples - i);
             playPosition = -1.0;
+            startOffset_ = 0;
             outputBuffer.addSample(0, i, mixedL);
             if (outChannels > 1)
                 outputBuffer.addSample(1, i, mixedR);
