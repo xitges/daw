@@ -29,6 +29,19 @@ ChannelRackComponent::ChannelRackComponent()
         repaint();
     };
 
+    addAndMakeVisible(clearStepsBtn);
+    clearStepsBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff4a2020));
+    clearStepsBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffffd0d0));
+    clearStepsBtn.onClick = [this]
+    {
+        for (auto& channel : channels)
+            for (int s = 0; s < Pattern::kMaxSteps; ++s)
+                channel.steps[(size_t)s] = false;
+
+        if (onClearAllSteps) onClearAllSteps();
+        repaint();
+    };
+
     // Step count slider — any value 1..kMaxSteps by 1
     addAndMakeVisible(stepCountSlider);
     stepCountSlider.setRange(1, Pattern::kMaxSteps, 1);
@@ -555,7 +568,8 @@ void ChannelRackComponent::resized()
     // Bottom controls
     const int controlsY = HEADER_HEIGHT + (int)channels.size() * ROW_HEIGHT + 8;
     addChannelBtn   .setBounds(10,  controlsY, 140, 30);
-    stepCountSlider .setBounds(160, controlsY, 100, 30);
+    clearStepsBtn  .setBounds(160, controlsY, 110, 30);
+    stepCountSlider .setBounds(280, controlsY, 100, 30);
 
     // Per-channel controls layout
     for (int i = 0; i < (int)channels.size(); ++i)

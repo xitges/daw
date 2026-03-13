@@ -14,6 +14,77 @@ struct LambdaAction : public juce::UndoableAction
 };
 
 constexpr int kMidiPpq = 960;
+
+class AudioSettingsContent : public juce::Component
+{
+public:
+    explicit AudioSettingsContent(juce::AudioDeviceManager& deviceManager)
+        : selector(deviceManager,
+                   0, 0,
+                   0, 2,
+                   false, false,
+                   true, true)
+    {
+        addAndMakeVisible(titleLabel);
+        titleLabel.setText("Audio Output", juce::dontSendNotification);
+        titleLabel.setJustificationType(juce::Justification::centredLeft);
+        titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+        titleLabel.setFont(juce::Font(juce::FontOptions().withHeight(17.0f).withStyle("Bold")));
+
+        addAndMakeVisible(hintLabel);
+        hintLabel.setText("Reconnect Bluetooth? Reopen this panel and reselect the output device.", juce::dontSendNotification);
+        hintLabel.setJustificationType(juce::Justification::centredLeft);
+        hintLabel.setColour(juce::Label::textColourId, juce::Colour(0xffb9c0ca));
+        hintLabel.setFont(juce::Font(juce::FontOptions().withHeight(12.0f)));
+
+        addAndMakeVisible(selector);
+        setSize(460, 300);
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        g.fillAll(juce::Colour(0xff1b1c1f));
+        g.setColour(juce::Colour(0xff24262b));
+        g.fillRoundedRectangle(getLocalBounds().toFloat().reduced(10.0f, 10.0f), 10.0f);
+        g.setColour(juce::Colours::white.withAlpha(0.08f));
+        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(10.0f, 10.0f), 10.0f, 1.0f);
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced(22, 18);
+        titleLabel.setBounds(area.removeFromTop(24));
+        area.removeFromTop(2);
+        hintLabel.setBounds(area.removeFromTop(18));
+        area.removeFromTop(10);
+        selector.setBounds(area);
+    }
+
+private:
+    juce::Label titleLabel;
+    juce::Label hintLabel;
+    juce::AudioDeviceSelectorComponent selector;
+};
+
+class AudioSettingsWindow : public juce::DocumentWindow
+{
+public:
+    explicit AudioSettingsWindow(juce::AudioDeviceManager& deviceManager)
+        : juce::DocumentWindow("Audio Settings",
+                               juce::Colour(0xff202124),
+                               juce::DocumentWindow::closeButton)
+    {
+        setUsingNativeTitleBar(true);
+        setResizable(false, false);
+        setContentOwned(new AudioSettingsContent(deviceManager), true);
+        centreWithSize(460, 300);
+    }
+
+    void closeButtonPressed() override
+    {
+        setVisible(false);
+    }
+};
 } // namespace
 
 MainComponent::MainComponent()
@@ -60,15 +131,15 @@ MainComponent::MainComponent()
     c1.trackIndex=0; c1.startBar=0;  c1.lengthBars=4;
     project.playlistClips.push_back(c1);
 
-    PlaylistClip c2; c2.id=2; c2.patternId=1; c2.name="Main Beat";
+    PlaylistClip c2; c2.id=2; c2.patternId=-1; c2.name="Main Beat";
     c2.trackIndex=0; c2.startBar=4;  c2.lengthBars=8;
     project.playlistClips.push_back(c2);
 
-    PlaylistClip c3; c3.id=3; c3.patternId=1; c3.name="Break";
+    PlaylistClip c3; c3.id=3; c3.patternId=-1; c3.name="Break";
     c3.trackIndex=1; c3.startBar=8;  c3.lengthBars=4;
     project.playlistClips.push_back(c3);
 
-    PlaylistClip c4; c4.id=4; c4.patternId=1; c4.name="Fill";
+    PlaylistClip c4; c4.id=4; c4.patternId=-1; c4.name="Fill";
     c4.trackIndex=2; c4.startBar=12; c4.lengthBars=2;
     project.playlistClips.push_back(c4);
 
@@ -195,7 +266,7 @@ MainComponent::MainComponent()
         const int fallbackId = pats.front().id;
         for (auto& clip : project.playlistClips)
             if (clip.patternId == deletedId)
-                clip.patternId = fallbackId;
+                clip.patternId = -1;
 
         selectPattern(fallbackId);
         markDirty();
@@ -296,8 +367,6 @@ MainComponent::MainComponent()
 
     // ---- Playlist inside Viewport
     playlist.setProject(&project);
-    playlist.getActivePatternId = [this]() { return activePatternId; };
-
     playlist.onSeekToBar = [this](double bar)
     {
         audioEngine.seekSongToBar(bar);
@@ -456,6 +525,20 @@ MainComponent::MainComponent()
             }));
     };
 
+    channelRack.onClearAllSteps = [this]
+    {
+        if (auto* pat = findPattern(activePatternId))
+        {
+            channelRack.saveToPattern(*pat);
+            for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
+                for (int s = 0; s < pat->stepCount; ++s)
+                    audioEngine.setStepPattern(ch, s, false);
+
+            audioEngine.updatePatternSnapshot();
+            markDirty();
+        }
+    };
+
     // ---- M6: Playlist clip undo
     // M11 — track management callbacks
     playlist.onTrackAdded   = [this]()      { markDirty(); resized(); };
@@ -562,6 +645,21 @@ MainComponent::MainComponent()
                     if (c.id == id) { c.lengthBars = oldLen; break; }
                 playlist.repaint(); markDirty(); return true;
             }));
+    };
+
+    playlist.onClipPatternChanged = [this](int clipId, int patternId)
+    {
+        for (auto& clip : project.playlistClips)
+        {
+            if (clip.id == clipId)
+            {
+                clip.patternId = patternId;
+                break;
+            }
+        }
+        playlist.repaint();
+        markDirty();
+        audioEngine.refreshSongCacheAsync();
     };
 
     // ---- M3: Piano Roll
@@ -913,6 +1011,17 @@ MainComponent::MainComponent()
     };
 
     // M12 — MIDI device selection popup
+    toolbar.onAudioButton = [this]
+    {
+        if (audioDeviceWindow == nullptr)
+        {
+            audioDeviceWindow = std::make_unique<AudioSettingsWindow>(audioEngine.getAudioDeviceManager());
+        }
+
+        audioDeviceWindow->setVisible(true);
+        audioDeviceWindow->toFront(true);
+    };
+
     toolbar.onMidiButton = [this]
     {
         const auto devices = audioEngine.getMidiInputDevices();
@@ -1215,6 +1324,15 @@ void MainComponent::importCurrentPianoRollFromMidi()
                           return a.startBeat < b.startBeat;
                       });
 
+            if (importedNotes.empty())
+            {
+                juce::AlertWindow::showMessageBoxAsync(
+                    juce::MessageBoxIconType::WarningIcon,
+                    "MIDI Import Failed",
+                    "The selected MIDI file does not contain any note events.");
+                return;
+            }
+
             audioEngine.ensureCacheLoaderStopped();
             audioEngine.stop();
             audioEngine.allSynthNotesOff();
@@ -1226,10 +1344,14 @@ void MainComponent::importCurrentPianoRollFromMidi()
             importPat->notes[(size_t)importChannel] = std::move(importedNotes);
             const int importedSteps = juce::jlimit(1, kMaxPatternSteps,
                                                    (int)std::ceil(maxEndBeat / 0.25));
-            importPat->stepCount = juce::jmax(importPat->stepCount, importedSteps);
+            importPat->stepCount = importedSteps;
+            importPat->lengthBars = juce::jmax(1, (int)std::ceil((double)importedSteps / 16.0));
 
             audioEngine.setPatternStepCount(importPat->stepCount);
             audioEngine.updatePatternSnapshot();
+
+            if (activePatternId == importPatternId)
+                channelRack.loadPattern(*importPat);
 
             if (pianoRollWindow != nullptr)
                 pianoRollWindow->content.pianoRoll.setPattern(importPat, importChannel, project.bpm);

@@ -23,6 +23,8 @@ public:
         pattern = p;
         channel = ch;
         bpm     = bpmValue;
+        clearSelection(false);
+        resetInteractionState();
         cursorPitch = MusicTheory::snapPitchToScale(cursorPitch, keySignature);
         updateSizeForZoom();
         repaint();
@@ -40,6 +42,15 @@ public:
     }
 
     void setSnapBeats(float s) { snapBeats = s; repaint(); }
+    void setSelectToolEnabled(bool enabled)
+    {
+        if (selectToolEnabled == enabled)
+            return;
+        selectToolEnabled = enabled;
+        resetInteractionState();
+        repaint();
+    }
+    bool isSelectToolEnabled() const { return selectToolEnabled; }
     void setKeySignature(const KeySignature& newKey)
     {
         keySignature = newKey;
@@ -53,6 +64,7 @@ public:
     {
         if (pattern == nullptr) return;
         pattern->notes[channel].clear();
+        clearSelection(false);
         if (onNotesChanged) onNotesChanged();
         repaint();
     }
@@ -83,6 +95,8 @@ public:
 
     // Fired when Space is pressed — wire to MainComponent play/stop toggle
     std::function<void()> onPlayStopToggle;
+
+    std::function<void()> onSelectionChanged;
 
     // ---- Smart Record System -----------------------------------------------
     enum class RecState { Idle, Armed, Recording };
@@ -168,11 +182,41 @@ public:
         repaint();
     }
 
+    void nudgeActiveNotes(float deltaBeats)
+    {
+        if (hasSelectedNotes())
+            nudgeSelectedNotes(deltaBeats);
+        else
+            nudgeSession(deltaBeats);
+    }
+
+    void nudgeActiveNotesPitch(int deltaSemitones)
+    {
+        if (hasSelectedNotes())
+            nudgeSelectedNotesPitch(deltaSemitones);
+        else
+            nudgeSessionPitch(deltaSemitones);
+    }
+
     bool hasSession() const
     {
         if (pattern == nullptr) return false;
         const int endIdx = juce::jmin(sessionEndIdx, (int)pattern->notes[channel].size() - 1);
         return sessionStartIdx <= endIdx;
+    }
+
+    bool hasSelectedNotes() const { return selectedNoteIndices.size() > 0; }
+    bool hasMovableNoteTarget() const { return hasSelectedNotes() || hasSession(); }
+
+    void selectAllNotes()
+    {
+        if (pattern == nullptr) return;
+        selectedNoteIndices.clearQuick();
+        const auto& noteList = pattern->notes[channel];
+        for (int i = 0; i < (int)noteList.size(); ++i)
+            selectedNoteIndices.add(i);
+        notifySelectionChanged();
+        repaint();
     }
 
     // -----------------------------------------------------------------------
@@ -196,6 +240,7 @@ public:
         drawCursor(g);
         drawRuler(g);
         drawNotes(g);
+        drawMarqueeSelection(g);
         drawPlayhead(g);
         drawVelocityLane(g);
         drawArmedOverlay(g);
@@ -253,6 +298,7 @@ public:
     {
         if (pattern == nullptr) return;
         const auto pos = e.getPosition();
+        resetInteractionState();
 
         // Velocity lane — click to start velocity edit
         if (pos.x >= keyWidth && pos.y >= velLaneY())
@@ -283,6 +329,7 @@ public:
                 {
                     const int deletedPitch = noteList[(size_t)i].pitch;
                     noteList.erase(noteList.begin() + i);
+                    removeSelectionIndex(i);
                     if (onNoteDeleted)   onNoteDeleted(deletedPitch);
                     if (onNotesChanged) onNotesChanged();
                     repaint();
@@ -299,6 +346,16 @@ public:
             const auto r = noteHitRect(noteList[(size_t)i]);
             if (r.contains(pos))
             {
+                const bool additiveSelect = e.mods.isShiftDown() || e.mods.isCommandDown() || e.mods.isCtrlDown();
+                if (additiveSelect)
+                {
+                    toggleNoteSelection(i);
+                    return;
+                }
+
+                if (! isNoteSelected(i))
+                    selectSingleNote(i);
+
                 draggingIdx    = i;
                 resizingNote   = (pos.x >= r.getRight() - resizeZone);
                 dragStartBeat  = noteList[(size_t)i].startBeat;
@@ -306,34 +363,24 @@ public:
                 dragStartLen   = noteList[(size_t)i].lengthBeats;
                 dragStartMouseX = pos.x;
                 dragStartMouseY = pos.y;
+                captureSelectedNoteDragState();
                 return;
             }
         }
 
-        // Empty space → move cursor + add new note
+        // Empty space → click/add in draw mode, click/select in select mode
         const int   pitch     = pitchFromY(pos.y);
         const float beat      = snapBeat(beatFromX(pos.x));
         if (pitch < minPitch || pitch > maxPitch) return;
 
-        // Move keyboard cursor to clicked position
         cursorBeat  = beat;
         cursorPitch = pitch;
-
-        NoteEvent n;
-        n.pitch       = pitch;
-        n.startBeat   = beat;
-        n.lengthBeats = snapBeats;
-        n.velocity    = 0.8f;
-        noteList.push_back(n);
-        draggingIdx    = (int)noteList.size() - 1;
-        resizingNote   = true;
-        dragStartBeat  = beat;
-        dragStartPitch = pitch;
-        dragStartLen   = snapBeats;
-        dragStartMouseX = pos.x;
-        dragStartMouseY = pos.y;
-        if (onNotesChanged) onNotesChanged();
-        repaint();
+        pendingEmptyGesture = true;
+        pendingEmptyGestureAdditive = e.mods.isShiftDown() || e.mods.isCommandDown() || e.mods.isCtrlDown();
+        pendingEmptyPitch = pitch;
+        pendingEmptyBeat = beat;
+        pendingEmptyStartPos = pos;
+        marqueeBaseSelection = selectedNoteIndices;
     }
 
     void mouseDrag(const juce::MouseEvent& e) override
@@ -344,6 +391,48 @@ public:
         if (draggingVelIdx >= 0)
         {
             setVelocityFromY(draggingVelIdx, e.getPosition().y);
+            return;
+        }
+
+        if (pendingEmptyGesture)
+        {
+            const auto pos = e.getPosition();
+            const int dxPixels = pos.x - pendingEmptyStartPos.x;
+            const int dyPixels = pos.y - pendingEmptyStartPos.y;
+            const bool crossedThreshold = std::abs(dxPixels) >= dragGestureThreshold
+                                       || std::abs(dyPixels) >= dragGestureThreshold;
+
+            if (! crossedThreshold)
+                return;
+
+            if (! selectToolEnabled)
+            {
+                const int newIndex = appendNote(pendingEmptyPitch, pendingEmptyBeat, snapBeats, 0.8f);
+                selectSingleNote(newIndex);
+                draggingIdx = newIndex;
+                resizingNote = true;
+                dragStartBeat = pendingEmptyBeat;
+                dragStartPitch = pendingEmptyPitch;
+                dragStartLen = snapBeats;
+                dragStartMouseX = pendingEmptyStartPos.x;
+                dragStartMouseY = pendingEmptyStartPos.y;
+                pendingEmptyGesture = false;
+            }
+            else
+            {
+                marqueeSelecting = true;
+                marqueeRect = makeMarqueeRect(pendingEmptyStartPos, pos);
+                updateMarqueeSelection();
+                repaint();
+                return;
+            }
+        }
+
+        if (marqueeSelecting)
+        {
+            marqueeRect = makeMarqueeRect(pendingEmptyStartPos, e.getPosition());
+            updateMarqueeSelection();
+            repaint();
             return;
         }
 
@@ -367,15 +456,34 @@ public:
         }
         else
         {
-            note.startBeat = juce::jmax(0.0f, snapBeat(dragStartBeat + dx));
-            note.pitch     = juce::jlimit(minPitch, maxPitch,
-                                          dragStartPitch - (int)std::round(dy));
+            moveDraggedSelection(snapBeat(dx), -(int)std::round(dy));
         }
         if (onNotesChanged) onNotesChanged();
         repaint();
     }
 
-    void mouseUp(const juce::MouseEvent&) override { draggingIdx = -1; draggingVelIdx = -1; }
+    void mouseUp(const juce::MouseEvent&) override
+    {
+        if (pendingEmptyGesture && ! marqueeSelecting)
+        {
+            if (selectToolEnabled)
+            {
+                if (! pendingEmptyGestureAdditive)
+                    clearSelection();
+            }
+            else if (! pendingEmptyGestureAdditive)
+            {
+                const int newIndex = appendNote(pendingEmptyPitch, pendingEmptyBeat, snapBeats, 0.8f);
+                selectSingleNote(newIndex);
+            }
+            resetInteractionState();
+            if (onNotesChanged) onNotesChanged();
+            repaint();
+            return;
+        }
+
+        resetInteractionState();
+    }
 
     void mouseMove(const juce::MouseEvent& e) override
     {
@@ -449,6 +557,19 @@ public:
     bool keyPressed(const juce::KeyPress& key) override
     {
         const int kc = key.getKeyCode();
+        const auto mods = key.getModifiers();
+
+        if ((mods.isCommandDown() || mods.isCtrlDown()) && (kc == 'a' || kc == 'A'))
+        {
+            selectAllNotes();
+            return true;
+        }
+
+        if (kc == juce::KeyPress::escapeKey)
+        {
+            clearSelection();
+            return true;
+        }
 
         // Space — play / stop (forward to main window)
         if (kc == juce::KeyPress::spaceKey)
@@ -474,9 +595,9 @@ public:
         // Cursor navigation — Arrow keys
         if (kc == juce::KeyPress::leftKey)
         {
-            if (key.getModifiers().isShiftDown())
+            if (mods.isShiftDown())
             {
-                nudgeSession(-snapBeats);
+                nudgeActiveNotes(-snapBeats);
                 return true;
             }
             cursorBeat = juce::jmax(0.0f, cursorBeat - snapBeats);
@@ -486,9 +607,9 @@ public:
         }
         if (kc == juce::KeyPress::rightKey)
         {
-            if (key.getModifiers().isShiftDown())
+            if (mods.isShiftDown())
             {
-                nudgeSession(snapBeats);
+                nudgeActiveNotes(snapBeats);
                 return true;
             }
             const float maxBeat = pattern ? (float)(pattern->stepCount) * 0.25f : 4.0f;
@@ -499,9 +620,9 @@ public:
         }
         if (kc == juce::KeyPress::upKey)
         {
-            if (key.getModifiers().isShiftDown())
+            if (mods.isShiftDown())
             {
-                nudgeSessionPitch(+1);
+                nudgeActiveNotesPitch(+1);
                 return true;
             }
             cursorPitch = moveCursorByScaleStep(+1);
@@ -511,9 +632,9 @@ public:
         }
         if (kc == juce::KeyPress::downKey)
         {
-            if (key.getModifiers().isShiftDown())
+            if (mods.isShiftDown())
             {
-                nudgeSessionPitch(-1);
+                nudgeActiveNotesPitch(-1);
                 return true;
             }
             cursorPitch = moveCursorByScaleStep(-1);
@@ -559,6 +680,27 @@ public:
         {
             if (pattern == nullptr) return true;
             auto& noteList = pattern->notes[channel];
+
+            if (hasSelectedNotes())
+            {
+                auto sorted = selectedNoteIndices;
+                sorted.sort();
+                for (int s = sorted.size() - 1; s >= 0; --s)
+                {
+                    const int idx = sorted[s];
+                    if (juce::isPositiveAndBelow(idx, (int)noteList.size()))
+                    {
+                        const int deletedPitch = noteList[(size_t)idx].pitch;
+                        noteList.erase(noteList.begin() + idx);
+                        if (onNoteDeleted) onNoteDeleted(deletedPitch);
+                    }
+                }
+                clearSelection(false);
+                if (onNotesChanged) onNotesChanged();
+                repaint();
+                return true;
+            }
+
             for (int i = (int)noteList.size() - 1; i >= 0; --i)
             {
                 const auto& n = noteList[(size_t)i];
@@ -568,11 +710,11 @@ public:
                 {
                     const int deletedPitch = n.pitch;
                     noteList.erase(noteList.begin() + i);
-                    if (onNoteDeleted)   onNoteDeleted(deletedPitch);
-                    if (onNotesChanged) onNotesChanged();
-                    repaint();
-                    break;
-                }
+                        if (onNoteDeleted)   onNoteDeleted(deletedPitch);
+                        if (onNotesChanged) onNotesChanged();
+                        repaint();
+                        break;
+                    }
             }
             return true;
         }
@@ -727,6 +869,7 @@ private:
     int   hoverPitch      = -1;
     float hoverStepBeat   = -1.0f;   // beat position of hovered 1/16 column (-1 = none)
     KeySignature keySignature {};
+    juce::Array<int> selectedNoteIndices;
     int   draggingIdx     = -1;
     int   draggingVelIdx  = -1;   // index of note being velocity-edited
     bool  resizingNote    = false;
@@ -735,6 +878,24 @@ private:
     float dragStartLen    = 0.0f;
     int   dragStartMouseX = 0;
     int   dragStartMouseY = 0;
+    bool  pendingEmptyGesture = false;
+    bool  pendingEmptyGestureAdditive = false;
+    bool  selectToolEnabled = false;
+    int   pendingEmptyPitch = 60;
+    float pendingEmptyBeat = 0.0f;
+    juce::Point<int> pendingEmptyStartPos;
+    bool marqueeSelecting = false;
+    juce::Rectangle<int> marqueeRect;
+    juce::Array<int> marqueeBaseSelection;
+    static constexpr int dragGestureThreshold = 4;
+
+    struct SelectedNoteDragState
+    {
+        int index = -1;
+        float startBeat = 0.0f;
+        int startPitch = 60;
+    };
+    std::vector<SelectedNoteDragState> selectedNoteDragStates;
 
     // Resize the component to match the current pixelsPerBeat, preserving Viewport fit
     void updateSizeForZoom()
@@ -779,6 +940,223 @@ private:
     juce::String pitchLabel(int pitch) const
     {
         return MusicTheory::noteNameForPitch(pitch, keySignature) + juce::String(pitch / 12 - 1);
+    }
+
+    void clearSelection(bool shouldRepaint = true)
+    {
+        if (selectedNoteIndices.isEmpty())
+            return;
+
+        selectedNoteIndices.clearQuick();
+        notifySelectionChanged();
+        if (shouldRepaint)
+            repaint();
+    }
+
+    bool isNoteSelected(int idx) const
+    {
+        return selectedNoteIndices.contains(idx);
+    }
+
+    void selectSingleNote(int idx)
+    {
+        selectedNoteIndices.clearQuick();
+        if (idx >= 0)
+            selectedNoteIndices.add(idx);
+        notifySelectionChanged();
+        repaint();
+    }
+
+    void toggleNoteSelection(int idx)
+    {
+        if (idx < 0)
+            return;
+
+        if (selectedNoteIndices.contains(idx))
+            selectedNoteIndices.removeFirstMatchingValue(idx);
+        else
+            selectedNoteIndices.addIfNotAlreadyThere(idx);
+
+        notifySelectionChanged();
+        repaint();
+    }
+
+    void removeSelectionIndex(int erasedIdx)
+    {
+        bool changed = false;
+        for (int i = selectedNoteIndices.size() - 1; i >= 0; --i)
+        {
+            int idx = selectedNoteIndices.getReference(i);
+            if (idx == erasedIdx)
+            {
+                selectedNoteIndices.remove(i);
+                changed = true;
+            }
+            else if (idx > erasedIdx)
+            {
+                selectedNoteIndices.set(i, idx - 1);
+                changed = true;
+            }
+        }
+        if (changed)
+            notifySelectionChanged();
+    }
+
+    int appendNote(int pitch, float beat, float lengthBeats, float velocity)
+    {
+        auto& noteList = pattern->notes[channel];
+        NoteEvent n;
+        n.pitch = pitch;
+        n.startBeat = beat;
+        n.lengthBeats = lengthBeats;
+        n.velocity = velocity;
+        noteList.push_back(n);
+        return (int)noteList.size() - 1;
+    }
+
+    void resetInteractionState()
+    {
+        draggingIdx = -1;
+        draggingVelIdx = -1;
+        resizingNote = false;
+        pendingEmptyGesture = false;
+        pendingEmptyGestureAdditive = false;
+        marqueeSelecting = false;
+        marqueeRect = {};
+        marqueeBaseSelection.clearQuick();
+        selectedNoteDragStates.clear();
+    }
+
+    void captureSelectedNoteDragState()
+    {
+        selectedNoteDragStates.clear();
+        if (pattern == nullptr)
+            return;
+
+        const auto& noteList = pattern->notes[channel];
+        for (int i = 0; i < selectedNoteIndices.size(); ++i)
+        {
+            const int idx = selectedNoteIndices[i];
+            if (! juce::isPositiveAndBelow(idx, (int)noteList.size()))
+                continue;
+
+            selectedNoteDragStates.push_back({ idx, noteList[(size_t)idx].startBeat, noteList[(size_t)idx].pitch });
+        }
+    }
+
+    void moveDraggedSelection(float requestedBeatDelta, int requestedPitchDelta)
+    {
+        if (pattern == nullptr || selectedNoteDragStates.empty())
+            return;
+
+        auto& noteList = pattern->notes[channel];
+        float allowedBeatDelta = requestedBeatDelta;
+        int allowedPitchDelta = requestedPitchDelta;
+
+        for (const auto& state : selectedNoteDragStates)
+        {
+            allowedBeatDelta = juce::jmax(allowedBeatDelta, -state.startBeat);
+            allowedPitchDelta = juce::jmax(allowedPitchDelta, minPitch - state.startPitch);
+            allowedPitchDelta = juce::jmin(allowedPitchDelta, maxPitch - state.startPitch);
+        }
+
+        for (const auto& state : selectedNoteDragStates)
+        {
+            if (! juce::isPositiveAndBelow(state.index, (int)noteList.size()))
+                continue;
+
+            auto& note = noteList[(size_t)state.index];
+            note.startBeat = juce::jmax(0.0f, state.startBeat + allowedBeatDelta);
+            note.pitch = juce::jlimit(minPitch, maxPitch, state.startPitch + allowedPitchDelta);
+        }
+    }
+
+    void nudgeSelectedNotes(float deltaBeats)
+    {
+        if (pattern == nullptr || selectedNoteIndices.isEmpty())
+            return;
+
+        auto& noteList = pattern->notes[channel];
+        float allowedDelta = deltaBeats;
+        for (int i = 0; i < selectedNoteIndices.size(); ++i)
+        {
+            const int idx = selectedNoteIndices[i];
+            if (juce::isPositiveAndBelow(idx, (int)noteList.size()))
+                allowedDelta = juce::jmax(allowedDelta, -noteList[(size_t)idx].startBeat);
+        }
+
+        for (int i = 0; i < selectedNoteIndices.size(); ++i)
+        {
+            const int idx = selectedNoteIndices[i];
+            if (juce::isPositiveAndBelow(idx, (int)noteList.size()))
+                noteList[(size_t)idx].startBeat = juce::jmax(0.0f, noteList[(size_t)idx].startBeat + allowedDelta);
+        }
+
+        if (onNotesChanged) onNotesChanged();
+        repaint();
+    }
+
+    void nudgeSelectedNotesPitch(int deltaSemitones)
+    {
+        if (pattern == nullptr || selectedNoteIndices.isEmpty())
+            return;
+
+        auto& noteList = pattern->notes[channel];
+        int allowedDelta = deltaSemitones;
+        for (int i = 0; i < selectedNoteIndices.size(); ++i)
+        {
+            const int idx = selectedNoteIndices[i];
+            if (! juce::isPositiveAndBelow(idx, (int)noteList.size()))
+                continue;
+
+            const int pitch = noteList[(size_t)idx].pitch;
+            allowedDelta = juce::jmax(allowedDelta, minPitch - pitch);
+            allowedDelta = juce::jmin(allowedDelta, maxPitch - pitch);
+        }
+
+        for (int i = 0; i < selectedNoteIndices.size(); ++i)
+        {
+            const int idx = selectedNoteIndices[i];
+            if (juce::isPositiveAndBelow(idx, (int)noteList.size()))
+                noteList[(size_t)idx].pitch = juce::jlimit(minPitch, maxPitch,
+                                                           noteList[(size_t)idx].pitch + allowedDelta);
+        }
+
+        if (onNotesChanged) onNotesChanged();
+        repaint();
+    }
+
+    void updateMarqueeSelection()
+    {
+        if (pattern == nullptr)
+            return;
+
+        juce::Array<int> nextSelection = pendingEmptyGestureAdditive ? marqueeBaseSelection : juce::Array<int>();
+        const auto& noteList = pattern->notes[channel];
+        const auto area = marqueeRect;
+
+        for (int i = 0; i < (int)noteList.size(); ++i)
+        {
+            if (area.intersects(noteHitRect(noteList[(size_t)i])))
+                nextSelection.addIfNotAlreadyThere(i);
+        }
+
+        selectedNoteIndices = nextSelection;
+        notifySelectionChanged();
+    }
+
+    juce::Rectangle<int> makeMarqueeRect(juce::Point<int> a, juce::Point<int> b) const
+    {
+        return juce::Rectangle<int>::leftTopRightBottom(juce::jmin(a.x, b.x),
+                                                        juce::jmin(a.y, b.y),
+                                                        juce::jmax(a.x, b.x),
+                                                        juce::jmax(a.y, b.y));
+    }
+
+    void notifySelectionChanged()
+    {
+        if (onSelectionChanged)
+            onSelectionChanged();
     }
 
     // Find the topmost note whose time range contains `beat` (for vel lane hit)
@@ -1014,12 +1392,13 @@ private:
                 : baseMid.interpolatedWith(baseHigh, (t - 0.5f) * 2.0f);
             const bool inScale = isScalePitch(n.pitch);
             const juce::Colour noteFill = inScale ? fill : fill.withAlpha(0.45f);
+            const bool isSelected = isNoteSelected(i);
 
             const bool isVelDragging = (i == draggingVelIdx);
-            g.setColour((i == draggingIdx || isVelDragging) ? noteFill.brighter(0.35f) : noteFill);
+            g.setColour((i == draggingIdx || isVelDragging || isSelected) ? noteFill.brighter(0.35f) : noteFill);
             g.fillRoundedRectangle(r.toFloat(), 2.0f);
-            g.setColour(noteFill.darker(0.3f));
-            g.drawRoundedRectangle(r.toFloat(), 2.0f, 1.0f);
+            g.setColour(isSelected ? juce::Colours::white.withAlpha(0.9f) : noteFill.darker(0.3f));
+            g.drawRoundedRectangle(r.toFloat(), 2.0f, isSelected ? 1.6f : 1.0f);
 
             // Resize handle stripe
             g.setColour(noteFill.brighter(0.5f).withAlpha(0.6f));
@@ -1046,6 +1425,18 @@ private:
                            juce::Justification::centredLeft);
             }
         }
+    }
+
+    void drawMarqueeSelection(juce::Graphics& g)
+    {
+        if (! marqueeSelecting)
+            return;
+
+        const auto area = marqueeRect;
+        g.setColour(juce::Colour(0x663498db));
+        g.fillRect(area);
+        g.setColour(juce::Colour(0xff7fc9ff));
+        g.drawRect(area, 1);
     }
 
     void drawVelocityLane(juce::Graphics& g)
@@ -1367,6 +1758,7 @@ class PianoRollWindow : public juce::DocumentWindow
         KeyboardOverlay    keyboardOverlay { pianoRoll };
         juce::ComboBox     snapBox;
         juce::TextButton   recBtn        { "REC" };
+        juce::TextButton   selectBtn     { "Sel" };
         juce::TextButton   quantizeBtn   { "Q" };
         juce::ComboBox     quantizeBox;
         juce::ComboBox     keyRootBox;
@@ -1444,6 +1836,19 @@ class PianoRollWindow : public juce::DocumentWindow
             };
             addAndMakeVisible(recBtn);
 
+            // ---- Select tool toggle ----------------------------------------
+            selectBtn.setClickingTogglesState(true);
+            selectBtn.setColour(juce::TextButton::buttonColourId,   juce::Colour(0xff1a2434));
+            selectBtn.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff2c6fb2));
+            selectBtn.setColour(juce::TextButton::textColourOffId,  juce::Colour(0xff9fb6cf));
+            selectBtn.setColour(juce::TextButton::textColourOnId,   juce::Colours::white);
+            selectBtn.onClick = [this]
+            {
+                pianoRoll.setSelectToolEnabled(selectBtn.getToggleState());
+                pianoRoll.grabKeyboardFocus();
+            };
+            addAndMakeVisible(selectBtn);
+
             // ---- Trigger toggle (arm-and-wait mode) -------------------------
             triggerBtn.setClickingTogglesState(true);
             triggerBtn.setColour(juce::TextButton::buttonColourId,   juce::Colour(0xff1a1a2a));
@@ -1466,7 +1871,7 @@ class PianoRollWindow : public juce::DocumentWindow
                 static const float beats[] = { 0.05f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f };
                 const int idx = snapBox.getSelectedId() - 1;
                 const float step = (idx >= 0 && idx < 6) ? beats[idx] : 0.25f;
-                pianoRoll.nudgeSession(-step);
+                pianoRoll.nudgeActiveNotes(-step);
                 pianoRoll.grabKeyboardFocus();
             };
             addAndMakeVisible(nudgeLeftBtn);
@@ -1478,7 +1883,7 @@ class PianoRollWindow : public juce::DocumentWindow
                 static const float beats[] = { 0.05f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f };
                 const int idx = snapBox.getSelectedId() - 1;
                 const float step = (idx >= 0 && idx < 6) ? beats[idx] : 0.25f;
-                pianoRoll.nudgeSession(step);
+                pianoRoll.nudgeActiveNotes(step);
                 pianoRoll.grabKeyboardFocus();
             };
             addAndMakeVisible(nudgeRightBtn);
@@ -1487,7 +1892,7 @@ class PianoRollWindow : public juce::DocumentWindow
             nudgeUpBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffaabbdd));
             nudgeUpBtn.onClick = [this]
             {
-                pianoRoll.nudgeSessionPitch(+1);
+                pianoRoll.nudgeActiveNotesPitch(+1);
                 pianoRoll.grabKeyboardFocus();
             };
             addAndMakeVisible(nudgeUpBtn);
@@ -1496,7 +1901,7 @@ class PianoRollWindow : public juce::DocumentWindow
             nudgeDownBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffaabbdd));
             nudgeDownBtn.onClick = [this]
             {
-                pianoRoll.nudgeSessionPitch(-1);
+                pianoRoll.nudgeActiveNotesPitch(-1);
                 pianoRoll.grabKeyboardFocus();
             };
             addAndMakeVisible(nudgeDownBtn);
@@ -1534,6 +1939,7 @@ class PianoRollWindow : public juce::DocumentWindow
 
                 updateSessionButtons();
             };
+            pianoRoll.onSelectionChanged = [this] { updateSessionButtons(); };
 
             updateSessionButtons();  // initial state
 
@@ -1636,10 +2042,11 @@ class PianoRollWindow : public juce::DocumentWindow
             keyRootBox.setBounds(108, 0, 76, snapH);
             keyScaleBox.setBounds(188, 0, 72, snapH);
 
-            // Right side: [Load MIDI | Save MIDI | Clear | REC | edit snap]
+            // Right side: [Load MIDI | Save MIDI | Clear | Sel | REC | edit snap]
             int rightX = getWidth();
             snapBox    .setBounds(rightX - 90, 0, 90, snapH); rightX -= 96;
             recBtn     .setBounds(rightX - 48, 0, 48, snapH); rightX -= 52;
+            selectBtn  .setBounds(rightX - 44, 0, 44, snapH); rightX -= 48;
             clearBtn   .setBounds(rightX - 46, 0, 46, snapH); rightX -= 50;
             saveMidiBtn.setBounds(rightX - 78, 0, 78, snapH); rightX -= 82;
             loadMidiBtn.setBounds(rightX - 78, 0, 78, snapH);
@@ -1676,19 +2083,20 @@ class PianoRollWindow : public juce::DocumentWindow
             updateSessionButtons();
         }
 
-        // Enable/disable nudge+align based on whether a session exists
+        // Enable/disable controls based on whether there is an editable note target
         void updateSessionButtons()
         {
+            const bool hasMoveTarget = pianoRoll.hasMovableNoteTarget();
             const bool hasSession = pianoRoll.hasSession();
-            nudgeLeftBtn .setEnabled(hasSession);
-            nudgeRightBtn.setEnabled(hasSession);
-            nudgeUpBtn   .setEnabled(hasSession);
-            nudgeDownBtn .setEnabled(hasSession);
+            nudgeLeftBtn .setEnabled(hasMoveTarget);
+            nudgeRightBtn.setEnabled(hasMoveTarget);
+            nudgeUpBtn   .setEnabled(hasMoveTarget);
+            nudgeDownBtn .setEnabled(hasMoveTarget);
             alignBtn     .setEnabled(hasSession);
-            nudgeLeftBtn .setAlpha(hasSession ? 1.0f : 0.4f);
-            nudgeRightBtn.setAlpha(hasSession ? 1.0f : 0.4f);
-            nudgeUpBtn   .setAlpha(hasSession ? 1.0f : 0.4f);
-            nudgeDownBtn .setAlpha(hasSession ? 1.0f : 0.4f);
+            nudgeLeftBtn .setAlpha(hasMoveTarget ? 1.0f : 0.4f);
+            nudgeRightBtn.setAlpha(hasMoveTarget ? 1.0f : 0.4f);
+            nudgeUpBtn   .setAlpha(hasMoveTarget ? 1.0f : 0.4f);
+            nudgeDownBtn .setAlpha(hasMoveTarget ? 1.0f : 0.4f);
             alignBtn     .setAlpha(hasSession ? 1.0f : 0.4f);
         }
 

@@ -18,7 +18,7 @@ AudioEngine::AudioEngine()
         sampleChannelVolume_[(size_t)i].store(0.8f, std::memory_order_relaxed);
         sampleChannelPan_[(size_t)i].store(0.0f, std::memory_order_relaxed);
         sampleChannelAttackMs_[(size_t)i].store(10.0f, std::memory_order_relaxed);
-        sampleChannelReleaseMs_[(size_t)i].store(0.0f, std::memory_order_relaxed);
+        sampleChannelReleaseMs_[(size_t)i].store(4.0f, std::memory_order_relaxed);
         channelBasePitch[(size_t)i].store(0.0f, std::memory_order_relaxed);
         channelMuted[(size_t)i].store(false, std::memory_order_relaxed);
         channelSoloed[(size_t)i].store(false, std::memory_order_relaxed);
@@ -218,13 +218,13 @@ void AudioEngine::setChannelPitch(int ch, float semitones)
 void AudioEngine::setChannelAttack(int ch, float ms)
 {
     if (ch >= 0 && ch < 16)
-        sampleChannelAttackMs_[(size_t)ch].store(juce::jmax(0.0f, ms), std::memory_order_relaxed);
+        sampleChannelAttackMs_[(size_t)ch].store(juce::jmax(0.5f, ms), std::memory_order_relaxed);
 }
 
 void AudioEngine::setChannelRelease(int ch, float ms)
 {
     if (ch >= 0 && ch < 16)
-        sampleChannelReleaseMs_[(size_t)ch].store(juce::jmax(0.0f, ms), std::memory_order_relaxed);
+        sampleChannelReleaseMs_[(size_t)ch].store(juce::jmax(2.0f, ms), std::memory_order_relaxed);
 }
 
 // ---- M3 — Active pattern / pitch ----------------------------------------
@@ -355,6 +355,8 @@ void AudioEngine::previewBrowserFile(const juce::File& f)
     browserPreviewPlayer.loadFile(f);
     browserPreviewPlayer.setVolume(0.8f);
     browserPreviewPlayer.setPitch(0.0f);
+    browserPreviewPlayer.setAttack(2.0f);
+    browserPreviewPlayer.setRelease(6.0f);
     browserPreviewPlayer.trigger();
 }
 
@@ -619,8 +621,8 @@ void AudioEngine::triggerSampleVoiceNow(int channelIndex,
     voice.setVolume(volume);
     voice.setPan(pan);
     voice.setPitch(pitchSemitones);
-    voice.setAttack(sampleChannelAttackMs_[(size_t)channelIndex].load(std::memory_order_relaxed));
-    voice.setRelease(sampleChannelReleaseMs_[(size_t)channelIndex].load(std::memory_order_relaxed));
+    voice.setAttack(juce::jmax(0.5f, sampleChannelAttackMs_[(size_t)channelIndex].load(std::memory_order_relaxed)));
+    voice.setRelease(juce::jmax(2.0f, sampleChannelReleaseMs_[(size_t)channelIndex].load(std::memory_order_relaxed)));
     voice.setBpmRatio(bpmRatio);
     const bool anySoloed = std::any_of(std::begin(channelSoloed), std::end(channelSoloed),
                                        [](const std::atomic<bool>& soloed) { return soloed.load(std::memory_order_relaxed); });

@@ -181,6 +181,8 @@ public:
     void closeMidiDevice();
     void setMidiTargetChannel(int ch);   // which DAW channel receives live MIDI (0-based)
     juce::String getOpenMidiDeviceId() const;
+    juce::AudioDeviceManager& getAudioDeviceManager() { return deviceManager; }
+    const juce::AudioDeviceManager& getAudioDeviceManager() const { return deviceManager; }
 
     // MidiInputCallback (called on MIDI thread — posts into collector)
     void handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& msg) override;

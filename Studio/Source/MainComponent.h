@@ -63,6 +63,7 @@ private:
 
     // Launchpad — floating performance pad window
     std::unique_ptr<LaunchpadWindow> launchpadWindow;
+    std::unique_ptr<juce::DocumentWindow> audioDeviceWindow;
 
     // M8 — plugin browser + per-channel plugin editor windows
     std::unique_ptr<PluginBrowserWindow>                    pluginBrowserWindow;

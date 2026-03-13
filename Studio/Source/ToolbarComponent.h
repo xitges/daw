@@ -78,6 +78,7 @@ public:
 
     // M12 — MIDI device selector button
     std::function<void()>  onMidiButton;
+    std::function<void()>  onAudioButton;
 
     // Launchpad toggle
     std::function<void()>  onToggleLaunchpad;
@@ -114,6 +115,7 @@ private:
     juce::TextButton mixerBtn      { "Mixer" };
 
     // M12 — MIDI button
+    juce::TextButton audioBtn         { "Audio" };
     juce::TextButton midiBtn          { "MIDI" };
 
     // Launchpad button

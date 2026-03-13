@@ -64,6 +64,8 @@ public:
         PlaylistClip nc  = clipboardClip;
         nc.id            = newId;
         nc.startBar      = clipboardClip.startBar + clipboardClip.lengthBars;
+        if (nc.name.isEmpty())
+            nc.name = "Clip " + juce::String(newId);
         list.push_back(nc);
         repaint();
         if (onClipAdded) onClipAdded(nc);
@@ -93,6 +95,7 @@ public:
     std::function<void(PlaylistClip)>                                           onClipDeleted;
     std::function<void(int id, float oldBar, int oldTrack, float newBar, int newTrack)> onClipMoved;
     std::function<void(int id, float oldLen, float newLen)>                     onClipResized;
+    std::function<void(int clipId, int patternId)>                              onClipPatternChanged;
 
     // M11 — track management callbacks
     std::function<void()>        onTrackAdded;
@@ -307,8 +310,13 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
         const int ty = headerHeight + clip.trackIndex * (trackHeight + trackGap) + 3;
         const int h  = trackHeight - 6;
 
-        const juce::Colour fill   = palette[(clip.patternId - 1) % paletteSize];
-        const juce::Colour border = fill.brighter(0.4f);
+        const bool hasPattern = clip.patternId > 0;
+        const juce::Colour fill = hasPattern
+            ? palette[(clip.patternId - 1) % paletteSize]
+            : juce::Colour(0xff3a3a46);
+        const juce::Colour border = hasPattern
+            ? fill.brighter(0.4f)
+            : juce::Colour(0xff9090a8);
 
         g.setColour(fill.withAlpha(clip.id == draggingClipId ? 0.6f : 0.85f));
         g.fillRoundedRectangle((float)x + 1, (float)ty, (float)w, (float)h, 4.0f);
@@ -320,8 +328,8 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
         g.setColour(border.withAlpha(0.5f));
         g.fillRect(x + w - 4, ty + 2, 4, h - 4);
 
-        // M11.5 — mini step-grid preview (first 3 channels, bottom half of clip)
-        if (project != nullptr && w > 20)
+        // M11.5 — mini note + step preview inside the clip
+        if (project != nullptr && hasPattern && w > 20)
         {
             const Pattern* pat = nullptr;
             for (const auto& p : project->patterns)
@@ -332,27 +340,129 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
                 const int   previewX = x + 4;
                 const int   previewW = w - 8;
                 const int   previewY = ty + h - 13;
-                const float stepW    = (float)previewW / (float)pat->stepCount;
+                const float patternBeats = juce::jmax(0.25f, pat->stepCount * 0.25f);
+                const float clipBeats = juce::jmax(0.25f, clip.lengthBars * 4.0f);
+                const float previewPixelsPerBeat = (float)previewW / clipBeats;
+
+                const int titleH = 12;
+                const int notePreviewY = ty + titleH + 3;
+                const int notePreviewBottom = previewY - 2;
+                const int notePreviewH = juce::jmax(0, notePreviewBottom - notePreviewY);
+
+                int minPitch = 127;
+                int maxPitch = 0;
+                bool hasNotes = false;
+                for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
+                {
+                    for (const auto& note : pat->notes[ch])
+                    {
+                        minPitch = juce::jmin(minPitch, note.pitch);
+                        maxPitch = juce::jmax(maxPitch, note.pitch);
+                        hasNotes = true;
+                    }
+                }
+
+                if (hasNotes && notePreviewH >= 4)
+                {
+                    g.setColour(juce::Colours::white.withAlpha(0.05f));
+                    g.drawRect(previewX, notePreviewY, previewW, notePreviewH, 1);
+
+                    if (clipBeats > patternBeats)
+                    {
+                        g.setColour(juce::Colours::white.withAlpha(0.06f));
+                        for (float loopBeat = patternBeats; loopBeat < clipBeats; loopBeat += patternBeats)
+                        {
+                            const int loopX = previewX + (int)std::round(loopBeat * previewPixelsPerBeat);
+                            g.drawVerticalLine(loopX, (float)notePreviewY, (float)(notePreviewY + notePreviewH));
+                        }
+                    }
+
+                    const int pitchRange = juce::jmax(1, maxPitch - minPitch);
+                    for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
+                    {
+                        for (const auto& note : pat->notes[ch])
+                        {
+                            const float notePhase = std::fmod(note.startBeat, patternBeats);
+                            const float relPitch = (float)(note.pitch - minPitch) / (float)pitchRange;
+                            const int ny = notePreviewY
+                                         + (int)std::round((1.0f - relPitch) * (float)juce::jmax(0, notePreviewH - 3));
+
+                            for (float loopBeat = 0.0f; loopBeat < clipBeats; loopBeat += patternBeats)
+                            {
+                                const float noteStartBeat = loopBeat + notePhase;
+                                const float noteEndBeat = noteStartBeat + note.lengthBeats;
+                                if (noteStartBeat >= clipBeats)
+                                    break;
+
+                                const float visibleStartBeat = juce::jmax(0.0f, noteStartBeat);
+                                const float visibleEndBeat = juce::jmin(clipBeats, noteEndBeat);
+                                if (visibleEndBeat <= visibleStartBeat)
+                                    continue;
+
+                                const int nx = previewX + (int)std::floor(visibleStartBeat * previewPixelsPerBeat);
+                                const int nw = juce::jmax(2, (int)std::ceil((visibleEndBeat - visibleStartBeat) * previewPixelsPerBeat));
+
+                                g.setColour(fill.brighter(0.95f).withAlpha(0.45f + 0.35f * note.velocity));
+                                g.fillRoundedRectangle((float)nx, (float)ny, (float)nw, 3.0f, 1.5f);
+                            }
+                        }
+                    }
+                }
 
                 for (int ch = 0; ch < juce::jmin(3, Pattern::kMaxChannels); ++ch)
                 {
                     const int rowY = previewY + ch * 4;
-                    for (int s = 0; s < pat->stepCount; ++s)
+                    for (float loopBeat = 0.0f; loopBeat < clipBeats; loopBeat += patternBeats)
                     {
-                        if (pat->steps[ch][s])
+                        for (int s = 0; s < pat->stepCount; ++s)
                         {
+                            if (!pat->steps[ch][s])
+                                continue;
+
+                            const float stepStartBeat = loopBeat + s * 0.25f;
+                            if (stepStartBeat >= clipBeats)
+                                break;
+
+                            const float stepEndBeat = juce::jmin(clipBeats, stepStartBeat + 0.25f);
+                            const int stepX = previewX + (int)std::floor(stepStartBeat * previewPixelsPerBeat);
+                            const int stepWidth = juce::jmax(1, (int)std::ceil((stepEndBeat - stepStartBeat) * previewPixelsPerBeat) - 1);
+
                             g.setColour(fill.brighter(0.8f).withAlpha(0.85f));
-                            g.fillRect(previewX + (int)(s * stepW), rowY,
-                                       juce::jmax(1, (int)stepW - 1), 3);
+                            g.fillRect(stepX, rowY, stepWidth, 3);
                         }
                     }
                 }
             }
         }
 
+        juce::String assignedPatternName;
+        if (project != nullptr && hasPattern)
+        {
+            for (const auto& pattern : project->patterns)
+            {
+                if (pattern.id == clip.patternId)
+                {
+                    assignedPatternName = pattern.name;
+                    break;
+                }
+            }
+        }
+
         g.setColour(juce::Colours::white);
         g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
-        g.drawText(clip.name, x + 6, ty, w - 14, h - 14, juce::Justification::centredLeft);
+        juce::String clipLabel;
+        if (hasPattern)
+        {
+            const auto clipName = clip.name.isNotEmpty() ? clip.name : "Clip " + juce::String(clip.id);
+            clipLabel = assignedPatternName.isNotEmpty()
+                ? clipName + "  [" + assignedPatternName + "]"
+                : clipName;
+        }
+        else
+        {
+            clipLabel = clip.name.isNotEmpty() ? clip.name + " (Unassigned)" : "Unassigned Clip";
+        }
+        g.drawText(clipLabel, x + 6, ty + 1, w - 14, 12, juce::Justification::centredLeft);
     }
 }
 
@@ -663,7 +773,7 @@ inline void PlaylistComponent::mouseDoubleClick(const juce::MouseEvent& e)
 
     PlaylistClip clip;
     clip.id         = newId;
-    clip.patternId  = (getActivePatternId ? getActivePatternId() : 1);
+    clip.patternId  = -1;
     clip.trackIndex = track;
     clip.startBar   = bar;
     clip.lengthBars = 4.0f;
@@ -689,6 +799,8 @@ inline void PlaylistComponent::showContextMenu(int clipId)
     if (project != nullptr && !project->patterns.empty())
     {
         juce::PopupMenu patMenu;
+        patMenu.addItem(90, "None", true, clip->patternId <= 0);
+        patMenu.addSeparator();
         for (const auto& pat : project->patterns)
             patMenu.addItem(100 + pat.id, pat.name, true, clip->patternId == pat.id);
         menu.addSubMenu("Assign Pattern", patMenu);
@@ -696,7 +808,7 @@ inline void PlaylistComponent::showContextMenu(int clipId)
 
     menu.addSeparator();
     menu.addItem(3, "Copy Clip");
-    menu.addItem(4, "Detach to New Pattern");
+    menu.addItem(4, "Detach to New Pattern", clip->patternId > 0);
     menu.addItem(2, "Delete");
 
     menu.showMenuAsync(juce::PopupMenu::Options().withMousePosition(),
@@ -731,10 +843,18 @@ inline void PlaylistComponent::showContextMenu(int clipId)
                 repaint();
                 if (found && onClipDeleted) onClipDeleted(deleted);
             }
+            else if (result == 90)
+            {
+                if (auto* c = findClipById(clipId)) c->patternId = -1;
+                if (onClipPatternChanged) onClipPatternChanged(clipId, -1);
+                repaint();
+            }
             else if (result >= 100)
             {
                 const int patId = result - 100;
                 if (auto* c = findClipById(clipId)) c->patternId = patId;
+                if (onClipPatternChanged) onClipPatternChanged(clipId, patId);
+                repaint();
             }
         });
 }

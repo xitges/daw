@@ -64,6 +64,7 @@ public:
     std::function<void(int ch, float pitch)>  onPitchChanged;   // M1.2
     std::function<void(int ch, juce::File)>   onSampleDropped;
     std::function<void(int ch, int step, bool newState, bool oldState)> onStepToggled; // M6
+    std::function<void()>                     onClearAllSteps;
     std::function<void(int ch)>               onOpenPianoRoll;      // M3
     std::function<void(int newStepCount)>     onStepCountChanged;   // M3
     std::function<void(int ch, ChannelType)>  onChannelTypeChanged; // M3
@@ -151,6 +152,7 @@ private:
     std::array<ChannelType, 16> channelTypes    = {};   // M3: mirrors project.channelTypes
     bool                        channelHasPlugin[16] = {}; // M8
     juce::TextButton addChannelBtn { "+ Add Channel" };
+    juce::TextButton clearStepsBtn { "Clear Steps" };
     juce::Slider     stepCountSlider;
 
     int dragHoverChannel = -1;

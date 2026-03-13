@@ -126,6 +126,12 @@ private:
     float attackSamples  = 441.0f;   // default ~10 ms anti-pop
     float releaseSamples = 0.0f;
     float envelopeGain   = 1.0f;
+    float lastOutputL    = 0.0f;
+    float lastOutputR    = 0.0f;
+    float residualTailL  = 0.0f;
+    float residualTailR  = 0.0f;
+    int   residualFadeRemaining = 0;
+    static constexpr int kResidualFadeSamples = 64;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SamplePlayer)
 };

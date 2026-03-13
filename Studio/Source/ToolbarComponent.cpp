@@ -124,6 +124,11 @@ ToolbarComponent::ToolbarComponent()
     mixerBtn.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
     mixerBtn.onClick = [this] { if (onToggleMixer) onToggleMixer(); };
 
+    addAndMakeVisible(audioBtn);
+    audioBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff323232));
+    audioBtn.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+    audioBtn.onClick = [this] { if (onAudioButton) onAudioButton(); };
+
     addAndMakeVisible(midiBtn);
     midiBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff323232));
     midiBtn.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
@@ -192,6 +197,8 @@ void ToolbarComponent::resized()
         bpmSlider.setBounds(row.removeFromLeft(60).reduced(2));
         row.removeFromLeft(8);
         mixerBtn .setBounds(row.removeFromLeft(54).reduced(2));
+        row.removeFromLeft(4);
+        audioBtn    .setBounds(row.removeFromLeft(56).reduced(2));
         row.removeFromLeft(4);
         midiBtn     .setBounds(row.removeFromLeft(48).reduced(2));
         row.removeFromLeft(4);

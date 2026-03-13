@@ -309,7 +309,7 @@ struct AutomationLane
 struct PlaylistClip
 {
     int          id         = 0;
-    int          patternId  = 0;
+    int          patternId  = -1;
     int          trackIndex = 0;
     float        startBar   = 0.0f;
     float        lengthBars = 1.0f;

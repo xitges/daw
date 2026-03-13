@@ -82,12 +82,12 @@ void SamplePlayer::setPitch(float semitones)
 
 void SamplePlayer::setAttack(float ms)
 {
-    attackSamples = (float)(ms * 0.001 * playerSampleRate);
+    attackSamples = juce::jmax(24.0f, (float)(ms * 0.001 * playerSampleRate));
 }
 
 void SamplePlayer::setRelease(float ms)
 {
-    releaseSamples = (float)(ms * 0.001 * playerSampleRate);
+    releaseSamples = juce::jmax(64.0f, (float)(ms * 0.001 * playerSampleRate));
 }
 
 void SamplePlayer::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
@@ -108,13 +108,19 @@ void SamplePlayer::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
     // Trigger detection
     if (triggered.exchange(false))
     {
+        if (playPosition >= 0.0)
+        {
+            residualTailL = lastOutputL;
+            residualTailR = lastOutputR;
+            residualFadeRemaining = kResidualFadeSamples;
+        }
         playPosition = 0.0;
         startOffset_ = triggerOffset_;
         triggerOffset_ = 0;
         envelopeGain = (attackSamples > 0.0f) ? 0.0f : 1.0f;
     }
 
-    if (playPosition < 0.0 || muted) return;
+    if ((playPosition < 0.0 && residualFadeRemaining <= 0) || muted) return;
 
     const int srcSamples  = sourceBuffer->getNumSamples();
     const int outChannels = outputBuffer.getNumChannels();
@@ -131,6 +137,17 @@ void SamplePlayer::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
 
     for (int i = loopStart; i < safeSamples; ++i)
     {
+        float mixedL = 0.0f;
+        float mixedR = 0.0f;
+        if (residualFadeRemaining > 0)
+        {
+            const float fade = (float)residualFadeRemaining / (float)kResidualFadeSamples;
+            mixedL += residualTailL * fade;
+            mixedR += residualTailR * fade;
+            if (--residualFadeRemaining == 0)
+                residualTailL = residualTailR = 0.0f;
+        }
+
         const int pos0 = (int)playPosition;
         if (pos0 >= srcSamples)
         {
@@ -138,7 +155,12 @@ void SamplePlayer::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             smoothVolume_.skip(safeSamples - i);
             smoothPan_.skip(safeSamples - i);
             playPosition = -1.0;
-            break;
+            outputBuffer.addSample(0, i, mixedL);
+            if (outChannels > 1)
+                outputBuffer.addSample(1, i, mixedR);
+            lastOutputL = mixedL;
+            lastOutputR = mixedR;
+            continue;
         }
 
         // Per-sample smoothed volume and pan (constant-power law)
@@ -185,9 +207,16 @@ void SamplePlayer::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             const float sample = ((c3 * frac + c2) * frac + c1) * frac + y1;
 
             const float chGain = (ch == 0) ? gainL : gainR;
-            outputBuffer.addSample(ch, i, sample * chGain * env);
+            const float outSample = sample * chGain * env;
+            outputBuffer.addSample(ch, i, outSample + ((ch == 0) ? mixedL : mixedR));
+            if (ch == 0) mixedL += outSample;
+            else if (ch == 1) mixedR += outSample;
         }
 
+        if (outChannels == 1)
+            mixedR = mixedL;
+        lastOutputL = mixedL;
+        lastOutputR = mixedR;
         playPosition += (double)finalPitchRatio;
     }
 }

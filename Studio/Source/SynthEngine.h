@@ -107,13 +107,15 @@ public:
     void noteOn(int midiPitch, float velocity, double sr, const SynthParams& p, int noteLenSamples,
                 int voiceSlot = 0)
     {
+        beginResidualFade();
+        noteOnFadeRemaining_ = kNoteOnFadeSamples;
         pitch_      = midiPitch;
         velocity_   = velocity;
         params_     = p;
         voiceSlot_  = voiceSlot;
         frequency_  = 440.0 * std::pow(2.0, (midiPitch - 69) / 12.0);
-        const float startJitter = SynthVoicing::stableHash01(voiceSlot * 131 + midiPitch * 17 + 11);
-        const float secondJitter = SynthVoicing::stableHash01(voiceSlot * 197 + midiPitch * 29 + 53);
+        const float startJitter = SynthVoicing::stableHash01(voiceSlot * 131 + 11);
+        const float secondJitter = SynthVoicing::stableHash01(voiceSlot * 197 + 53);
         phase_      = startJitter;
         phase2_     = secondJitter;
         lfoPhase_   = 0.0;
@@ -125,14 +127,14 @@ public:
         voicePan_ = juce::jlimit(-0.22f, 0.22f,
                                  ((float)voiceSlot - 3.5f) * 0.055f + (startJitter - 0.5f) * 0.05f);
 
-        const float attackSamples  = juce::jmax(1.0f, p.attack  * 0.001f * (float)sr);
+        const float attackSamples  = juce::jmax(kMinAttackSamples, p.attack  * 0.001f * (float)sr);
         const float decaySamples   = juce::jmax(1.0f, p.decay   * 0.001f * (float)sr);
-        const float releaseSamples = juce::jmax(1.0f, p.release * 0.001f * (float)sr);
+        releaseSamples_            = juce::jmax(kMinReleaseSamples, p.release * 0.001f * (float)sr);
 
         attackInc_  = 1.0f / attackSamples;
         decayInc_   = (1.0f - p.sustain) / decaySamples;
         sustainLvl_ = p.sustain;
-        releaseInc_ = juce::jmax(0.000001f, p.sustain / releaseSamples);
+        releaseInc_ = juce::jmax(0.000001f, juce::jmax(envLevel_, p.sustain) / releaseSamples_);
 
         envState_ = Env::Attack;
         envLevel_ = 0.0f;
@@ -146,21 +148,34 @@ public:
     void noteOff()
     {
         if (envState_ != Env::Idle)
+        {
+            releaseInc_ = juce::jmax(0.000001f, envLevel_ / juce::jmax(1.0f, releaseSamples_));
             envState_ = Env::Release;
+        }
     }
 
     void kill()
     {
+        beginResidualFade();
         envState_ = Env::Idle;
         envLevel_ = 0.0f;
     }
 
     bool isActive()  const { return envState_ != Env::Idle; }
+    bool isRenderable() const { return envState_ != Env::Idle || residualFadeRemaining_ > 0; }
     int  getPitch()  const { return pitch_; }
+    float getStealPriority() const
+    {
+        const float residualLevel = residualFadeRemaining_ > 0
+            ? (float)residualFadeRemaining_ / (float)kResidualFadeSamples * 0.05f
+            : 0.0f;
+        const float envWeight = (envState_ == Env::Release) ? 0.35f : 1.0f;
+        return envLevel_ * envWeight + residualLevel;
+    }
 
     void renderAdd(float* L, float* R, int numSamples, double sr)
     {
-        if (envState_ == Env::Idle) return;
+        if (envState_ == Env::Idle && residualFadeRemaining_ <= 0) return;
 
         float b0, b1, b2, a1, a2;
         computeFilter(params_.cutoff, params_.resonance, sr, b0, b1, b2, a1, a2);
@@ -172,6 +187,20 @@ public:
 
         for (int i = 0; i < numSamples; ++i)
         {
+            float outL = 0.0f;
+            float outR = 0.0f;
+            float synthOutL = 0.0f;
+            float synthOutR = 0.0f;
+
+            if (residualFadeRemaining_ > 0)
+            {
+                const float fade = (float)residualFadeRemaining_ / (float)kResidualFadeSamples;
+                outL += residualTailL_ * fade;
+                outR += residualTailR_ * fade;
+                if (--residualFadeRemaining_ == 0)
+                    residualTailL_ = residualTailR_ = 0.0f;
+            }
+
             // Auto-release after note length
             if (noteLenRemaining_ > 0)
             {
@@ -195,53 +224,71 @@ public:
                     break;
                 case Env::Release:
                     envLevel_ -= releaseInc_;
-                    if (envLevel_ <= 0.0f) { envLevel_ = 0.0f; envState_ = Env::Idle; return; }
+                    if (envLevel_ <= 0.0f) { envLevel_ = 0.0f; envState_ = Env::Idle; }
                     break;
                 case Env::Idle:
-                    return;
+                    break;
             }
 
-            // LFO
-            float lfoVal = 0.0f;
-            if (params_.lfoDepth > 0.0f)
+            if (envState_ != Env::Idle)
             {
-                lfoVal = std::sin((float)(lfoPhase_ * juce::MathConstants<double>::twoPi));
-                lfoPhase_ += lfoInc;
-                if (lfoPhase_ >= 1.0) lfoPhase_ -= 1.0;
+                // LFO
+                float lfoVal = 0.0f;
+                if (params_.lfoDepth > 0.0f)
+                {
+                    lfoVal = std::sin((float)(lfoPhase_ * juce::MathConstants<double>::twoPi));
+                    lfoPhase_ += lfoInc;
+                    if (lfoPhase_ >= 1.0) lfoPhase_ -= 1.0;
+                }
+
+                // Frequency with optional pitch LFO
+                double freq = frequency_;
+                if (params_.lfoDepth > 0.0f && params_.lfoTarget == 1)
+                    freq *= std::pow(2.0, (double)(lfoVal * params_.lfoDepth * 2.0f) / 12.0);
+
+                // Cutoff with optional LFO — recompute filter only when modulating
+                if (params_.lfoDepth > 0.0f && params_.lfoTarget == 0)
+                {
+                    const float modCutoff = juce::jlimit(50.0f, 20000.0f,
+                                                         params_.cutoff * (1.0f + lfoVal * params_.lfoDepth));
+                    computeFilter(modCutoff, params_.resonance, sr, b0, b1, b2, a1, a2);
+                }
+
+                // Oscillator
+                const double dt = freq / sr;
+                const double dt2 = (freq * detuneRatio_) / sr;
+                phase_ += dt;
+                if (phase_ >= 1.0) phase_ -= 1.0;
+                phase2_ += dt2;
+                if (phase2_ >= 1.0) phase2_ -= 1.0;
+
+                const float osc    = generateSample((float)phase_, dt, params_.waveform);
+                const float osc1   = generateSample((float)phase2_, dt2, params_.waveform);
+                const float sample = ((osc + osc1) * 0.5) * envLevel_ * velocity_ * 0.25f;  // 0.25 headroom for polyphony
+
+                // Biquad LP filter (direct-form I)
+                const float filtered = b0 * sample + z1L_;
+                z1L_ = b1 * sample - a1 * filtered + z2L_;
+                z2L_ = b2 * sample - a2 * filtered;
+
+                synthOutL = filtered * panL;
+                synthOutR = filtered * panR;
             }
 
-            // Frequency with optional pitch LFO
-            double freq = frequency_;
-            if (params_.lfoDepth > 0.0f && params_.lfoTarget == 1)
-                freq *= std::pow(2.0, (double)(lfoVal * params_.lfoDepth * 2.0f) / 12.0);
-
-            // Cutoff with optional LFO — recompute filter only when modulating
-            if (params_.lfoDepth > 0.0f && params_.lfoTarget == 0)
+            if (noteOnFadeRemaining_ > 0)
             {
-                const float modCutoff = juce::jlimit(50.0f, 20000.0f,
-                                                     params_.cutoff * (1.0f + lfoVal * params_.lfoDepth));
-                computeFilter(modCutoff, params_.resonance, sr, b0, b1, b2, a1, a2);
+                const float fadeIn = 1.0f - ((float)noteOnFadeRemaining_ / (float)kNoteOnFadeSamples);
+                synthOutL *= fadeIn;
+                synthOutR *= fadeIn;
+                --noteOnFadeRemaining_;
             }
 
-            // Oscillator
-            const double dt = freq / sr;
-            const double dt2 = (freq * detuneRatio_) / sr;
-            phase_ += dt;
-            if (phase_ >= 1.0) phase_ -= 1.0;
-            phase2_ += dt2;
-            if (phase2_ >= 1.0) phase2_ -= 1.0;
-
-            const float osc    = generateSample((float)phase_, dt, params_.waveform);
-            const float osc1   = generateSample((float)phase2_, dt2, params_.waveform);
-            const float sample = ((osc + osc1) * 0.5) * envLevel_ * velocity_ * 0.25f;  // 0.25 headroom for polyphony
-
-            // Biquad LP filter (direct-form I)
-            const float filtered = b0 * sample + z1L_;
-            z1L_ = b1 * sample - a1 * filtered + z2L_;
-            z2L_ = b2 * sample - a2 * filtered;
-
-            L[i] += filtered * panL;
-            R[i] += filtered * panR;
+            outL += synthOutL;
+            outR += synthOutR;
+            L[i] += outL;
+            R[i] += outR;
+            lastOutputL_ = outL;
+            lastOutputR_ = outR;
         }
     }
 
@@ -260,6 +307,7 @@ private:
     float  attackInc_         = 0.0f;
     float  decayInc_          = 0.0f;
     float  releaseInc_        = 0.0f;
+    float  releaseSamples_    = 1.0f;
     float  sustainLvl_        = 0.7f;
     SynthParams params_       = {};
     float  detuneRatio_       = 1.0f;
@@ -271,6 +319,29 @@ private:
     // Biquad filter state (mono; same signal routed to L+R)
     float  z1L_ = 0.0f, z2L_ = 0.0f;
     float  z1R_ = 0.0f, z2R_ = 0.0f;
+    float  lastOutputL_ = 0.0f, lastOutputR_ = 0.0f;
+    float  residualTailL_ = 0.0f, residualTailR_ = 0.0f;
+    int    residualFadeRemaining_ = 0;
+    int    noteOnFadeRemaining_ = 0;
+    static constexpr int kResidualFadeSamples = 64;
+    static constexpr int kNoteOnFadeSamples = 96;
+    static constexpr float kMinAttackSamples = 96.0f;
+    static constexpr float kMinReleaseSamples = 192.0f;
+
+    void beginResidualFade()
+    {
+        if (std::abs(lastOutputL_) > 1.0e-5f || std::abs(lastOutputR_) > 1.0e-5f)
+        {
+            residualTailL_ = lastOutputL_;
+            residualTailR_ = lastOutputR_;
+            residualFadeRemaining_ = kResidualFadeSamples;
+        }
+        else
+        {
+            residualTailL_ = residualTailR_ = 0.0f;
+            residualFadeRemaining_ = 0;
+        }
+    }
 
     // Polynomial Band-Limited Step function — corrects the discontinuity
     // at phase wrap-around (and at 0.5 for square). t = phase, dt = phase increment.
@@ -348,12 +419,25 @@ public:
 
         int voiceIdx = -1;
         for (int i = 0; i < kNumVoices; ++i)
-            if (!voices_[i].isActive()) { voiceIdx = i; break; }
+            if (!voices_[i].isRenderable()) { voiceIdx = i; break; }
 
         if (voiceIdx < 0)  // voice stealing — round-robin oldest
         {
-            voiceIdx = stealIdx_;
-            stealIdx_ = (stealIdx_ + 1) % kNumVoices;
+            float lowestPriority = std::numeric_limits<float>::max();
+            for (int i = 0; i < kNumVoices; ++i)
+            {
+                const float priority = voices_[i].getStealPriority();
+                if (priority < lowestPriority)
+                {
+                    lowestPriority = priority;
+                    voiceIdx = i;
+                }
+            }
+            if (voiceIdx < 0)
+            {
+                voiceIdx = stealIdx_;
+                stealIdx_ = (stealIdx_ + 1) % kNumVoices;
+            }
         }
 
         voices_[voiceIdx].noteOn(pitch, velocity, sr, p, noteLenSamples, voiceIdx);
@@ -384,7 +468,7 @@ public:
     {
         int activeVoiceCount = 0;
         for (auto& v : voices_)
-            if (v.isActive())
+            if (v.isRenderable())
             {
                 ++activeVoiceCount;
                 v.renderAdd(L, R, numSamples, sr);
@@ -399,12 +483,26 @@ public:
                 R[i] = SynthVoicing::softClip(R[i] * gainComp);
             }
         }
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float deltaL = L[i] - lastBlockOutL_;
+            const float deltaR = R[i] - lastBlockOutR_;
+            const float limitedL = lastBlockOutL_ + juce::jlimit(-kMaxOutputStep, kMaxOutputStep, deltaL);
+            const float limitedR = lastBlockOutR_ + juce::jlimit(-kMaxOutputStep, kMaxOutputStep, deltaR);
+            lastBlockOutL_ = limitedL;
+            lastBlockOutR_ = limitedR;
+            L[i] = limitedL;
+            R[i] = limitedR;
+        }
     }
 
     void reset()
     {
         for (auto& v : voices_) v = SynthVoice{};
         stealIdx_ = 0;
+        lastBlockOutL_ = 0.0f;
+        lastBlockOutR_ = 0.0f;
     }
 
     void prepare(double /*sr*/, int /*maxBlock*/) {}
@@ -412,6 +510,9 @@ public:
 private:
     std::array<SynthVoice, kNumVoices> voices_;
     int stealIdx_ = 0;
+    float lastBlockOutL_ = 0.0f;
+    float lastBlockOutR_ = 0.0f;
+    static constexpr float kMaxOutputStep = 0.06f;
 };
 
 namespace SynthPreview

@@ -343,7 +343,7 @@ bool ProjectSerializer::load(juce::File& file, Project& projectOut)
         {
             PlaylistClip clip;
             clip.id         = clipEl->getIntAttribute("id",         0);
-            clip.patternId  = clipEl->getIntAttribute("patternId",  1);
+            clip.patternId  = clipEl->getIntAttribute("patternId", -1);
             clip.name       = clipEl->getStringAttribute("name",    "Clip");
             clip.trackIndex = clipEl->getIntAttribute("trackIndex", 0);
             clip.startBar   = (float)clipEl->getDoubleAttribute("startBar",   0.0);
