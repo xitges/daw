@@ -21,9 +21,9 @@ class SynthEditorPanel : public juce::Component
 public:
     struct WaveformPreview : public juce::Component
     {
-        void setWaveform(std::vector<float> samples)
+        void setWaveformData(SynthPreview::WaveformData d)
         {
-            waveform = std::move(samples);
+            data = std::move(d);
             repaint();
         }
 
@@ -36,35 +36,58 @@ public:
                 const float y = pct * (float)getHeight();
                 g.drawLine(0.0f, y, (float)getWidth(), y, 0.5f);
             }
-
-            g.setColour(juce::Colour(0xff3498db).withAlpha(0.25f));
+            g.setColour(juce::Colour(0xff3498db).withAlpha(0.20f));
             g.drawLine(0.0f, getHeight() * 0.5f, (float)getWidth(), getHeight() * 0.5f, 1.0f);
 
-            if (waveform.empty())
-                return;
+            const int n = (int)data.minVals.size();
+            if (n == 0) return;
 
-            juce::Path path;
-            const float midY = getHeight() * 0.5f;
-            const float scaleY = juce::jmax(1.0f, getHeight() * 0.42f);
-            for (size_t i = 0; i < waveform.size(); ++i)
+            const float midY   = getHeight() * 0.5f;
+            const float scaleY = juce::jmax(1.0f, getHeight() * 0.45f);
+            const float w      = (float)getWidth();
+            const float h      = (float)getHeight();
+
+            // ADSR phase colours
+            const juce::Colour colAttack  (0xff44dd88);  // green
+            const juce::Colour colDecay   (0xffddaa33);  // amber
+            const juce::Colour colSustain (0xff3498db);  // blue
+            const juce::Colour colRelease (0xffdd4444);  // red
+
+            for (int i = 0; i < n; ++i)
             {
-                const float x = juce::jmap((float)i, 0.0f, (float)juce::jmax<size_t>(1, waveform.size() - 1),
-                                           0.0f, (float)getWidth());
-                const float y = midY - waveform[i] * scaleY;
-                if (i == 0)
-                    path.startNewSubPath(x, y);
-                else
-                    path.lineTo(x, y);
+                const float xFrac = (float)i / (float)juce::jmax(1, n - 1);
+                juce::Colour col;
+                if      (xFrac < data.attackFrac)  col = colAttack;
+                else if (xFrac < data.decayFrac)   col = colDecay;
+                else if (xFrac < data.releaseFrac) col = colSustain;
+                else                               col = colRelease;
+
+                const float x  = juce::jmap((float)i, 0.0f, (float)juce::jmax(1, n - 1), 0.0f, w);
+                const float y1 = midY - data.maxVals[(size_t)i] * scaleY;
+                const float y2 = midY - data.minVals[(size_t)i] * scaleY;
+
+                g.setColour(col.withAlpha(0.88f));
+                g.drawVerticalLine((int)x, y1, y2 + 1.0f);
             }
 
-            g.setColour(juce::Colour(0xff8fd3ff));
-            g.strokePath(path, juce::PathStrokeType(2.0f));
+            // Phase boundary lines
+            auto drawBoundary = [&](float frac, juce::Colour c)
+            {
+                if (frac <= 0.0f || frac >= 1.0f) return;
+                const float x = frac * w;
+                g.setColour(c.withAlpha(0.55f));
+                g.drawLine(x, 0.0f, x, h, 1.0f);
+            };
+            drawBoundary(data.attackFrac,  colDecay);
+            drawBoundary(data.decayFrac,   colSustain);
+            drawBoundary(data.releaseFrac, colRelease);
+
             g.setColour(juce::Colour(0xff4aa3df));
             g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 6.0f, 1.0f);
         }
 
     private:
-        std::vector<float> waveform;
+        SynthPreview::WaveformData data;
     };
 
     std::function<void()> onParamsChanged;
@@ -408,7 +431,8 @@ private:
 
     void updateWaveformPreview()
     {
-        waveformPreview.setWaveform(SynthPreview::renderWaveform(makeCurrentParams(), 256));
+        const int w = juce::jmax(64, waveformPreview.getWidth());
+        waveformPreview.setWaveformData(SynthPreview::renderWaveformData(makeCurrentParams(), w));
     }
 
     void notify()

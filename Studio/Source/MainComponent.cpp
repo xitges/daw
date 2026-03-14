@@ -182,6 +182,16 @@ MainComponent::MainComponent()
 
     toolbar.onPlayModeChanged = [this](PlayMode mode)
     {
+        // Stop current playback BEFORE changing mode so stop() uses the
+        // correct mode-specific logic (song: clears songPlaying; pattern: stops sequencer).
+        audioEngine.stop();
+        audioEngine.allSynthNotesOff();
+        audioEngine.clearTransientPlaybackState();
+        channelRack.setPlaybackStep(-1);
+        playlist.setPlayheadBar(-1.0);
+        if (pianoRollWindow != nullptr)
+            pianoRollWindow->content.pianoRoll.setPlayheadBeat(-1.0);
+
         project.playMode = mode;
         audioEngine.setPlayMode(mode);
         markDirty();

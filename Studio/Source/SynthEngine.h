@@ -744,4 +744,91 @@ namespace SynthPreview
 
         return left;
     }
+
+    // ------------------------------------------------------------------
+    // MinMax waveform data — shows oscillator texture + ADSR envelope shape
+    // ------------------------------------------------------------------
+    struct WaveformData
+    {
+        std::vector<float> minVals;
+        std::vector<float> maxVals;
+        float attackFrac  = 0.0f;   // [0..1] x-fraction where attack ends
+        float decayFrac   = 0.0f;   // [0..1] x-fraction where decay ends
+        float releaseFrac = 0.0f;   // [0..1] x-fraction where release begins
+    };
+
+    inline WaveformData renderWaveformData(const SynthParams& params, int numPixels, double sampleRate = 44100.0)
+    {
+        SynthVoice voice;
+        const int    previewPitch = 60;
+        const double attackSec    = juce::jmax(0.01, params.attack  * 0.001);
+        const double decaySec     = juce::jmax(0.02, params.decay   * 0.001);
+        const double releaseSec   = juce::jmax(0.05, params.release * 0.001);
+        const double holdSec      = juce::jlimit(0.12, 0.45, attackSec * 0.35 + decaySec * 0.30 + 0.16);
+        const double totalSec     = juce::jlimit(0.45, 2.4, holdSec + releaseSec + 0.20);
+        const int    renderSamples = juce::jmax(numPixels, (int)std::ceil(totalSec * sampleRate));
+        const int    holdSamples   = juce::jlimit(1, juce::jmax(1, renderSamples - 1),
+                                                  (int)std::ceil(holdSec * sampleRate));
+
+        // ADSR phase boundaries (in samples within the hold portion)
+        const int attackSamples = (int)std::ceil(attackSec * sampleRate);
+        const int decaySamples  = (int)std::ceil(decaySec  * sampleRate);
+        const int attackEnd     = juce::jmin(attackSamples, holdSamples);
+        const int decayEnd      = juce::jmin(attackSamples + decaySamples, holdSamples);
+
+        std::vector<float> renderLeft ((size_t)renderSamples, 0.0f);
+        std::vector<float> renderRight((size_t)renderSamples, 0.0f);
+
+        const auto previewParams = DDSPAutoPatch::generate(params, previewPitch, 1.0f, holdSec + releaseSec);
+        voice.noteOn(previewPitch, 1.0f, sampleRate, previewParams, renderSamples);
+        voice.renderAdd(renderLeft.data(), renderRight.data(), holdSamples, sampleRate);
+        voice.noteOff();
+        voice.renderAdd(renderLeft.data() + holdSamples, renderRight.data() + holdSamples,
+                        renderSamples - holdSamples, sampleRate);
+
+        // MinMax per pixel
+        WaveformData data;
+        data.minVals.resize((size_t)numPixels, 0.0f);
+        data.maxVals.resize((size_t)numPixels, 0.0f);
+
+        const double samplesPerPixel = (double)renderSamples / (double)juce::jmax(1, numPixels);
+        for (int i = 0; i < numPixels; ++i)
+        {
+            const int start = juce::jlimit(0, renderSamples - 1, (int)std::floor((double)i * samplesPerPixel));
+            const int end   = juce::jlimit(start + 1, renderSamples, (int)std::ceil((double)(i + 1) * samplesPerPixel));
+            float lo = 0.0f, hi = 0.0f;
+            for (int s = start; s < end; ++s)
+            {
+                const float v = renderLeft[(size_t)s];
+                lo = juce::jmin(lo, v);
+                hi = juce::jmax(hi, v);
+            }
+            data.minVals[(size_t)i] = lo;
+            data.maxVals[(size_t)i] = hi;
+        }
+
+        // Normalize
+        float peak = 0.0f;
+        for (int i = 0; i < numPixels; ++i)
+        {
+            peak = juce::jmax(peak, std::abs(data.minVals[(size_t)i]));
+            peak = juce::jmax(peak, std::abs(data.maxVals[(size_t)i]));
+        }
+        if (peak > 0.0001f)
+        {
+            const float gain = 1.0f / peak;
+            for (int i = 0; i < numPixels; ++i)
+            {
+                data.minVals[(size_t)i] *= gain;
+                data.maxVals[(size_t)i] *= gain;
+            }
+        }
+
+        // Phase boundary fractions [0..1]
+        data.attackFrac  = (float)attackEnd   / (float)renderSamples;
+        data.decayFrac   = (float)decayEnd    / (float)renderSamples;
+        data.releaseFrac = (float)holdSamples / (float)renderSamples;
+
+        return data;
+    }
 }
