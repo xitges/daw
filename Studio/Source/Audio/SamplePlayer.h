@@ -22,6 +22,10 @@ public:
     void prepare(double sampleRate, int bufferSize);
     void reset();
     void renderNextBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples);
+    void renderNextBlockRouted(std::array<juce::AudioBuffer<float>, 8>& trackBuffers, int numSamples)
+    {
+        renderNextBlock(trackBuffers[(size_t) juce::jlimit(0, 7, mixerTrack_)], numSamples);
+    }
 
     bool isLoaded() const
     {
@@ -81,6 +85,8 @@ public:
     // Mute
     void setMuted(bool m) { muted = m; }
     bool isMuted()  const { return muted; }
+    void setMixerTrack(int track) { mixerTrack_ = juce::jlimit(0, 7, track); }
+    int getMixerTrack() const { return mixerTrack_; }
 
 private:
     void updateFinalRatio(){
@@ -112,6 +118,7 @@ private:
 
     // Mute
     bool muted = false;
+    int  mixerTrack_ = 0;
 
     std::atomic<bool> triggered { false };
     int triggerOffset_ = 0;   // set by triggerAt(), consumed in renderNextBlock (audio thread only)

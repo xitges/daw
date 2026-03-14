@@ -208,14 +208,8 @@ MainComponent::MainComponent()
             np.stepCount = cur->stepCount;
             for (int i = 0; i < Pattern::kMaxChannels; ++i)
             {
-                np.samplePaths[i]         = cur->samplePaths[i];
                 np.channelTypes[i]        = cur->channelTypes[i];
                 np.channelNames[i]        = cur->channelNames[i];
-                np.synthParams[i]         = cur->synthParams[i];
-                np.channelVolume[i]       = cur->channelVolume[i];
-                np.channelPan[i]          = cur->channelPan[i];
-                np.channelPitch[i]        = cur->channelPitch[i];
-                np.channelMixerRouting[i] = cur->channelMixerRouting[i];
             }
         }
         else

@@ -387,8 +387,9 @@ void AudioEngine::previewNote(int ch, int midiPitch)
                                                        : sampleChannelVolume_[(size_t)ch].load(std::memory_order_relaxed);
         const float pan = (prevSnap.patternId >= 0) ? prevSnap.channelPan[(size_t)ch]
                                                     : sampleChannelPan_[(size_t)ch].load(std::memory_order_relaxed);
+        const int mixerTrack = (prevSnap.patternId >= 0) ? juce::jlimit(0, 7, prevSnap.channelMixerRouting[(size_t)ch]) : 0;
         auto sourceBuffer = getChannelSourceBufferShared(ch);
-        triggerSampleVoiceNow(ch, 0, sourceBuffer.get(), sourceBuffer, volume, pan,
+        triggerSampleVoiceNow(ch, 0, mixerTrack, sourceBuffer.get(), sourceBuffer, volume, pan,
                               channelBasePitch[(size_t)ch].load(std::memory_order_relaxed) + (float)(midiPitch - 60), 1.0f);
     }
 }
@@ -586,7 +587,8 @@ void AudioEngine::triggerChannel(int channelIndex, int offsetInBuffer)
                                                     midiPitch, 0.8f, noteLen);
         polySynths[(size_t)channelIndex].noteOn(
             midiPitch, 0.8f, sampleRate,
-            noteParams, noteLen);
+            noteParams, noteLen, 1.0f, 0.0f,
+            trigSnap.patternId >= 0 ? juce::jlimit(0, 7, trigSnap.channelMixerRouting[(size_t)channelIndex]) : 0);
         return;
     }
 
@@ -596,8 +598,9 @@ void AudioEngine::triggerChannel(int channelIndex, int offsetInBuffer)
                                                 : sampleChannelPan_[(size_t)channelIndex].load(std::memory_order_relaxed);
     const float pitch = channelBasePitch[(size_t)channelIndex].load(std::memory_order_relaxed)
                       + ((trigSnap.patternId >= 0) ? trigSnap.channelPitch[(size_t)channelIndex] : 0.0f);
+    const int mixerTrack = (trigSnap.patternId >= 0) ? juce::jlimit(0, 7, trigSnap.channelMixerRouting[(size_t)channelIndex]) : 0;
     auto sourceBuffer = getChannelSourceBufferShared(channelIndex);
-    scheduleSampleTrigger(channelIndex, offsetInBuffer, sourceBuffer.get(), sourceBuffer,
+    scheduleSampleTrigger(channelIndex, offsetInBuffer, mixerTrack, sourceBuffer.get(), sourceBuffer,
                           volume, pan, pitch, 1.0f);
 }
 
@@ -618,6 +621,7 @@ std::shared_ptr<const juce::AudioBuffer<float>> AudioEngine::getChannelSourceBuf
 
 void AudioEngine::scheduleSampleTrigger(int channelIndex,
                                         int offsetInBuffer,
+                                        int mixerTrack,
                                         const juce::AudioBuffer<float>* sourceBuffer,
                                         std::shared_ptr<const juce::AudioBuffer<float>> ownedSourceBuffer,
                                         float volume,
@@ -630,6 +634,7 @@ void AudioEngine::scheduleSampleTrigger(int channelIndex,
 
     ScheduledSampleTrigger trigger;
     trigger.channel = channelIndex;
+    trigger.mixerTrack = juce::jlimit(0, 7, mixerTrack);
     trigger.offsetInBuffer = juce::jmax(0, offsetInBuffer);
     trigger.sourceBuffer = sourceBuffer;
     trigger.ownedSourceBuffer = std::move(ownedSourceBuffer);
@@ -645,6 +650,7 @@ void AudioEngine::scheduleSampleTrigger(int channelIndex,
 
 void AudioEngine::triggerSampleVoiceNow(int channelIndex,
                                         int offsetInBuffer,
+                                        int mixerTrack,
                                         const juce::AudioBuffer<float>* sourceBuffer,
                                         std::shared_ptr<const juce::AudioBuffer<float>> ownedSourceBuffer,
                                         float volume,
@@ -663,6 +669,7 @@ void AudioEngine::triggerSampleVoiceNow(int channelIndex,
         voice.setExternalBuffer(sourceBuffer);
     voice.setVolume(volume);
     voice.setPan(pan);
+    voice.setMixerTrack(mixerTrack);
     voice.setPitch(pitchSemitones);
     voice.setAttack(juce::jmax(0.5f, sampleChannelAttackMs_[(size_t)channelIndex].load(std::memory_order_relaxed)));
     voice.setRelease(juce::jmax(2.0f, sampleChannelReleaseMs_[(size_t)channelIndex].load(std::memory_order_relaxed)));
@@ -680,7 +687,7 @@ void AudioEngine::dispatchScheduledSampleTriggers()
     for (int i = 0; i < scheduledSampleTriggers_.count; ++i)
     {
         const auto& trigger = scheduledSampleTriggers_.triggers[(size_t)i];
-        triggerSampleVoiceNow(trigger.channel, trigger.offsetInBuffer, trigger.sourceBuffer,
+        triggerSampleVoiceNow(trigger.channel, trigger.offsetInBuffer, trigger.mixerTrack, trigger.sourceBuffer,
                               trigger.ownedSourceBuffer, trigger.volume, trigger.pan, trigger.pitchSemitones,
                               trigger.bpmRatio);
     }
@@ -782,7 +789,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     {
                         const auto noteParams = makeNoteSynthParams(midiSnap.synthParams[(size_t)ch],
                                                                     pitch, vel, 0);
-                        polySynths[(size_t)ch].noteOn(pitch, vel, sampleRate, noteParams, 0);
+                        polySynths[(size_t)ch].noteOn(pitch, vel, sampleRate, noteParams, 0,
+                                                      1.0f, 0.0f,
+                                                      midiSnap.patternId >= 0 ? juce::jlimit(0, 7, midiSnap.channelMixerRouting[(size_t)ch]) : 0);
                     }
                     else
                     {
@@ -793,7 +802,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                                         ? midiSnap.channelPan[(size_t)ch]
                                         : sampleChannelPan_[(size_t)ch].load(std::memory_order_relaxed);
                         auto sourceBuffer = getChannelSourceBufferShared(ch);
-                        scheduleSampleTrigger(ch, meta.samplePosition, sourceBuffer.get(), sourceBuffer,
+                        scheduleSampleTrigger(ch, meta.samplePosition,
+                                              midiSnap.patternId >= 0 ? juce::jlimit(0, 7, midiSnap.channelMixerRouting[(size_t)ch]) : 0,
+                                              sourceBuffer.get(), sourceBuffer,
                                               volume, pan,
                                               channelBasePitch[(size_t)ch].load(std::memory_order_relaxed) + (float)(pitch - 60), 1.0f);
                     }
@@ -1069,13 +1080,13 @@ void AudioEngine::processPatternMode(juce::AudioBuffer<float>& buffer,
                                 const int noteLenSamples = (int)(note.lengthBeats * samplesPerBeat);
                                 const auto noteParams = makeNoteSynthParams(sp, tp, note.velocity, noteLenSamples);
                                 polySynths[(size_t)ch].noteOn(tp, note.velocity,
-                                                               sampleRate, noteParams, noteLenSamples);
+                                                              sampleRate, noteParams, noteLenSamples);
                             }
                             else
                             {
                                 // Apply note velocity as volume scale for sample channels
                                 auto sourceBuffer = getChannelSourceBufferShared(ch);
-                                scheduleSampleTrigger(ch, 0, sourceBuffer.get(), sourceBuffer,
+                                scheduleSampleTrigger(ch, 0, juce::jlimit(0, 7, snap.channelMixerRouting[ch]), sourceBuffer.get(), sourceBuffer,
                                                       snap.channelVolume[ch] * note.velocity,
                                                       snap.channelPan[ch],
                                                       channelBasePitch[(size_t)ch].load(std::memory_order_relaxed) + (float)(note.pitch - 60),
@@ -1210,7 +1221,10 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                     const int noteLenSamples = juce::jmax(1, (int)(0.25 * samplesPerBeat));
                     const auto noteParams = makeNoteSynthParams(pattern->synthParams[(size_t)ch],
                                                                 midiPitch, 0.8f, noteLenSamples);
-                    polySynths[(size_t)ch].noteOn(midiPitch, 0.8f, sampleRate, noteParams, noteLenSamples);
+                    polySynths[(size_t)ch].noteOn(midiPitch, 0.8f, sampleRate, noteParams, noteLenSamples,
+                                                  songChannelVolume_[(size_t)ch],
+                                                  songChannelPan_[(size_t)ch],
+                                                  juce::jlimit(0, 7, pattern->channelMixerRouting[ch]));
                 }
                 else
                 {
@@ -1218,7 +1232,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                     std::shared_ptr<const juce::AudioBuffer<float>> songBuffer =
                         (cit != songSampleCache.end()) ? cit->second[(size_t)ch] : nullptr;
 
-                    scheduleSampleTrigger(ch, offsetInBuf, songBuffer.get(), songBuffer,
+                    scheduleSampleTrigger(ch, offsetInBuf, juce::jlimit(0, 7, pattern->channelMixerRouting[ch]), songBuffer.get(), songBuffer,
                                           songChannelVolume_[(size_t)ch],
                                           songChannelPan_[(size_t)ch],
                                           channelBasePitch[(size_t)ch].load(std::memory_order_relaxed) + pattern->channelPitch[ch],
@@ -1268,7 +1282,10 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                         {
                             const int noteLenSamples = (int)(note.lengthBeats * samplesPerBeat);
                             const auto noteParams = makeNoteSynthParams(sp, tp2, note.velocity, noteLenSamples);
-                            polySynths[(size_t)ch].noteOn(tp2, note.velocity, sampleRate, noteParams, noteLenSamples);
+                            polySynths[(size_t)ch].noteOn(tp2, note.velocity, sampleRate, noteParams, noteLenSamples,
+                                                          songChannelVolume_[(size_t)ch],
+                                                          songChannelPan_[(size_t)ch],
+                                                          juce::jlimit(0, 7, pat->channelMixerRouting[ch]));
                         }
                         else
                         {
@@ -1277,7 +1294,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                                 (cit != songSampleCache.end()) ? cit->second[(size_t)ch] : nullptr;
                             const int offset = juce::jlimit(0, numSamples - 1,
                                                             (int)((fireBeat - startBeatSong) * samplesPerBeat));
-                            scheduleSampleTrigger(ch, offset, songBuffer.get(), songBuffer,
+                            scheduleSampleTrigger(ch, offset, juce::jlimit(0, 7, pat->channelMixerRouting[ch]), songBuffer.get(), songBuffer,
                                                   songChannelVolume_[(size_t)ch] * note.velocity,
                                                   songChannelPan_[(size_t)ch],
                                                   channelBasePitch[(size_t)ch].load(std::memory_order_relaxed) + (float)(note.pitch - 60),
@@ -1325,13 +1342,11 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
     {
         stagingBuf.clear();
 
-        // In song mode, different patterns can overlap on the same channel index.
-        // Sample voices and synth voices must therefore be allowed to coexist.
         const bool usePlugin = (instrumentPlugins[(size_t)ch] != nullptr);
-        const bool useSynth  = polySynths[(size_t)ch].isAnyActive()
-                            || (playMode != PlayMode::Song
-                                && (mixSnap.patternId >= 0)
-                                && mixSnap.synthParams[(size_t)ch].enabled);
+        const bool useSynth  = (playMode != PlayMode::Song)
+                            && (polySynths[(size_t)ch].isAnyActive()
+                                || ((mixSnap.patternId >= 0)
+                                    && mixSnap.synthParams[(size_t)ch].enabled));
 
         if (usePlugin)
         {
@@ -1357,8 +1372,6 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
             float* R = stagingBuf.getWritePointer(1);
             polySynths[(size_t)ch].renderNextBlock(L, R, safe, sampleRate);
         }
-
-        sampleVoicePools[(size_t)ch].renderNextBlock(stagingBuf, safe);
 
         if (usePlugin || useSynth)
         {
@@ -1448,6 +1461,13 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
         }
     }
 
+    for (auto& pool : sampleVoicePools)
+        pool.renderNextBlockRouted(mixerTrackBufs, safe);
+
+    if (playMode == PlayMode::Song)
+        for (auto& synth : polySynths)
+            synth.renderNextBlockRouted(mixerTrackBufs, safe, sampleRate);
+
     const float targetMasterTrim = masterPeak > 0.86f ? 0.86f / masterPeak : 1.0f;
     masterInputTrim_ = smoothingTowards(masterInputTrim_,
                                         juce::jlimit(0.6f, 1.0f, targetMasterTrim),
@@ -1485,12 +1505,13 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
     {
         float* left = output.getWritePointer(0);
         float* right = output.getWritePointer(1);
-        const float attackCoeff = std::exp(-1.0f / (float) juce::jmax(1.0, sampleRate * 0.0035));
-        const float releaseCoeff = std::exp(-1.0f / (float) juce::jmax(1.0, sampleRate * 0.065));
-        constexpr float threshold = 0.54f;
-        constexpr float compression = 2.1f;
-        constexpr float makeup = 1.08f;
-        constexpr float wet = 0.58f;
+        const float attackCoeff = std::exp(-1.0f / (float) juce::jmax(1.0, sampleRate * 0.0018));
+        const float releaseCoeff = std::exp(-1.0f / (float) juce::jmax(1.0, sampleRate * 0.120));
+        constexpr float threshold = 0.78f;
+        constexpr float engageRange = 0.08f;
+        constexpr float compression = 0.95f;
+        constexpr float makeup = 1.015f;
+        constexpr float wet = 0.22f;
 
         for (int s = 0; s < safe; ++s)
         {
@@ -1501,7 +1522,8 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
             masterGlueEnvelope_ = detector + coeff * (masterGlueEnvelope_ - detector);
 
             const float over = juce::jmax(0.0f, masterGlueEnvelope_ - threshold);
-            const float gainReduction = 1.0f / (1.0f + over * compression);
+            const float engage = juce::jlimit(0.0f, 1.0f, over / engageRange);
+            const float gainReduction = 1.0f / (1.0f + over * compression * engage);
             const float shapedL = softSaturate(dryL * gainReduction * makeup);
             const float shapedR = softSaturate(dryR * gainReduction * makeup);
 

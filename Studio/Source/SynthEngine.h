@@ -135,7 +135,7 @@ class SynthVoice
 public:
     // Trigger a note. noteLenSamples: auto-release after this many samples.
     void noteOn(int midiPitch, float velocity, double sr, const SynthParams& p, int noteLenSamples,
-                int voiceSlot = 0)
+                int voiceSlot = 0, float outputGain = 1.0f, float outputPan = 0.0f, int mixerTrack = 0)
     {
         beginResidualFade();
         noteOnFadeRemaining_ = kNoteOnFadeSamples;
@@ -190,6 +190,9 @@ public:
         resonanceSmoothed_ = params_.resonance;
         pitchModSmoothed_ = 1.0f;
         lfoSmoothed_ = 0.0f;
+        outputGain_ = juce::jlimit(0.0f, 1.25f, outputGain);
+        outputPan_ = juce::jlimit(-1.0f, 1.0f, outputPan);
+        mixerTrack_ = juce::jlimit(0, 7, mixerTrack);
 
         envState_ = Env::Attack;
         envLevel_ = 0.0f;
@@ -220,6 +223,7 @@ public:
     bool isActive()  const { return envState_ != Env::Idle; }
     bool isRenderable() const { return envState_ != Env::Idle || residualFadeRemaining_ > 0; }
     int  getPitch()  const { return pitch_; }
+    int  getMixerTrack() const { return mixerTrack_; }
     float getStealPriority() const
     {
         const float residualLevel = residualFadeRemaining_ > 0
@@ -237,7 +241,8 @@ public:
         computeFilter(params_.cutoff, params_.resonance, sr, b0, b1, b2, a1, a2);
 
         const double lfoInc = params_.lfoRate / sr;
-        const float panAngle = (voicePan_ + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+        const float finalPan = juce::jlimit(-1.0f, 1.0f, voicePan_ + outputPan_ * 0.85f);
+        const float panAngle = (finalPan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
         const float panL = std::cos(panAngle);
         const float panR = std::sin(panAngle);
 
@@ -356,7 +361,7 @@ public:
                 const float bodyBlend = (params_.waveform == 3) ? 0.52f : 0.58f;
                 const float rawSample = osc * bodyBlend + osc1 * 0.34f + subOsc * subMix;
                 const float sample = SynthVoicing::softClip(rawSample * harmonicDrive * transientDrive)
-                                   * envLevel_ * velocity_ * 0.28f * transientPunch_;
+                                   * envLevel_ * velocity_ * 0.28f * transientPunch_ * outputGain_;
 
                 // Biquad LP filter (direct-form I)
                 const float filtered = SynthVoicing::softClip((b0 * sample + z1L_)
@@ -419,6 +424,9 @@ private:
     float  filterEnvDepth_    = 0.22f;
     float  transientPunch_    = 1.0f;
     float  voicePan_          = 0.0f;
+    float  outputGain_        = 1.0f;
+    float  outputPan_         = 0.0f;
+    int    mixerTrack_        = 0;
     float  cutoffSmoothed_    = 4000.0f;
     float  resonanceSmoothed_ = 0.3f;
     float  pitchModSmoothed_  = 1.0f;
@@ -538,7 +546,8 @@ public:
     static constexpr int kNumVoices = 8;
 
     // Trigger a note with an automatic note-length (in samples).
-    void noteOn(int pitch, float velocity, double sr, const SynthParams& p, int noteLenSamples)
+    void noteOn(int pitch, float velocity, double sr, const SynthParams& p, int noteLenSamples,
+                float outputGain = 1.0f, float outputPan = 0.0f, int mixerTrack = 0)
     {
         if (!p.enabled) return;
 
@@ -565,7 +574,7 @@ public:
             }
         }
 
-        voices_[voiceIdx].noteOn(pitch, velocity, sr, p, noteLenSamples, voiceIdx);
+        voices_[voiceIdx].noteOn(pitch, velocity, sr, p, noteLenSamples, voiceIdx, outputGain, outputPan, mixerTrack);
     }
 
     void noteOff(int pitch)
@@ -622,12 +631,52 @@ public:
         }
     }
 
+    void renderNextBlockRouted(std::array<juce::AudioBuffer<float>, 8>& trackBuffers, int numSamples, double sr)
+    {
+        std::array<int, 8> activeVoiceCount {};
+
+        for (auto& v : voices_)
+            if (v.isRenderable())
+            {
+                const int track = v.getMixerTrack();
+                ++activeVoiceCount[(size_t) track];
+                auto& buffer = trackBuffers[(size_t) track];
+                v.renderAdd(buffer.getWritePointer(0), buffer.getWritePointer(1), numSamples, sr);
+            }
+
+        for (int track = 0; track < 8; ++track)
+        {
+            auto& buffer = trackBuffers[(size_t) track];
+            if (activeVoiceCount[(size_t) track] > 1)
+            {
+                const float gainComp = 1.0f / std::sqrt(1.0f + 0.38f * (float) (activeVoiceCount[(size_t) track] - 1));
+                buffer.applyGain(gainComp);
+            }
+
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float inL = buffer.getSample(0, i);
+                const float inR = buffer.getSample(1, i);
+                const float deltaL = inL - lastTrackOutL_[(size_t) track];
+                const float deltaR = inR - lastTrackOutR_[(size_t) track];
+                const float limitedL = lastTrackOutL_[(size_t) track] + juce::jlimit(-kMaxOutputStep, kMaxOutputStep, deltaL);
+                const float limitedR = lastTrackOutR_[(size_t) track] + juce::jlimit(-kMaxOutputStep, kMaxOutputStep, deltaR);
+                lastTrackOutL_[(size_t) track] = limitedL;
+                lastTrackOutR_[(size_t) track] = limitedR;
+                buffer.setSample(0, i, limitedL);
+                buffer.setSample(1, i, limitedR);
+            }
+        }
+    }
+
     void reset()
     {
         for (auto& v : voices_) v = SynthVoice{};
         stealIdx_ = 0;
         lastBlockOutL_ = 0.0f;
         lastBlockOutR_ = 0.0f;
+        lastTrackOutL_.fill(0.0f);
+        lastTrackOutR_.fill(0.0f);
     }
 
     void prepare(double /*sr*/, int /*maxBlock*/) {}
@@ -637,6 +686,8 @@ private:
     int stealIdx_ = 0;
     float lastBlockOutL_ = 0.0f;
     float lastBlockOutR_ = 0.0f;
+    std::array<float, 8> lastTrackOutL_ {};
+    std::array<float, 8> lastTrackOutR_ {};
     static constexpr float kMaxOutputStep = 0.06f;
 };
 

@@ -268,6 +268,7 @@ private:
     struct ScheduledSampleTrigger
     {
         int channel = -1;
+        int mixerTrack = 0;
         int offsetInBuffer = 0;
         const juce::AudioBuffer<float>* sourceBuffer = nullptr;
         std::shared_ptr<const juce::AudioBuffer<float>> ownedSourceBuffer;
@@ -332,6 +333,12 @@ private:
             for (auto& voice : voices)
                 voice.renderNextBlock(buffer, numSamples);
         }
+
+        void renderNextBlockRouted(std::array<juce::AudioBuffer<float>, 8>& trackBuffers, int numSamples)
+        {
+            for (auto& voice : voices)
+                voice.renderNextBlockRouted(trackBuffers, numSamples);
+        }
     };
 
     struct ChannelSourceSnapshot
@@ -393,6 +400,7 @@ private:
                             const MixRuntimeOverrides* overrides = nullptr);  // M5
     void scheduleSampleTrigger(int channelIndex,
                                int offsetInBuffer,
+                               int mixerTrack,
                                const juce::AudioBuffer<float>* sourceBuffer,
                                std::shared_ptr<const juce::AudioBuffer<float>> ownedSourceBuffer,
                                float volume,
@@ -401,6 +409,7 @@ private:
                                float bpmRatio);
     void triggerSampleVoiceNow(int channelIndex,
                                int offsetInBuffer,
+                               int mixerTrack,
                                const juce::AudioBuffer<float>* sourceBuffer,
                                std::shared_ptr<const juce::AudioBuffer<float>> ownedSourceBuffer,
                                float volume,
