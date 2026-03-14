@@ -447,6 +447,7 @@ private:
     std::unique_ptr<CacheLoader> cacheLoader_;
 
     void buildSongSampleCache();   // may run on background thread
+    void resetMixProcessingState();
     
     double sampleRate = 44100.0;
     int    bufferSize = 512;
@@ -454,6 +455,9 @@ private:
     // Dynamic EQ — one per mixer track bus + one for master
     std::array<DynamicEQProcessor, 8> trackDynEQs_;
     DynamicEQProcessor                masterDynEQ_;
+    std::array<float, 8>             trackInputTrim_ {};
+    float                            masterInputTrim_ = 1.0f;
+    float                            masterGlueEnvelope_ = 0.0f;
 
     // M8 — VST/AU instrument plugin hosting
     // Lock held by message thread (ScopedLock) on load/unload,

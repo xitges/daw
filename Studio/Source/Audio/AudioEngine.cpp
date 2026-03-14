@@ -10,6 +10,26 @@
 
 #include "AudioEngine.h"
 
+namespace
+{
+    inline float smoothingTowards(float current, float target, float alpha)
+    {
+        return current + (target - current) * juce::jlimit(0.0f, 1.0f, alpha);
+    }
+
+    inline float softSaturate(float x)
+    {
+        return x / (1.0f + 0.45f * std::abs(x));
+    }
+
+    inline float computeAdaptiveTrim(int routedSources, float peak)
+    {
+        const float sourceComp = 1.0f / std::sqrt(1.0f + 0.65f * (float) juce::jmax(0, routedSources - 1));
+        const float peakComp = peak > 0.72f ? 0.72f / peak : 1.0f;
+        return juce::jlimit(0.42f, 1.0f, sourceComp * peakComp);
+    }
+}
+
 AudioEngine::AudioEngine()
     : sequencer([this](int ch, int offset) { triggerChannel(ch, offset); })
 {
@@ -25,6 +45,7 @@ AudioEngine::AudioEngine()
     }
 
     resetSongChannelMixState();
+    resetMixProcessingState();
 }
 
 AudioEngine::~AudioEngine()
@@ -55,6 +76,13 @@ void AudioEngine::resetSongChannelMixState()
         songChannelPan_[(size_t)ch] = 0.0f;
         songChannelMixerRouting_[(size_t)ch] = ch % 8;
     }
+}
+
+void AudioEngine::resetMixProcessingState()
+{
+    trackInputTrim_.fill(1.0f);
+    masterInputTrim_ = 1.0f;
+    masterGlueEnvelope_ = 0.0f;
 }
 
 void AudioEngine::updateRuntimeState(const std::function<void(RuntimePlaybackState&)>& updater)
@@ -872,6 +900,7 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     // Dynamic EQ — prepare all processors
     for (auto& deq : trackDynEQs_) deq.prepare(sampleRate, bufferSize);
     masterDynEQ_.prepare(sampleRate, bufferSize);
+    resetMixProcessingState();
 
     // M8 — re-prepare any already-loaded instrument plugins
     {
@@ -893,6 +922,7 @@ void AudioEngine::audioDeviceStopped()
     for (auto& s : polySynths)         s.reset();
     for (auto& fx : fxChains)          fx.reset();
     for (auto& lp : launchpadPlayers)  lp.reset();
+    resetMixProcessingState();
 
     // M8 — release plugin resources (audio engine stopped, safe to lock normally)
     juce::ScopedLock sl(pluginLock);
@@ -1288,17 +1318,20 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
 
     // Use snapshot for routing and synth params — lock-free audio thread access
     const PlaybackSnapshot& mixSnap = snapshots_[activeSnapshotIdx_.load(std::memory_order_acquire)];
+    std::array<int, 8> routedSourcesPerTrack {};
 
     // Render each channel into staging, accumulate into its assigned mixer track
     for (int ch = 0; ch < 16; ++ch)
     {
         stagingBuf.clear();
 
-        // M8 — VST/AU instrument plugin takes priority over synth / sample player
+        // In song mode, different patterns can overlap on the same channel index.
+        // Sample voices and synth voices must therefore be allowed to coexist.
         const bool usePlugin = (instrumentPlugins[(size_t)ch] != nullptr);
-        const bool useSynth  = !usePlugin &&
-                               (polySynths[(size_t)ch].isAnyActive() ||
-                                ((mixSnap.patternId >= 0) && mixSnap.synthParams[(size_t)ch].enabled));
+        const bool useSynth  = polySynths[(size_t)ch].isAnyActive()
+                            || (playMode != PlayMode::Song
+                                && (mixSnap.patternId >= 0)
+                                && mixSnap.synthParams[(size_t)ch].enabled);
 
         if (usePlugin)
         {
@@ -1318,16 +1351,14 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
                     stagingBuf.copyFrom(1, 0, stagingBuf, 0, 0, safe);
             }
         }
-        else if (useSynth)
+        if (useSynth)
         {
             float* L = stagingBuf.getWritePointer(0);
             float* R = stagingBuf.getWritePointer(1);
             polySynths[(size_t)ch].renderNextBlock(L, R, safe, sampleRate);
         }
-        else
-        {
-            sampleVoicePools[(size_t)ch].renderNextBlock(stagingBuf, safe);
-        }
+
+        sampleVoicePools[(size_t)ch].renderNextBlock(stagingBuf, safe);
 
         if (usePlugin || useSynth)
         {
@@ -1351,6 +1382,7 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
                              : ((mixSnap.patternId >= 0)
                                 ? juce::jlimit(0, 7, mixSnap.channelMixerRouting[(size_t)ch])
                                 : 0);
+        ++routedSourcesPerTrack[(size_t) trackIdx];
 
         for (int s = 0; s < safe; ++s)
         {
@@ -1362,6 +1394,17 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
     // M14 — apply FX chains per mixer track bus
     for (int t = 0; t < 8; ++t)
     {
+        float trackPeak = 0.0f;
+        for (int s = 0; s < safe; ++s)
+        {
+            trackPeak = juce::jmax(trackPeak, std::abs(mixerTrackBufs[(size_t)t].getSample(0, s)));
+            trackPeak = juce::jmax(trackPeak, std::abs(mixerTrackBufs[(size_t)t].getSample(1, s)));
+        }
+
+        const float targetTrim = computeAdaptiveTrim(routedSourcesPerTrack[(size_t)t], trackPeak);
+        trackInputTrim_[(size_t)t] = smoothingTowards(trackInputTrim_[(size_t)t], targetTrim, 0.18f);
+        mixerTrackBufs[(size_t)t].applyGain(trackInputTrim_[(size_t)t]);
+
         const FXParams& fp = runtime.fxParams[(size_t)t];
         fxChains[(size_t)t].processBlock(mixerTrackBufs[(size_t)t], safe, fp, bpm.load(std::memory_order_relaxed));
 
@@ -1387,6 +1430,29 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
     const float mL  = mv * std::cos(mAng);
     const float mR  = mv * std::sin(mAng);
 
+    float masterPeak = 0.0f;
+    for (int t = 0; t < 8; ++t)
+    {
+        const auto& mt = runtime.mixerTracks[(size_t)t];
+        if (mt.muted || (anySoloed && !mt.soloed))
+            continue;
+
+        const float ang = (mt.pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+        const float trackL = mt.volume * std::cos(ang);
+        const float trackR = mt.volume * std::sin(ang);
+
+        for (int s = 0; s < safe; ++s)
+        {
+            masterPeak = juce::jmax(masterPeak, std::abs(mixerTrackBufs[(size_t)t].getSample(0, s) * trackL * mL));
+            masterPeak = juce::jmax(masterPeak, std::abs(mixerTrackBufs[(size_t)t].getSample(1, s) * trackR * mR));
+        }
+    }
+
+    const float targetMasterTrim = masterPeak > 0.86f ? 0.86f / masterPeak : 1.0f;
+    masterInputTrim_ = smoothingTowards(masterInputTrim_,
+                                        juce::jlimit(0.6f, 1.0f, targetMasterTrim),
+                                        0.12f);
+
     // Mix each track bus into output with track volume/pan
     for (int t = 0; t < 8; ++t)
     {
@@ -1401,9 +1467,9 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
         for (int s = 0; s < safe; ++s)
         {
             if (output.getNumChannels() > 0)
-                output.addSample(0, s, mixerTrackBufs[(size_t)t].getSample(0, s) * L * mL);
+                output.addSample(0, s, mixerTrackBufs[(size_t)t].getSample(0, s) * L * mL * masterInputTrim_);
             if (output.getNumChannels() > 1)
-                output.addSample(1, s, mixerTrackBufs[(size_t)t].getSample(1, s) * R * mR);
+                output.addSample(1, s, mixerTrackBufs[(size_t)t].getSample(1, s) * R * mR * masterInputTrim_);
         }
     }
 
@@ -1413,6 +1479,35 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
         float* L = output.getWritePointer(0);
         float* R = output.getWritePointer(1);
         masterDynEQ_.processBlock(L, R, safe);
+    }
+
+    if (output.getNumChannels() >= 2)
+    {
+        float* left = output.getWritePointer(0);
+        float* right = output.getWritePointer(1);
+        const float attackCoeff = std::exp(-1.0f / (float) juce::jmax(1.0, sampleRate * 0.0035));
+        const float releaseCoeff = std::exp(-1.0f / (float) juce::jmax(1.0, sampleRate * 0.065));
+        constexpr float threshold = 0.54f;
+        constexpr float compression = 2.1f;
+        constexpr float makeup = 1.08f;
+        constexpr float wet = 0.58f;
+
+        for (int s = 0; s < safe; ++s)
+        {
+            const float dryL = left[s];
+            const float dryR = right[s];
+            const float detector = juce::jmax(std::abs(dryL), std::abs(dryR));
+            const float coeff = detector > masterGlueEnvelope_ ? attackCoeff : releaseCoeff;
+            masterGlueEnvelope_ = detector + coeff * (masterGlueEnvelope_ - detector);
+
+            const float over = juce::jmax(0.0f, masterGlueEnvelope_ - threshold);
+            const float gainReduction = 1.0f / (1.0f + over * compression);
+            const float shapedL = softSaturate(dryL * gainReduction * makeup);
+            const float shapedR = softSaturate(dryR * gainReduction * makeup);
+
+            left[s] = dryL + (shapedL - dryL) * wet;
+            right[s] = dryR + (shapedR - dryR) * wet;
+        }
     }
 }
 

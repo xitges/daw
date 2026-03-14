@@ -95,6 +95,36 @@ namespace SynthVoicing
     {
         return std::pow(2.0f, cents / 1200.0f);
     }
+
+    inline float curveUp(float t, float shape)
+    {
+        t = juce::jlimit(0.0f, 1.0f, t);
+        return 1.0f - std::pow(1.0f - t, juce::jlimit(1.15f, 4.0f, shape));
+    }
+
+    inline float curveDown(float t, float shape)
+    {
+        t = juce::jlimit(0.0f, 1.0f, t);
+        return std::pow(1.0f - t, juce::jlimit(1.15f, 4.5f, shape));
+    }
+
+    inline float hzToNormalized(float hz, float minHz = 50.0f, float maxHz = 20000.0f)
+    {
+        const float safeHz = juce::jlimit(minHz, maxHz, hz);
+        return juce::jlimit(0.0f, 1.0f,
+                            std::log(safeHz / minHz) / std::log(maxHz / minHz));
+    }
+
+    inline float normalizedToHz(float norm, float minHz = 50.0f, float maxHz = 20000.0f)
+    {
+        const float clamped = juce::jlimit(0.0f, 1.0f, norm);
+        return minHz * std::pow(maxHz / minHz, clamped);
+    }
+
+    inline float smoothValue(float current, float target, float coeff)
+    {
+        return target + coeff * (current - target);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -133,18 +163,33 @@ public:
         driftRatio_ = SynthVoicing::detuneRatioFromCents(driftCents);
         filterEnvDepth_ = juce::jlimit(0.04f, 0.85f,
                                        0.18f + (1.0f - p.sustain) * 0.34f + velocity * 0.16f
-                                     + (p.waveform == 1 || p.waveform == 2 ? 0.07f : 0.0f));
+                                      + (p.waveform == 1 || p.waveform == 2 ? 0.07f : 0.0f));
         transientPunch_ = 1.0f + velocity * 0.20f
                         + ((p.waveform == 1 || p.waveform == 2) ? 0.08f : 0.0f);
 
-        const float attackSamples  = juce::jmax(kMinAttackSamples, p.attack  * 0.001f * (float)sr);
-        const float decaySamples   = juce::jmax(1.0f, p.decay   * 0.001f * (float)sr);
-        releaseSamples_            = juce::jmax(kMinReleaseSamples, p.release * 0.001f * (float)sr);
+        const float attackNorm = juce::jlimit(0.0f, 1.0f, (p.attack - 1.0f) / 1999.0f);
+        const float decayNorm = juce::jlimit(0.0f, 1.0f, (p.decay - 10.0f) / 2190.0f);
+        const float releaseNorm = juce::jlimit(0.0f, 1.0f, (p.release - 20.0f) / 3980.0f);
+        const float attackSamples  = juce::jmax(kMinAttackSamples,
+                                                (18.0f + std::pow(attackNorm, 1.65f) * 2400.0f) * 0.001f * (float)sr);
+        const float decaySamples   = juce::jmax(1.0f,
+                                                (14.0f + std::pow(decayNorm, 1.45f) * 3000.0f) * 0.001f * (float)sr);
+        releaseSamples_            = juce::jmax(kMinReleaseSamples,
+                                                (24.0f + std::pow(releaseNorm, 1.55f) * 5200.0f) * 0.001f * (float)sr);
 
         attackInc_  = 1.0f / attackSamples;
-        decayInc_   = (1.0f - p.sustain) / decaySamples;
+        decayInc_   = 1.0f / decaySamples;
         sustainLvl_ = p.sustain;
-        releaseInc_ = juce::jmax(0.000001f, juce::jmax(envLevel_, p.sustain) / releaseSamples_);
+        releaseInc_ = juce::jmax(0.000001f, 1.0f / releaseSamples_);
+        attackCurve_ = 1.45f + (1.0f - attackNorm) * 0.95f;
+        decayCurve_ = 1.55f + decayNorm * 1.35f;
+        releaseCurve_ = 1.70f + releaseNorm * 1.60f;
+        envPhase_ = 0.0f;
+        releaseStartLevel_ = 0.0f;
+        cutoffSmoothed_ = params_.cutoff;
+        resonanceSmoothed_ = params_.resonance;
+        pitchModSmoothed_ = 1.0f;
+        lfoSmoothed_ = 0.0f;
 
         envState_ = Env::Attack;
         envLevel_ = 0.0f;
@@ -159,7 +204,8 @@ public:
     {
         if (envState_ != Env::Idle)
         {
-            releaseInc_ = juce::jmax(0.000001f, envLevel_ / juce::jmax(1.0f, releaseSamples_));
+            envPhase_ = 0.0f;
+            releaseStartLevel_ = envLevel_;
             envState_ = Env::Release;
         }
     }
@@ -223,18 +269,21 @@ public:
             switch (envState_)
             {
                 case Env::Attack:
-                    envLevel_ += attackInc_;
-                    if (envLevel_ >= 1.0f) { envLevel_ = 1.0f; envState_ = Env::Decay; }
+                    envPhase_ += attackInc_;
+                    envLevel_ = SynthVoicing::curveUp(envPhase_, attackCurve_);
+                    if (envPhase_ >= 1.0f) { envPhase_ = 0.0f; envLevel_ = 1.0f; envState_ = Env::Decay; }
                     break;
                 case Env::Decay:
-                    envLevel_ -= decayInc_;
-                    if (envLevel_ <= sustainLvl_) { envLevel_ = sustainLvl_; envState_ = Env::Sustain; }
+                    envPhase_ += decayInc_;
+                    envLevel_ = sustainLvl_ + (1.0f - sustainLvl_) * SynthVoicing::curveDown(envPhase_, decayCurve_);
+                    if (envPhase_ >= 1.0f) { envPhase_ = 0.0f; envLevel_ = sustainLvl_; envState_ = Env::Sustain; }
                     break;
                 case Env::Sustain:
                     break;
                 case Env::Release:
-                    envLevel_ -= releaseInc_;
-                    if (envLevel_ <= 0.0f) { envLevel_ = 0.0f; envState_ = Env::Idle; }
+                    envPhase_ += releaseInc_;
+                    envLevel_ = releaseStartLevel_ * SynthVoicing::curveDown(envPhase_, releaseCurve_);
+                    if (envPhase_ >= 1.0f || envLevel_ <= 0.00005f) { envPhase_ = 0.0f; envLevel_ = 0.0f; envState_ = Env::Idle; }
                     break;
                 case Env::Idle:
                     break;
@@ -250,20 +299,38 @@ public:
                     lfoPhase_ += lfoInc;
                     if (lfoPhase_ >= 1.0) lfoPhase_ -= 1.0;
                 }
+                lfoSmoothed_ = SynthVoicing::smoothValue(lfoSmoothed_, lfoVal, 0.992f);
 
                 // Frequency with optional pitch LFO
                 double freq = frequency_ * driftRatio_;
                 if (params_.lfoDepth > 0.0f && params_.lfoTarget == 1)
-                    freq *= std::pow(2.0, (double)(lfoVal * params_.lfoDepth * 2.0f) / 12.0);
+                {
+                    const float pitchModTarget = std::pow(2.0f, (lfoSmoothed_ * params_.lfoDepth * 1.5f) / 12.0f);
+                    pitchModSmoothed_ = SynthVoicing::smoothValue(pitchModSmoothed_, pitchModTarget, 0.994f);
+                    freq *= pitchModSmoothed_;
+                }
+                else
+                {
+                    pitchModSmoothed_ = SynthVoicing::smoothValue(pitchModSmoothed_, 1.0f, 0.990f);
+                    freq *= pitchModSmoothed_;
+                }
 
                 const float cutoffKeyTrack = 1.0f + juce::jlimit(-0.18f, 0.28f, ((float)pitch_ - 60.0f) * 0.0105f);
-                const float envOpen = std::pow(juce::jlimit(0.0f, 1.0f, envLevel_), 0.55f);
-                const float envCutoff = params_.cutoff * (1.0f + filterEnvDepth_ * envOpen);
-                float modCutoff = envCutoff * cutoffKeyTrack;
+                const float envOpen = std::pow(juce::jlimit(0.0f, 1.0f, envLevel_), 0.42f);
+                const float cutoffNorm = std::pow(SynthVoicing::hzToNormalized(params_.cutoff), 0.82f);
+                float modCutoffNorm = cutoffNorm + envOpen * (0.10f + filterEnvDepth_ * 0.52f);
                 if (params_.lfoDepth > 0.0f && params_.lfoTarget == 0)
-                    modCutoff *= (1.0f + lfoVal * params_.lfoDepth * 0.75f);
-                modCutoff = juce::jlimit(50.0f, 20000.0f, modCutoff);
-                computeFilter(modCutoff, params_.resonance, sr, b0, b1, b2, a1, a2);
+                    modCutoffNorm += lfoSmoothed_ * params_.lfoDepth * 0.085f;
+                modCutoffNorm = juce::jlimit(0.0f, 1.0f, modCutoffNorm);
+                const float cutoffTarget = juce::jlimit(50.0f, 20000.0f,
+                                                        SynthVoicing::normalizedToHz(modCutoffNorm) * cutoffKeyTrack);
+                cutoffSmoothed_ = SynthVoicing::smoothValue(cutoffSmoothed_, cutoffTarget, 0.985f);
+
+                const float resonanceTarget = juce::jlimit(0.03f, 0.96f,
+                                                           std::pow(params_.resonance, 0.78f)
+                                                         * (0.92f + (1.0f - envOpen) * 0.08f));
+                resonanceSmoothed_ = SynthVoicing::smoothValue(resonanceSmoothed_, resonanceTarget, 0.989f);
+                computeFilter(cutoffSmoothed_, resonanceSmoothed_, sr, b0, b1, b2, a1, a2);
 
                 // Oscillator
                 const double dt = freq / sr;
@@ -284,7 +351,7 @@ public:
                                       : (params_.waveform == 1 ? 0.22f : 0.14f));
                 const float transientDrive = 1.0f + (1.0f - envLevel_) * (0.18f + velocity_ * 0.12f)
                                            + (envOpen * 0.08f);
-                const float harmonicDrive = 1.12f + params_.resonance * 0.85f
+                const float harmonicDrive = 1.12f + resonanceSmoothed_ * 0.85f
                                           + ((params_.waveform == 1 || params_.waveform == 2) ? 0.18f : 0.0f);
                 const float bodyBlend = (params_.waveform == 3) ? 0.52f : 0.58f;
                 const float rawSample = osc * bodyBlend + osc1 * 0.34f + subOsc * subMix;
@@ -293,13 +360,13 @@ public:
 
                 // Biquad LP filter (direct-form I)
                 const float filtered = SynthVoicing::softClip((b0 * sample + z1L_)
-                                                            * (1.0f + params_.resonance * 0.30f));
+                                                            * (1.0f + resonanceSmoothed_ * 0.30f));
                 z1L_ = b1 * sample - a1 * filtered + z2L_;
                 z2L_ = b2 * sample - a2 * filtered;
 
                 const float air = juce::jlimit(0.0f, 0.22f,
-                                               ((params_.cutoff - 1800.0f) / 12000.0f) * 0.18f
-                                             + (params_.waveform == 3 ? 0.03f : 0.0f));
+                                               ((cutoffSmoothed_ - 1800.0f) / 12000.0f) * 0.18f
+                                              + (params_.waveform == 3 ? 0.03f : 0.0f));
                 const float outputSample = SynthVoicing::softClip(filtered + (rawSample - filtered) * air);
 
                 synthOutL = outputSample * panL;
@@ -341,12 +408,21 @@ private:
     float  releaseInc_        = 0.0f;
     float  releaseSamples_    = 1.0f;
     float  sustainLvl_        = 0.7f;
+    float  envPhase_          = 0.0f;
+    float  attackCurve_       = 2.0f;
+    float  decayCurve_        = 2.2f;
+    float  releaseCurve_      = 2.5f;
+    float  releaseStartLevel_ = 0.0f;
     SynthParams params_       = {};
     float  detuneRatio_       = 1.0f;
     float  driftRatio_        = 1.0f;
     float  filterEnvDepth_    = 0.22f;
     float  transientPunch_    = 1.0f;
     float  voicePan_          = 0.0f;
+    float  cutoffSmoothed_    = 4000.0f;
+    float  resonanceSmoothed_ = 0.3f;
+    float  pitchModSmoothed_  = 1.0f;
+    float  lfoSmoothed_       = 0.0f;
     int    voiceSlot_         = 0;
 
     int    noteLenRemaining_  = 0;
