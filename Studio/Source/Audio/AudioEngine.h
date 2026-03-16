@@ -11,6 +11,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "../ProjectModel.h"
+// RubberBand is included only in AudioEngine.cpp — not needed in the header
 #include "SamplePlayer.h"
 #include "Sequencer.h"
 #include "../SynthEngine.h"
@@ -83,7 +84,26 @@ public:
         songBeatPosition_.store(bar * 4.0, std::memory_order_relaxed);
         const double samplesPerBar = (sampleRate * 60.0 / bpm.load(std::memory_order_relaxed)) * 4.0;
         songSamplePosition.store((long)(bar * samplesPerBar), std::memory_order_relaxed);
+        resetAudioClipTriggers();
     }
+
+    // --- Audio clip management (Stage 1) -----------------------------------
+    // Load a WAV/AIFF file as an audio clip.  Safe to call from message thread.
+    // The decoded buffer is shared if the same file is used by multiple clips.
+    // clipLengthBars: current clip length in bars (used to cap playback window).
+    // Call again with the same clipId to update the window after a resize.
+    void loadAudioClip  (int clipId, const juce::File& file, float clipLengthBars = 0.0f);
+    void unloadAudioClip(int clipId);
+    void unloadAllAudioClips();
+    void resetAudioClipTriggers();   // mark all instances inactive — call on stop/seek
+
+    // Rebuild the pitch-shifted buffer for a Stretch/Elastique clip.
+    // Call from the message thread after changing mode or pitchSemitone.
+    // No-op for Resample mode or pitchSemitone == 0.
+    void reprocessAudioClipPitch(int clipId, AudioClipMode mode, float pitchSemitone);
+
+    // Returns the decoded buffer for a given file path (used by waveform preview).
+    std::shared_ptr<juce::AudioBuffer<float>> getAudioFileBuffer(const juce::String& path) const;
 
     // AudioIODeviceCallback
     void audioDeviceIOCallbackWithContext(
@@ -344,6 +364,42 @@ private:
                 voice.renderNextBlockRouted(trackBuffers, numSamples);
         }
     };
+
+    // --- Audio clip runtime state -------------------------------------------
+    // One instance per audio clip; managed on message thread, read on audio thread.
+    //
+    // Resample mode (default):
+    //   fileReadStart and pitchRatio are set each block from the playhead.
+    //   filePos advances by pitchRatio per output sample (speed+pitch change).
+    //
+    // Stretch / Elastique mode:
+    //   pitchedBuffer holds an offline RubberBand-processed copy of the source
+    //   at the desired pitch but original tempo.  pitchRatio = 1.0.
+    //   pitchedBuffer is (re)computed on the message thread when mode/pitch changes.
+    struct AudioClipInstance
+    {
+        int  clipId              = -1;
+        std::shared_ptr<juce::AudioBuffer<float>> buffer;         // original decoded file
+
+        // Stretch/Elastique: offline pitch-processed buffer (same length as source).
+        // null = use original buffer (Resample mode or pitch == 0).
+        std::shared_ptr<juce::AudioBuffer<float>> pitchedBuffer;
+
+        // Cached mode/pitch so we can detect when reprocessing is needed
+        AudioClipMode cachedMode  = AudioClipMode::Resample;
+        float         cachedPitch = 0.0f;
+
+        // Set each block by processSongMode; consumed by mixToOutput
+        bool   active             = false;
+        int    startOffsetInBlock = 0;
+        double fileReadStart      = 0.0;
+        int    fileTotalSamples   = 0;      // = pitchedBuffer (if set) or buffer size
+        double pitchRatio         = 1.0;    // 1.0 for Stretch/Elastique (tempo-preserving)
+    };
+
+    mutable juce::SpinLock                                         audioClipLock_;
+    std::vector<AudioClipInstance>                                 audioClipInstances_;
+    std::map<juce::String, std::shared_ptr<juce::AudioBuffer<float>>> audioFileBuffers_;
 
     struct ChannelSourceSnapshot
     {

@@ -13,7 +13,9 @@
 #include <JuceHeader.h>
 #include "ProjectModel.h"
 
-class PlaylistComponent : public juce::Component
+class PlaylistComponent : public juce::Component,
+                          public juce::FileDragAndDropTarget,
+                          public juce::DragAndDropTarget
 {
 public:
     PlaylistComponent();
@@ -27,6 +29,16 @@ public:
     void mouseUp         (const juce::MouseEvent& e) override;
     void mouseDoubleClick(const juce::MouseEvent& e) override;
     void mouseWheelMove  (const juce::MouseEvent& e, const juce::MouseWheelDetails& w) override;
+
+    // FileDragAndDropTarget — OS drag from Finder
+    bool isInterestedInFileDrag (const juce::StringArray& files) override;
+    void fileDragEnter          (const juce::StringArray& files, int x, int y) override;
+    void fileDragExit           (const juce::StringArray& files) override;
+    void filesDropped           (const juce::StringArray& files, int x, int y) override;
+
+    // DragAndDropTarget — internal drag from SampleBrowserComponent
+    bool isInterestedInDragSource (const juce::DragAndDropTarget::SourceDetails& details) override;
+    void itemDropped              (const juce::DragAndDropTarget::SourceDetails& details) override;
 
     double getTotalBars() const;
 
@@ -111,6 +123,16 @@ public:
     // Host should duplicate the clip's patternId to a new pattern and update clip.patternId.
     std::function<void(int clipId)> onClipDetach;
 
+    // Audio clip dropped — host should call audioEngine.loadAudioClip(clipId, file)
+    std::function<void(int clipId, juce::String filePath)> onAudioClipDropped;
+
+    // Pitch/mode changed — host should push to AudioEngine
+    std::function<void(int clipId, float oldPitch, float newPitch)>           onClipPitchChanged;
+    std::function<void(int clipId, AudioClipMode oldMode, AudioClipMode mode)> onClipModeChanged;
+
+    // Returns decoded AudioBuffer for waveform preview (host → AudioEngine)
+    std::function<std::shared_ptr<juce::AudioBuffer<float>>(const juce::String& path)> getAudioBuffer;
+
 private:
     Project* project = nullptr;
 
@@ -134,7 +156,80 @@ private:
     // Key: (patternId, variationIdx, pixelWidth, bpmRounded)
     mutable std::map<std::tuple<int,int,int,int>, WaveCache> waveformCache_;
 
-    void clearWaveformCache() { waveformCache_.clear(); }
+    void clearWaveformCache()
+    {
+        waveformCache_.clear();
+        audioWaveCache_.clear();
+    }
+
+    // Audio clip waveform cache — key: (filePathHash, pixelWidth)
+    mutable std::map<std::pair<size_t, int>, WaveCache> audioWaveCache_;
+
+    void handleAudioFileDrop(const juce::String& filePath, int dropX, int dropY);
+
+    // Drag hover state for visual feedback
+    bool  audioDragHover_    = false;
+    float audioDragHoverX_   = 0.0f;
+    int   audioDragHoverTrack_ = -1;
+
+    // -----------------------------------------------------------------------
+    // Lanczos-3 sinc interpolation helpers for smooth waveform rendering.
+    // -----------------------------------------------------------------------
+    static float lanczos3(float x) noexcept
+    {
+        const float ax = std::abs(x);
+        if (ax < 1e-5f) return 1.0f;
+        if (ax >= 3.0f) return 0.0f;
+        const float piX  = juce::MathConstants<float>::pi * x;
+        const float piX3 = juce::MathConstants<float>::pi * (x / 3.0f);
+        return (std::sin(piX) / piX) * (std::sin(piX3) / piX3);
+    }
+
+    // Sample a float array at a fractional index using 6-tap Lanczos-3 kernel.
+    static float lerpL3(const float* src, int len, float x) noexcept
+    {
+        float v = 0.0f;
+        const int xi = (int)std::floor(x);
+        for (int t = -2; t <= 3; ++t)
+            v += src[juce::jlimit(0, len - 1, xi + t)] * lanczos3(x - (float)(xi + t));
+        return v;
+    }
+
+    // Builds waveform from a real decoded AudioBuffer (audio clips).
+    // visibleSamples: how many file samples the clip displays (0 = full file).
+    // Samples beyond visibleSamples are rendered as silence (flat midline).
+    static WaveCache buildAudioWave(const juce::AudioBuffer<float>& buf, int width,
+                                    int visibleSamples = 0)
+    {
+        WaveCache cache((size_t)width);
+        const int totalSamples = buf.getNumSamples();
+        if (totalSamples <= 0 || width <= 0) return cache;
+
+        // If no clip-length constraint, show the whole file
+        const int displaySamples = (visibleSamples > 0)
+                                   ? juce::jmin(visibleSamples, totalSamples)
+                                   : totalSamples;
+
+        const float spP   = (float)displaySamples / (float)width;
+        const int   srcCh = juce::jmin(buf.getNumChannels(), 2);
+
+        for (int px = 0; px < width; ++px)
+        {
+            const int s0 = (int)((float)px * spP);
+            const int s1 = juce::jmin((int)((float)(px + 1) * spP), displaySamples);
+            if (s0 >= displaySamples) break;  // beyond clip window → leave as silent
+            float mn = 0.0f, mx = 0.0f;
+            for (int ch = 0; ch < srcCh; ++ch)
+                for (int s = s0; s < s1; ++s)
+                {
+                    const float v = buf.getSample(ch, s);
+                    mn = juce::jmin(mn, v);
+                    mx = juce::jmax(mx, v);
+                }
+            cache[(size_t)px] = { mn, mx };
+        }
+        return cache;
+    }
 
     // Builds a TRUE min/max waveform from pattern data.
     //
@@ -296,7 +391,20 @@ private:
     }
 
     // Snap
-    int snapDivisor = 1;    // 1=1bar, 2=½bar, 4=¼bar, 0=free
+    int snapDivisor = 4;    // 1=1bar, 2=½bar, 4=¼bar, 8=⅛bar, 16=1/16bar, 0=free
+
+    // Pixel ↔ bar helpers — single source of truth for all timeline math.
+    // x is the component-local pixel x coordinate.
+    float  pixelToBar(float  x)   const noexcept { return (x - (float)trackHeaderWidth) / (float)barWidth; }
+    float  barToPixel(float  bar) const noexcept { return (float)trackHeaderWidth + bar * (float)barWidth; }
+
+    // Apply snap grid to a raw bar value.
+    float  snapBar(float bars) const noexcept
+    {
+        if (snapDivisor == 0) return bars;
+        const float unit = 1.0f / (float)snapDivisor;
+        return unit * std::round(bars / unit);
+    }
 
     // Drag state
     int   draggingClipId  = -1;
@@ -311,8 +419,11 @@ private:
 
     // Clip clipboard (copy/paste)
     PlaylistClip clipboardClip;
-    bool         hasClipboard  = false;
+    bool         hasClipboard   = false;
     int          selectedClipId = -1;
+
+    // Bar position stored at right-click time (used by "Split Here")
+    float contextMenuBar_ = 0.0f;
 
     // Drawing
     void drawBackground    (juce::Graphics& g);
@@ -336,10 +447,11 @@ private:
     int           trackIndexAt(int mouseY) const;
 
     // Clip operations
-    void showContextMenu      (int clipId);
-    void showRenameDialog     (int clipId);
-    void showTrackContextMenu (int trackIdx);   // M11
-    void showTrackRenameDialog(int trackIdx);   // M11
+    void showContextMenu           (int clipId);
+    void showRenameDialog          (int clipId);
+    void showClipPropertiesDialog  (int clipId);
+    void showTrackContextMenu      (int trackIdx);   // M11
+    void showTrackRenameDialog     (int trackIdx);   // M11
 
     std::vector<PlaylistClip>& clipList()
     {
@@ -485,13 +597,17 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
         const int ty = headerHeight + clip.trackIndex * (trackHeight + trackGap) + 3;
         const int h  = trackHeight - 6;
 
-        const bool hasPattern = clip.patternId > 0;
-        const juce::Colour fill = hasPattern
-            ? palette[(clip.patternId - 1) % paletteSize]
-            : juce::Colour(0xff3a3a46);
-        const juce::Colour border = hasPattern
-            ? fill.brighter(0.4f)
-            : juce::Colour(0xff9090a8);
+        const bool isAudioClip = (clip.clipType == ClipType::Audio);
+        const bool hasPattern  = !isAudioClip && clip.patternId > 0;
+
+        // Audio clips: teal/green tone to distinguish from pattern clips
+        const juce::Colour fill = isAudioClip
+            ? juce::Colour(0xff2d6b5a)
+            : (hasPattern ? palette[(clip.patternId - 1) % paletteSize]
+                          : juce::Colour(0xff3a3a46));
+        const juce::Colour border = isAudioClip
+            ? juce::Colour(0xff4db896)
+            : (hasPattern ? fill.brighter(0.4f) : juce::Colour(0xff9090a8));
 
         g.setColour(fill.withAlpha(clip.id == draggingClipId ? 0.6f : 0.85f));
         g.fillRoundedRectangle((float)x + 1, (float)ty, (float)w, (float)h, 4.0f);
@@ -546,44 +662,110 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
                     g.drawHorizontalLine((int)std::round(centerY),
                                         (float)previewX, (float)(previewX + previewW));
 
-                    // === Waveform — true min/max per-pixel rendering ===
-                    // wave[px].min is negative (below centre), .max is positive (above centre).
-                    // y1 maps .max above centerY, y2 maps .min below centerY.
-                    for (int px = 0; px < previewW && px < (int)wave.size(); ++px)
+                    // === Waveform — Lanczos-3 interpolated path rendering ===
+                    // Extract max[] and min[] arrays for L3 sampling.
+                    // Sub-pixel step of 0.5px gives 2x horizontal resolution,
+                    // smoothing the staircase artefacts visible at zoom.
                     {
-                        const float wMax = wave[px].max;  // 0..+1
-                        const float wMin = wave[px].min;  // -1..0
-
-                        // Peak-to-peak half-amplitude for brightness decisions
-                        const float amp = (wMax - wMin) * 0.5f;  // 0..1
-                        if (amp < 0.012f) continue;
-
-                        // Map to pixel space: positive values go UP, negative DOWN
-                        const float y1 = centerY - wMax * halfH;   // top of line
-                        const float y2 = centerY - wMin * halfH;   // bottom of line
-                        const float fx = (float)(previewX + px);
-
-                        // Layer 1 — outer glow (strong transients only)
-                        if (amp > 0.38f)
+                        const int wLen = (int)wave.size();
+                        if (wLen > 1)
                         {
-                            const float ga = (amp - 0.38f) / 0.62f * 0.20f;
-                            g.setColour(fill.brighter(2.6f).withAlpha(ga));
-                            g.fillRect(fx - 0.5f, y1 - 1.0f, 2.0f, (y2 - y1) + 2.0f);
-                        }
+                            // Build flat arrays for lerpL3
+                            std::vector<float> maxArr(wLen), minArr(wLen);
+                            for (int i = 0; i < wLen; ++i)
+                            {
+                                maxArr[i] = wave[i].max;
+                                minArr[i] = wave[i].min;
+                            }
 
-                        // Layer 2 — mid halo body
-                        if (amp > 0.16f)
-                        {
-                            const float ha = juce::jmap(amp, 0.16f, 1.0f, 0.09f, 0.26f);
-                            g.setColour(fill.brighter(1.9f).withAlpha(ha));
-                            g.fillRect(fx - 0.5f, y1, 2.0f, y2 - y1);
-                        }
+                            // --- Layer 1: halo glow (wide, low alpha, transients only) ---
+                            {
+                                juce::Path glowPath;
+                                bool glowOpen = false;
+                                static constexpr float kStep = 1.0f;  // 1px step for glow
+                                for (float fpx = 0.0f; fpx < (float)previewW; fpx += kStep)
+                                {
+                                    const float sx  = juce::jlimit(0.0f, (float)(wLen - 1), fpx);
+                                    const float wMx = lerpL3(maxArr.data(), wLen, sx);
+                                    const float wMn = lerpL3(minArr.data(), wLen, sx);
+                                    const float amp = (wMx - wMn) * 0.5f;
+                                    if (amp < 0.38f) { glowOpen = false; continue; }
+                                    const float gx  = (float)previewX + fpx;
+                                    const float gy1 = centerY - wMx * halfH - 2.0f;
+                                    const float gy2 = centerY - wMn * halfH + 2.0f;
+                                    if (!glowOpen) { glowPath.startNewSubPath(gx, gy1); glowOpen = true; }
+                                    else           { glowPath.lineTo(gx, gy1); }
+                                    glowPath.lineTo(gx, gy2);  // close column top→bottom
+                                }
+                                if (!glowPath.isEmpty())
+                                {
+                                    g.setColour(fill.brighter(2.6f).withAlpha(0.12f));
+                                    g.strokePath(glowPath, juce::PathStrokeType(3.0f));
+                                }
+                            }
 
-                        // Layer 3 — core line: brightness & opacity scale with amplitude
-                        const float coreAlpha  = 0.55f + amp * 0.45f;
-                        const float brightness = 0.55f + amp * 1.30f;
-                        g.setColour(fill.brighter(brightness).withAlpha(coreAlpha));
-                        g.drawVerticalLine(previewX + px, y1, y2);
+                            // --- Layer 2: filled body (halo, continuous path) ---
+                            {
+                                static constexpr float kStep = 0.5f;  // sub-pixel resolution
+                                std::vector<std::pair<float,float>> topPts, botPts;
+                                topPts.reserve((int)(previewW / kStep) + 2);
+                                botPts.reserve((int)(previewW / kStep) + 2);
+
+                                for (float fpx = 0.0f; fpx <= (float)(previewW - 1); fpx += kStep)
+                                {
+                                    const float sx  = juce::jlimit(0.0f, (float)(wLen - 1), fpx);
+                                    float wMx = lerpL3(maxArr.data(), wLen, sx);
+                                    float wMn = lerpL3(minArr.data(), wLen, sx);
+                                    // Clamp to valid range after L3 ringing
+                                    wMx = juce::jlimit(-1.0f, 1.0f, wMx);
+                                    wMn = juce::jlimit(-1.0f, 1.0f, wMn);
+                                    const float gx = (float)previewX + fpx;
+                                    topPts.push_back({ gx, centerY - wMx * halfH });
+                                    botPts.push_back({ gx, centerY - wMn * halfH });
+                                }
+
+                                if (!topPts.empty())
+                                {
+                                    // Halo fill
+                                    juce::Path haloShape;
+                                    haloShape.startNewSubPath(topPts[0].first, topPts[0].second);
+                                    for (size_t i = 1; i < topPts.size(); ++i)
+                                        haloShape.lineTo(topPts[i].first, topPts[i].second);
+                                    for (int i = (int)botPts.size() - 1; i >= 0; --i)
+                                        haloShape.lineTo(botPts[i].first, botPts[i].second);
+                                    haloShape.closeSubPath();
+
+                                    g.setColour(fill.brighter(1.5f).withAlpha(0.18f));
+                                    g.fillPath(haloShape);
+
+                                    // Core fill (slightly narrower, brighter)
+                                    juce::Path coreShape;
+                                    coreShape.startNewSubPath(topPts[0].first, topPts[0].second + 0.5f);
+                                    for (size_t i = 1; i < topPts.size(); ++i)
+                                        coreShape.lineTo(topPts[i].first, topPts[i].second + 0.5f);
+                                    for (int i = (int)botPts.size() - 1; i >= 0; --i)
+                                        coreShape.lineTo(botPts[i].first, botPts[i].second - 0.5f);
+                                    coreShape.closeSubPath();
+
+                                    g.setColour(fill.brighter(0.7f).withAlpha(0.55f));
+                                    g.fillPath(coreShape);
+
+                                    // --- Layer 3: bright edge strokes (top & bottom silhouette) ---
+                                    juce::Path edgeTop, edgeBot;
+                                    edgeTop.startNewSubPath(topPts[0].first, topPts[0].second);
+                                    edgeBot.startNewSubPath(botPts[0].first, botPts[0].second);
+                                    for (size_t i = 1; i < topPts.size(); ++i)
+                                    {
+                                        edgeTop.lineTo(topPts[i].first, topPts[i].second);
+                                        edgeBot.lineTo(botPts[i].first, botPts[i].second);
+                                    }
+                                    const juce::PathStrokeType edgeStroke(1.0f);
+                                    g.setColour(fill.brighter(2.2f).withAlpha(0.80f));
+                                    g.strokePath(edgeTop, edgeStroke);
+                                    g.strokePath(edgeBot, edgeStroke);
+                                }
+                            }
+                        }
                     }
 
                     // Loop repeat markers (subtle vertical guides when clip > pattern length)
@@ -597,6 +779,127 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
                             const int lx = previewX + (int)std::round(lb * pxPerBeat);
                             g.drawVerticalLine(lx, (float)waveY, (float)waveBot);
                         }
+                    }
+                }
+            }
+        }
+
+        // --- Audio clip waveform preview -----------------------------------
+        if (isAudioClip && w > 20 && clip.audioFilePath.isNotEmpty())
+        {
+            const int   previewX  = x + 4;
+            const int   previewW  = w - 8;
+
+            static constexpr int kTitleH = 14;
+            const int   waveY    = ty + kTitleH + 2;
+            const int   waveBot  = ty + h - 3;
+            const int   waveH    = juce::jmax(4, waveBot - waveY);
+            const float centerY  = (float)waveY + (float)waveH * 0.5f;
+            const float halfH    = (float)waveH * 0.5f - 1.0f;
+
+            // Centre line
+            g.setColour(border.withAlpha(0.35f));
+            g.drawHorizontalLine((int)std::round(centerY),
+                                 (float)previewX, (float)(previewX + previewW));
+
+            // Build / retrieve waveform cache.
+            // Key: (pathHash, fileWidthPx) — NO lenKey.  The cache always
+            // represents the file at its native zoom-level width.  Tiling in
+            // the render loop below handles clips longer than the file.
+            const size_t pathHash = std::hash<std::string>{}(clip.audioFilePath.toStdString());
+            const double bpm_  = (project != nullptr) ? project->bpm : 120.0;
+            const double spb_  = 44100.0 * 60.0 / bpm_;   // samples per beat (display SR)
+
+            int fileWidthPx = 1;
+            if (getAudioBuffer)
+            {
+                auto buf = getAudioBuffer(clip.audioFilePath);
+                if (buf != nullptr && buf->getNumSamples() > 0)
+                {
+                    const double fileBars_ = (double)buf->getNumSamples() / (spb_ * 4.0);
+                    fileWidthPx = juce::jmax(1, (int)std::round(fileBars_ * barWidth));
+                    const auto ck = std::make_pair(pathHash, fileWidthPx);
+                    if (audioWaveCache_.find(ck) == audioWaveCache_.end())
+                        audioWaveCache_[ck] = buildAudioWave(*buf, fileWidthPx);
+                }
+            }
+
+            const auto   cacheKey = std::make_pair(pathHash, fileWidthPx);
+            auto it = audioWaveCache_.find(cacheKey);
+
+            if (it != audioWaveCache_.end())
+            {
+                const auto& wave = it->second;
+                const int wLen = (int)wave.size();
+                if (wLen > 1)
+                {
+                    // Build flat arrays for Lanczos-3
+                    std::vector<float> maxArr(wLen), minArr(wLen);
+                    for (int i = 0; i < wLen; ++i)
+                        { maxArr[i] = wave[i].max; minArr[i] = wave[i].min; }
+
+                    std::vector<std::pair<float,float>> topPts, botPts;
+                    topPts.reserve(previewW * 2 + 2);
+                    botPts.reserve(previewW * 2 + 2);
+                    static constexpr float kStep = 0.5f;
+                    const float fwPx = (float)fileWidthPx;
+
+                    for (float fpx = 0.0f; fpx <= (float)(previewW - 1); fpx += kStep)
+                    {
+                        // Loop-tile: map clip pixel to file pixel via modulo
+                        const float cx  = std::fmod(fpx, fwPx);
+                        const float sx  = juce::jlimit(0.0f, (float)(wLen - 1), cx);
+                        float wMx = lerpL3(maxArr.data(), wLen, sx);
+                        float wMn = lerpL3(minArr.data(), wLen, sx);
+                        wMx = juce::jlimit(-1.0f, 1.0f, wMx);
+                        wMn = juce::jlimit(-1.0f, 1.0f, wMn);
+                        const float gx = (float)previewX + fpx;
+                        topPts.push_back({ gx, centerY - wMx * halfH });
+                        botPts.push_back({ gx, centerY - wMn * halfH });
+                    }
+
+                    if (!topPts.empty())
+                    {
+                        // Halo fill
+                        juce::Path haloShape;
+                        haloShape.startNewSubPath(topPts[0].first, topPts[0].second);
+                        for (size_t i = 1; i < topPts.size(); ++i)
+                            haloShape.lineTo(topPts[i].first, topPts[i].second);
+                        for (int i = (int)botPts.size() - 1; i >= 0; --i)
+                            haloShape.lineTo(botPts[i].first, botPts[i].second);
+                        haloShape.closeSubPath();
+                        g.setColour(border.withAlpha(0.22f));
+                        g.fillPath(haloShape);
+
+                        // Core fill
+                        juce::Path coreShape;
+                        coreShape.startNewSubPath(topPts[0].first, topPts[0].second + 0.5f);
+                        for (size_t i = 1; i < topPts.size(); ++i)
+                            coreShape.lineTo(topPts[i].first, topPts[i].second + 0.5f);
+                        for (int i = (int)botPts.size() - 1; i >= 0; --i)
+                            coreShape.lineTo(botPts[i].first, botPts[i].second - 0.5f);
+                        coreShape.closeSubPath();
+                        g.setColour(border.withAlpha(0.60f));
+                        g.fillPath(coreShape);
+
+                        // Bright edge strokes
+                        juce::Path edgeTop, edgeBot;
+                        edgeTop.startNewSubPath(topPts[0].first, topPts[0].second);
+                        edgeBot.startNewSubPath(botPts[0].first, botPts[0].second);
+                        for (size_t i = 1; i < topPts.size(); ++i)
+                        {
+                            edgeTop.lineTo(topPts[i].first, topPts[i].second);
+                            edgeBot.lineTo(botPts[i].first, botPts[i].second);
+                        }
+                        g.setColour(border.brighter(0.8f).withAlpha(0.85f));
+                        g.strokePath(edgeTop, juce::PathStrokeType(1.0f));
+                        g.strokePath(edgeBot, juce::PathStrokeType(1.0f));
+
+                        // Loop separator — thin vertical line at each tile boundary
+                        g.setColour(border.brighter(1.2f).withAlpha(0.45f));
+                        for (int tx = fileWidthPx; tx < previewW; tx += fileWidthPx)
+                            g.drawLine((float)(previewX + tx), (float)waveY,
+                                       (float)(previewX + tx), (float)waveBot, 0.8f);
                     }
                 }
             }
@@ -618,7 +921,12 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
         g.setColour(juce::Colours::white);
         g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
         juce::String clipLabel;
-        if (hasPattern)
+        if (isAudioClip)
+        {
+            clipLabel = clip.name.isNotEmpty() ? clip.name
+                                               : juce::File(clip.audioFilePath).getFileNameWithoutExtension();
+        }
+        else if (hasPattern)
         {
             const auto clipName = clip.name.isNotEmpty() ? clip.name : "Clip " + juce::String(clip.id);
             clipLabel = assignedPatternName.isNotEmpty()
@@ -721,6 +1029,7 @@ inline void PlaylistComponent::mouseDown(const juce::MouseEvent& e)
         else if (clip != nullptr)
         {
             selectedClipId = clip->id;
+            contextMenuBar_ = pixelToBar((float)pos.x);
             showContextMenu(clip->id);
         }
         else if (pos.y < autoLanesY())
@@ -868,25 +1177,17 @@ inline void PlaylistComponent::mouseDrag(const juce::MouseEvent& e)
     PlaylistClip* clip = findClipById(draggingClipId);
     if (clip == nullptr) return;
 
-    // Snap helper: round to nearest snap unit (0 = free)
-    auto snap = [this](float bars) -> float
-    {
-        if (snapDivisor == 0) return bars;
-        const float unit = 1.0f / (float)snapDivisor;
-        return unit * std::round(bars / unit);
-    };
-
-    const float minLength = (snapDivisor == 0) ? 0.01f : 1.0f / (float)snapDivisor;
+    static constexpr float minLength = 0.0625f;  // 1/16 bar — independent of snap grid
 
     if (resizingClip)
     {
-        clip->lengthBars = juce::jmax(minLength,
-                                      snap(dragStartLength + deltaX / (float)barWidth));
+        const float rawLen = dragStartLength + deltaX / (float)barWidth;
+        clip->lengthBars   = juce::jmax(minLength, snapBar(rawLen));
     }
     else
     {
-        clip->startBar = juce::jmax(0.0f,
-                                    snap(dragStartBar + deltaX / (float)barWidth));
+        const float rawBar = dragStartBar + deltaX / (float)barWidth;
+        clip->startBar     = juce::jmax(0.0f, snapBar(rawBar));
 
         const int deltaY     = pos.y - dragStartMouseY;
         const int deltaTrack = (int)std::round((double)deltaY / (double)(trackHeight + trackGap));
@@ -939,11 +1240,7 @@ inline void PlaylistComponent::mouseDoubleClick(const juce::MouseEvent& e)
     const int track = trackIndexAt(pos.y);
     if (track < 0 || track >= getTrackCount()) return;
 
-    const float rawBar  = (float)(pos.x - trackHeaderWidth) / barWidth;
-    const float snapUnit = (snapDivisor == 0) ? 0.0f : 1.0f / (float)snapDivisor;
-    const float bar = (snapDivisor == 0)
-                        ? juce::jmax(0.0f, rawBar)
-                        : snapUnit * std::round(rawBar / snapUnit);
+    const float bar = juce::jmax(0.0f, snapBar(pixelToBar((float)pos.x)));
 
     auto& list = clipList();
     int newId = 1;
@@ -972,6 +1269,17 @@ inline void PlaylistComponent::showContextMenu(int clipId)
     juce::PopupMenu menu;
     menu.addItem(1, "Rename");
 
+    // Audio clip properties (mode + pitch)
+    if (clip->clipType == ClipType::Audio)
+    {
+        const juce::String modeStr =
+            clip->audioClipMode == AudioClipMode::Stretch   ? "Stretch" :
+            clip->audioClipMode == AudioClipMode::Elastique ? "Elastique" : "Resample";
+        menu.addItem(6, "Properties  [" + modeStr + "  "
+                        + juce::String(clip->pitchSemitone, 1) + " st]");
+        menu.addSeparator();
+    }
+
     // Assign Pattern submenu — lists all patterns in the project
     if (project != nullptr && !project->patterns.empty())
     {
@@ -994,6 +1302,11 @@ inline void PlaylistComponent::showContextMenu(int clipId)
     }
 
     menu.addSeparator();
+    // "Split Here" — only meaningful when the cursor is strictly inside the clip
+    const bool canSplit = (contextMenuBar_ > clip->startBar + 0.0625f) &&
+                          (contextMenuBar_ < clip->startBar + clip->lengthBars - 0.0625f);
+    menu.addItem(5, "Split Here", canSplit);
+    menu.addSeparator();
     menu.addItem(3, "Copy Clip");
     menu.addItem(4, "Detach to New Pattern", clip->patternId > 0);
     menu.addItem(2, "Delete");
@@ -1001,7 +1314,11 @@ inline void PlaylistComponent::showContextMenu(int clipId)
     menu.showMenuAsync(juce::PopupMenu::Options().withMousePosition(),
         [this, clipId](int result)
         {
-            if (result == 1)
+            if (result == 6)
+            {
+                showClipPropertiesDialog(clipId);
+            }
+            else if (result == 1)
             {
                 showRenameDialog(clipId);
             }
@@ -1018,6 +1335,44 @@ inline void PlaylistComponent::showContextMenu(int clipId)
             {
                 // Detach: duplicate the assigned pattern, reassign this clip to the copy
                 if (onClipDetach) onClipDetach(clipId);
+            }
+            else if (result == 5)
+            {
+                // Split clip at contextMenuBar_
+                if (auto* c = findClipById(clipId))
+                {
+                    const float splitBar    = contextMenuBar_;
+                    const float origEnd     = c->startBar + c->lengthBars;
+                    const float newALen     = splitBar - c->startBar;
+                    const float newBLen     = origEnd  - splitBar;
+
+                    // Compute a fresh ID
+                    int newId = 1;
+                    for (const auto& cl : clipList()) newId = juce::jmax(newId, cl.id + 1);
+
+                    // Clip B — right half
+                    PlaylistClip clipB  = *c;
+                    clipB.id            = newId;
+                    clipB.startBar      = splitBar;
+                    clipB.lengthBars    = newBLen;
+
+                    // Shorten clip A (direct mutation; undo is handled by the host
+                    // via the existing onClipResized path if needed)
+                    const float oldLen = c->lengthBars;
+                    if (onClipResized) onClipResized(clipId, oldLen, newALen);
+                    else               c->lengthBars = newALen;
+
+                    // Register clip B
+                    if (onClipAdded) onClipAdded(clipB);
+
+                    // If audio clip, also load it into the engine
+                    if (clipB.clipType == ClipType::Audio &&
+                        clipB.audioFilePath.isNotEmpty() &&
+                        onAudioClipDropped)
+                        onAudioClipDropped(clipB.id, clipB.audioFilePath);
+
+                    repaint();
+                }
             }
             else if (result == 2)
             {
@@ -1082,6 +1437,86 @@ inline void PlaylistComponent::showRenameDialog(int clipId)
             delete dialog;
         }),
         false);
+}
+
+inline void PlaylistComponent::showClipPropertiesDialog(int clipId)
+{
+    PlaylistClip* clip = findClipById(clipId);
+    if (clip == nullptr || clip->clipType != ClipType::Audio) return;
+
+    struct PropertiesPanel : public juce::Component
+    {
+        juce::Label        modeLabel, pitchLabel;
+        juce::ComboBox     modeBox;
+        juce::Slider       pitchSlider;
+
+        explicit PropertiesPanel(AudioClipMode currentMode, float currentPitch)
+        {
+            // Mode row
+            modeLabel.setText("Mode", juce::dontSendNotification);
+            modeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffb0b0b8));
+            addAndMakeVisible(modeLabel);
+
+            modeBox.addItem("Resample",  1);
+            modeBox.addItem("Stretch",   2);
+            modeBox.addItem("Elastique", 3);
+            modeBox.setSelectedId((int)currentMode + 1, juce::dontSendNotification);
+            addAndMakeVisible(modeBox);
+
+            // Pitch row
+            pitchLabel.setText("Pitch (st)", juce::dontSendNotification);
+            pitchLabel.setColour(juce::Label::textColourId, juce::Colour(0xffb0b0b8));
+            addAndMakeVisible(pitchLabel);
+
+            pitchSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+            pitchSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 52, 20);
+            pitchSlider.setRange(-24.0, 24.0, 0.5);
+            pitchSlider.setValue((double)currentPitch, juce::dontSendNotification);
+            addAndMakeVisible(pitchSlider);
+
+            setSize(300, 80);
+        }
+
+        void resized() override
+        {
+            modeLabel  .setBounds(4,   4, 68, 20);
+            modeBox    .setBounds(76,  4, getWidth() - 84, 20);
+            pitchLabel .setBounds(4,  32, 68, 20);
+            pitchSlider.setBounds(76, 30, getWidth() - 84, 26);
+        }
+    };
+
+    const float         oldPitch = clip->pitchSemitone;
+    const AudioClipMode oldMode  = clip->audioClipMode;
+
+    auto* panel = new PropertiesPanel(oldMode, oldPitch);
+
+    panel->modeBox.onChange = [this, clipId, oldMode, panel]
+    {
+        if (auto* c = findClipById(clipId))
+        {
+            const AudioClipMode newMode = (AudioClipMode)(panel->modeBox.getSelectedId() - 1);
+            c->audioClipMode = newMode;
+            if (onClipModeChanged) onClipModeChanged(clipId, oldMode, newMode);
+            repaint();
+        }
+    };
+
+    panel->pitchSlider.onValueChange = [this, clipId, oldPitch, panel]
+    {
+        if (auto* c = findClipById(clipId))
+        {
+            const float newPitch = (float)panel->pitchSlider.getValue();
+            c->pitchSemitone = newPitch;
+            if (onClipPitchChanged) onClipPitchChanged(clipId, oldPitch, newPitch);
+            repaint();
+        }
+    };
+
+    juce::CallOutBox::launchAsynchronously(
+        std::unique_ptr<juce::Component>(panel),
+        getScreenBounds(),
+        nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -1153,6 +1588,109 @@ inline void PlaylistComponent::mouseWheelMove(const juce::MouseEvent& e,
     {
         juce::Component::mouseWheelMove(e, w);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Audio drag & drop helpers
+// ---------------------------------------------------------------------------
+static bool isAudioFile(const juce::String& path)
+{
+    const juce::String ext = juce::File(path).getFileExtension().toLowerCase();
+    return ext == ".wav" || ext == ".aif" || ext == ".aiff" || ext == ".mp3" || ext == ".flac";
+}
+
+inline void PlaylistComponent::handleAudioFileDrop(const juce::String& filePath, int dropX, int dropY)
+{
+    if (project == nullptr) return;
+    if (!isAudioFile(filePath)) return;
+    const juce::File file(filePath);
+    if (!file.existsAsFile()) return;
+
+    // Compute bar position and track index from drop coordinates
+    const float snappedBar = juce::jmax(0.0f, snapBar(pixelToBar((float)dropX)));
+    const int   trackIdx  = juce::jlimit(0, getTrackCount() - 1, trackIndexAt(dropY));
+
+    // Estimate length in bars from file duration
+    float lengthBars = 4.0f;
+    {
+        juce::AudioFormatManager fmt;
+        fmt.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> reader(fmt.createReaderFor(file));
+        if (reader != nullptr && reader->sampleRate > 0.0)
+        {
+            const double bpm   = (project != nullptr) ? project->bpm : 120.0;
+            const double secs  = (double)reader->lengthInSamples / reader->sampleRate;
+            const double beats = secs * (bpm / 60.0);
+            lengthBars = (float)(beats / 4.0);
+        }
+    }
+    lengthBars = juce::jmax(0.25f, lengthBars);
+
+    // Allocate new clip ID
+    int newId = 1;
+    for (const auto& c : clipList()) newId = juce::jmax(newId, c.id + 1);
+
+    PlaylistClip clip;
+    clip.id            = newId;
+    clip.clipType      = ClipType::Audio;
+    clip.audioFilePath = filePath;
+    clip.startBar      = snappedBar;
+    clip.lengthBars    = lengthBars;
+    clip.trackIndex    = trackIdx;
+    clip.name          = file.getFileNameWithoutExtension();
+    clip.patternId     = -1;
+
+    if (onClipAdded) onClipAdded(clip);
+    if (onAudioClipDropped) onAudioClipDropped(clip.id, filePath);
+    repaint();
+}
+
+inline bool PlaylistComponent::isInterestedInFileDrag(const juce::StringArray& files)
+{
+    for (const auto& f : files)
+        if (isAudioFile(f)) return true;
+    return false;
+}
+
+inline void PlaylistComponent::fileDragEnter(const juce::StringArray&, int x, int y)
+{
+    audioDragHover_     = true;
+    audioDragHoverX_    = (float)x;
+    audioDragHoverTrack_ = trackIndexAt(y);
+    repaint();
+}
+
+inline void PlaylistComponent::fileDragExit(const juce::StringArray&)
+{
+    audioDragHover_ = false;
+    repaint();
+}
+
+inline void PlaylistComponent::filesDropped(const juce::StringArray& files, int x, int y)
+{
+    audioDragHover_ = false;
+    for (const auto& f : files)
+    {
+        if (isAudioFile(f))
+        {
+            handleAudioFileDrop(f, x, y);
+            break;   // one file per drop for now
+        }
+    }
+}
+
+inline bool PlaylistComponent::isInterestedInDragSource(
+    const juce::DragAndDropTarget::SourceDetails& details)
+{
+    return isAudioFile(details.description.toString());
+}
+
+inline void PlaylistComponent::itemDropped(const juce::DragAndDropTarget::SourceDetails& details)
+{
+    audioDragHover_ = false;
+    handleAudioFileDrop(details.description.toString(),
+                        details.localPosition.x,
+                        details.localPosition.y);
 }
 
 inline void PlaylistComponent::showTrackRenameDialog(int trackIdx)

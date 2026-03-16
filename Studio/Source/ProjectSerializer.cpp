@@ -106,13 +106,17 @@ bool ProjectSerializer::save(const Project& project, const juce::File& file)
     for (const auto& clip : project.playlistClips)
     {
         auto* clipEl = clipsEl->createNewChildElement("Clip");
-        clipEl->setAttribute("id",         clip.id);
-        clipEl->setAttribute("patternId",  clip.patternId);
-        clipEl->setAttribute("name",       clip.name);
-        clipEl->setAttribute("trackIndex", clip.trackIndex);
-        clipEl->setAttribute("startBar",   clip.startBar);
-        clipEl->setAttribute("lengthBars", clip.lengthBars);
-        clipEl->setAttribute("varIdx",     clip.variationIdx);
+        clipEl->setAttribute("id",            clip.id);
+        clipEl->setAttribute("patternId",     clip.patternId);
+        clipEl->setAttribute("name",          clip.name);
+        clipEl->setAttribute("trackIndex",    clip.trackIndex);
+        clipEl->setAttribute("startBar",      clip.startBar);
+        clipEl->setAttribute("lengthBars",    clip.lengthBars);
+        clipEl->setAttribute("varIdx",        clip.variationIdx);
+        clipEl->setAttribute("clipType",       clip.clipType == ClipType::Audio ? 1 : 0);
+        clipEl->setAttribute("audioFilePath",  clip.audioFilePath);
+        clipEl->setAttribute("pitchSemitone",  (double)clip.pitchSemitone);
+        clipEl->setAttribute("audioClipMode",  (int)clip.audioClipMode);
     }
 
     // ---- MixerTracks (M5)
@@ -446,6 +450,16 @@ bool ProjectSerializer::load(juce::File& file, Project& projectOut)
             clip.lengthBars   = (float)clipEl->getDoubleAttribute("lengthBars", 4.0);
             clip.variationIdx = juce::jlimit(0, Pattern::kMaxVariations - 1,
                                              clipEl->getIntAttribute("varIdx", 0));
+            clip.clipType      = (clipEl->getIntAttribute("clipType", 0) == 1)
+                                 ? ClipType::Audio : ClipType::Pattern;
+            clip.audioFilePath  = clipEl->getStringAttribute("audioFilePath", "");
+            clip.pitchSemitone  = (float)clipEl->getDoubleAttribute("pitchSemitone", 0.0);
+            clip.audioClipMode  = (AudioClipMode)juce::jlimit(0, 2,
+                                      clipEl->getIntAttribute("audioClipMode", 0));
+            // Mark missing audio files in the clip name
+            if (clip.clipType == ClipType::Audio && clip.audioFilePath.isNotEmpty()
+                && !juce::File(clip.audioFilePath).existsAsFile())
+                clip.name = "[missing] " + juce::File(clip.audioFilePath).getFileName();
             loaded.playlistClips.push_back(clip);
         }
     }

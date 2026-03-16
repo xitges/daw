@@ -415,11 +415,13 @@ MainComponent::MainComponent()
     addAndMakeVisible(playlistViewport);
 
     // Snap box — floats outside the viewport so it never scrolls away
-    playlistSnapBox.addItem("1 Bar",   1);
-    playlistSnapBox.addItem("1/2 Bar", 2);
-    playlistSnapBox.addItem("1/4 Bar", 4);
-    playlistSnapBox.addItem("Free",    99);
-    playlistSnapBox.setSelectedId(1, juce::dontSendNotification);
+    playlistSnapBox.addItem("1 Bar",    1);
+    playlistSnapBox.addItem("1/2 Bar",  2);
+    playlistSnapBox.addItem("1/4 Bar",  4);
+    playlistSnapBox.addItem("1/8 Bar",  8);
+    playlistSnapBox.addItem("1/16 Bar", 16);
+    playlistSnapBox.addItem("Free",     99);
+    playlistSnapBox.setSelectedId(4, juce::dontSendNotification);  // default: 1/4 bar
     playlistSnapBox.onChange = [this]
     {
         const int id = playlistSnapBox.getSelectedId();
@@ -545,6 +547,24 @@ MainComponent::MainComponent()
             audioEngine.updatePatternSnapshot();
             markDirty();
         }
+    };
+
+    // ---- Audio clip drop → load into AudioEngine
+    playlist.onAudioClipDropped = [this](int clipId, juce::String path)
+    {
+        // Find the clip to get its calculated lengthBars
+        float len = 0.0f;
+        for (const auto& c : project.playlistClips)
+            if (c.id == clipId) { len = c.lengthBars; break; }
+        audioEngine.loadAudioClip(clipId, juce::File(path), len);
+        markDirty();
+    };
+
+    // Waveform preview: return the decoded buffer from AudioEngine
+    playlist.getAudioBuffer = [this](const juce::String& path)
+        -> std::shared_ptr<juce::AudioBuffer<float>>
+    {
+        return audioEngine.getAudioFileBuffer(path);
     };
 
     // ---- M6: Playlist clip undo
@@ -674,13 +694,30 @@ MainComponent::MainComponent()
         undoManager.perform(new LambdaAction(
             [this, id, newLen]() -> bool {
                 for (auto& c : project.playlistClips)
-                    if (c.id == id) { c.lengthBars = newLen; break; }
+                {
+                    if (c.id == id)
+                    {
+                        c.lengthBars = newLen;
+                        // Update audio clip playback window to match new length
+                        if (c.clipType == ClipType::Audio && c.audioFilePath.isNotEmpty())
+                            audioEngine.loadAudioClip(id, juce::File(c.audioFilePath), newLen);
+                        break;
+                    }
+                }
                 audioEngine.rebuildRuntimeStateFromProject();
                 playlist.repaint(); markDirty(); return true;
             },
             [this, id, oldLen]() -> bool {
                 for (auto& c : project.playlistClips)
-                    if (c.id == id) { c.lengthBars = oldLen; break; }
+                {
+                    if (c.id == id)
+                    {
+                        c.lengthBars = oldLen;
+                        if (c.clipType == ClipType::Audio && c.audioFilePath.isNotEmpty())
+                            audioEngine.loadAudioClip(id, juce::File(c.audioFilePath), oldLen);
+                        break;
+                    }
+                }
                 audioEngine.rebuildRuntimeStateFromProject();
                 playlist.repaint(); markDirty(); return true;
             }));
@@ -721,6 +758,28 @@ MainComponent::MainComponent()
                 playlist.repaint(); markDirty(); return true;
             }
         ));
+    };
+
+    // Audio clip pitch changed
+    playlist.onClipPitchChanged = [this](int clipId, float /*oldPitch*/, float newPitch)
+    {
+        AudioClipMode mode = AudioClipMode::Resample;
+        for (auto& c : project.playlistClips)
+            if (c.id == clipId) { c.pitchSemitone = newPitch; mode = c.audioClipMode; break; }
+        audioEngine.reprocessAudioClipPitch(clipId, mode, newPitch);
+        audioEngine.setProject(&project);
+        markDirty();
+    };
+
+    // Audio clip mode changed — rebuild pitched buffer, push runtime
+    playlist.onClipModeChanged = [this](int clipId, AudioClipMode /*old*/, AudioClipMode newMode)
+    {
+        float pitch = 0.0f;
+        for (auto& c : project.playlistClips)
+            if (c.id == clipId) { c.audioClipMode = newMode; pitch = c.pitchSemitone; break; }
+        audioEngine.reprocessAudioClipPitch(clipId, newMode, pitch);
+        audioEngine.setProject(&project);
+        markDirty();
     };
 
     // Phase 4 — double-click clip → navigate to its pattern
@@ -1806,6 +1865,14 @@ void MainComponent::reloadProjectIntoUI()
     audioEngine.allSynthNotesOff();
     channelRack.setPlaybackStep(-1);
     playlist.setPlayheadBar(-1.0);
+
+    // Reload audio clips
+    audioEngine.unloadAllAudioClips();
+    for (const auto& clip : project.playlistClips)
+    {
+        if (clip.clipType == ClipType::Audio && clip.audioFilePath.isNotEmpty())
+            audioEngine.loadAudioClip(clip.id, juce::File(clip.audioFilePath), clip.lengthBars);
+    }
 
     // Reload launchpad samples
     for (int i = 0; i < 64; ++i)

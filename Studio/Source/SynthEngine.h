@@ -979,7 +979,7 @@ namespace SynthPreview
         voice.renderAdd(renderLeft.data() + holdSamples, renderRight.data() + holdSamples,
                         renderSamples - holdSamples, sampleRate);
 
-        // MinMax per pixel
+        
         WaveformData data;
         data.minVals.resize((size_t)numPixels, 0.0f);
         data.maxVals.resize((size_t)numPixels, 0.0f);

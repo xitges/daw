@@ -9,6 +9,7 @@
 */
 
 #include "AudioEngine.h"
+#include "RubberBandStretcher.h"
 
 namespace
 {
@@ -200,6 +201,171 @@ void AudioEngine::stop()
         if (cacheLoader_ != nullptr && cacheLoader_->isThreadRunning())
             cacheLoader_->signalThreadShouldExit();
     }
+    resetAudioClipTriggers();
+}
+
+// --- Audio clip management (Stage 1) ------------------------------------
+
+void AudioEngine::loadAudioClip(int clipId, const juce::File& file, float clipLengthBars)
+{
+    if (!file.existsAsFile()) return;
+
+    const juce::String path = file.getFullPathName();
+
+    // Decode into shared buffer (one buffer per unique file path)
+    std::shared_ptr<juce::AudioBuffer<float>> buf;
+    {
+        const juce::SpinLock::ScopedLockType lock(audioClipLock_);
+        auto it = audioFileBuffers_.find(path);
+        if (it != audioFileBuffers_.end())
+        {
+            buf = it->second;
+        }
+    }
+
+    if (buf == nullptr)
+    {
+        juce::AudioFormatManager formatManager;
+        formatManager.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+        if (reader == nullptr) return;
+
+        auto decoded = std::make_shared<juce::AudioBuffer<float>>(
+            (int)reader->numChannels, (int)reader->lengthInSamples);
+        reader->read(decoded.get(), 0, (int)reader->lengthInSamples, 0, true, true);
+        buf = decoded;
+    }
+
+    const juce::SpinLock::ScopedLockType lock(audioClipLock_);
+    audioFileBuffers_[path] = buf;
+
+    // clipLengthBars is no longer used to cap playback: loop mode handles clip length
+    // entirely via playhead-based calculation in processSongMode/mixToOutput.
+    juce::ignoreUnused(clipLengthBars);
+
+    // Update or add instance
+    for (auto& inst : audioClipInstances_)
+    {
+        if (inst.clipId == clipId)
+        {
+            inst.buffer = buf;
+            inst.active = false;
+            return;
+        }
+    }
+    AudioClipInstance inst;
+    inst.clipId = clipId;
+    inst.buffer = buf;
+    audioClipInstances_.push_back(inst);
+}
+
+void AudioEngine::reprocessAudioClipPitch(int clipId, AudioClipMode mode, float pitchSemitone)
+{
+    // Resample mode or no pitch shift: clear any pitched buffer — play from original
+    if (mode == AudioClipMode::Resample || pitchSemitone == 0.0f)
+    {
+        const juce::SpinLock::ScopedLockType lock(audioClipLock_);
+        for (auto& inst : audioClipInstances_)
+            if (inst.clipId == clipId)
+            {
+                inst.pitchedBuffer = nullptr;
+                inst.cachedMode    = mode;
+                inst.cachedPitch   = pitchSemitone;
+                inst.active        = false;
+                break;
+            }
+        return;
+    }
+
+    // Find original source buffer
+    std::shared_ptr<juce::AudioBuffer<float>> srcBuf;
+    {
+        const juce::SpinLock::ScopedLockType lock(audioClipLock_);
+        for (auto& inst : audioClipInstances_)
+            if (inst.clipId == clipId) { srcBuf = inst.buffer; break; }
+    }
+    if (srcBuf == nullptr || srcBuf->getNumSamples() <= 0) return;
+
+    const int    srcLen    = srcBuf->getNumSamples();
+    const int    numCh     = srcBuf->getNumChannels();
+    const double pitchScale = std::pow(2.0, (double)pitchSemitone / 12.0);
+    const bool   highQ     = (mode == AudioClipMode::Elastique);
+
+    // ---- RubberBand offline pitch shift (timeRatio=1.0, pitchScale=pitchRatio) ----
+    using RBS = RubberBand::RubberBandStretcher;
+    const int rbOptions = RBS::OptionProcessOffline
+                        | (highQ ? RBS::OptionPitchHighQuality : RBS::OptionPitchHighSpeed);
+
+    const double processRate = (sampleRate > 0.0) ? sampleRate : 44100.0;
+    RBS stretcher((size_t)processRate, (size_t)numCh, rbOptions, 1.0, pitchScale);
+    stretcher.setExpectedInputDuration((size_t)srcLen);
+
+    // Build array of const pointers for RubberBand
+    std::vector<const float*> inPtrs((size_t)numCh);
+    for (int ch = 0; ch < numCh; ++ch)
+        inPtrs[(size_t)ch] = srcBuf->getReadPointer(ch);
+
+    // Study pass
+    stretcher.study(inPtrs.data(), (size_t)srcLen, true);
+
+    // Process pass
+    stretcher.process(inPtrs.data(), (size_t)srcLen, true);
+
+    // Retrieve output (may be slightly shorter/longer due to latency)
+    const int outLen = stretcher.available();
+    auto outBuf = std::make_shared<juce::AudioBuffer<float>>(numCh, juce::jmax(1, outLen));
+
+    if (outLen > 0)
+    {
+        std::vector<float*> outPtrs((size_t)numCh);
+        for (int ch = 0; ch < numCh; ++ch)
+            outPtrs[(size_t)ch] = outBuf->getWritePointer(ch);
+        stretcher.retrieve(outPtrs.data(), (size_t)outLen);
+    }
+
+    // Push result to instance (lock required — audio thread may be running)
+    const juce::SpinLock::ScopedLockType lock(audioClipLock_);
+    for (auto& inst : audioClipInstances_)
+        if (inst.clipId == clipId)
+        {
+            inst.pitchedBuffer = outBuf;
+            inst.cachedMode    = mode;
+            inst.cachedPitch   = pitchSemitone;
+            inst.active        = false;   // reset so processSongMode picks up new buffer
+            break;
+        }
+}
+
+void AudioEngine::unloadAudioClip(int clipId)
+{
+    const juce::SpinLock::ScopedLockType lock(audioClipLock_);
+    audioClipInstances_.erase(
+        std::remove_if(audioClipInstances_.begin(), audioClipInstances_.end(),
+                       [clipId](const AudioClipInstance& i) { return i.clipId == clipId; }),
+        audioClipInstances_.end());
+}
+
+void AudioEngine::unloadAllAudioClips()
+{
+    const juce::SpinLock::ScopedLockType lock(audioClipLock_);
+    audioClipInstances_.clear();
+    audioFileBuffers_.clear();
+}
+
+void AudioEngine::resetAudioClipTriggers()
+{
+    const juce::SpinLock::ScopedTryLockType tryLock(audioClipLock_);
+    if (!tryLock.isLocked()) return;
+    for (auto& inst : audioClipInstances_)
+        inst.active = false;
+}
+
+std::shared_ptr<juce::AudioBuffer<float>> AudioEngine::getAudioFileBuffer(const juce::String& path) const
+{
+    const juce::SpinLock::ScopedTryLockType tryLock(audioClipLock_);
+    if (!tryLock.isLocked()) return nullptr;
+    auto it = audioFileBuffers_.find(path);
+    return (it != audioFileBuffers_.end()) ? it->second : nullptr;
 }
 
 // ---- Mute / Solo -------------------------------------------------------
@@ -1133,7 +1299,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
     if (!songPlaying.load(std::memory_order_acquire) || sampleRate <= 0.0)
         return;
 
-    if (runtime.playlistClips.empty() || runtime.patterns.empty())
+    if (runtime.playlistClips.empty())
         return;
 
     double currentBpm = runtime.projectBpm;
@@ -1187,6 +1353,78 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
         }
     }
 
+    // --- Audio clip playback (Stage 1 — playhead-based loop mode) ----------
+    // For each instance, compute the file sample position from the current
+    // playhead beat.  No trigger state: recalculated fresh every block.
+    // If file is shorter than the clip it loops (% fileTotalSamples).
+    {
+        const juce::SpinLock::ScopedTryLockType tryLock(audioClipLock_);
+        if (tryLock.isLocked())
+        {
+            for (auto& inst : audioClipInstances_)
+            {
+                inst.active = false;  // reset; set true below if overlapping
+                if (inst.buffer == nullptr) continue;
+
+                // Find matching clip in runtime state
+                const PlaylistClip* clip = nullptr;
+                for (const auto& c : runtime.playlistClips)
+                    if (c.id == inst.clipId && c.clipType == ClipType::Audio)
+                        { clip = &c; break; }
+                if (clip == nullptr) continue;
+
+                const double clipStartBeat = clip->startBar * 4.0;
+                const double clipEndBeat   = (clip->startBar + clip->lengthBars) * 4.0;
+
+                // Skip if this block doesn't overlap the clip
+                if (endBeat <= clipStartBeat || startBeat >= clipEndBeat) continue;
+
+                const int fileSamples = inst.buffer->getNumSamples();
+                if (fileSamples <= 0) continue;
+
+                // Output sample offset: how far into the block does the clip start?
+                const int outOffset = (startBeat < clipStartBeat)
+                    ? juce::jmin((int)juce::jmax(0.0,
+                                 (clipStartBeat - startBeat) * samplesPerBeat),
+                                 numSamples - 1)
+                    : 0;
+
+                // Clip-local beat at the first output sample for this clip
+                const double localBeat = juce::jmax(0.0,
+                    startBeat + outOffset / samplesPerBeat - clipStartBeat);
+
+                // Choose playback buffer and pitch ratio based on mode:
+                //   Resample: original buffer, pitchRatio != 1 (speed+pitch change)
+                //   Stretch/Elastique: pitchedBuffer (pre-processed), pitchRatio = 1.0
+                const AudioClipMode clipMode = clip->audioClipMode;
+                const bool useStretched = (clipMode != AudioClipMode::Resample)
+                                          && (inst.pitchedBuffer != nullptr);
+
+                const juce::AudioBuffer<float>* playBuf = useStretched
+                    ? inst.pitchedBuffer.get()
+                    : inst.buffer.get();
+                const int playLen = playBuf->getNumSamples();
+                if (playLen <= 0) continue;
+
+                const double pitchRatio = useStretched
+                    ? 1.0
+                    : std::pow(2.0, (double)clip->pitchSemitone / 12.0);
+
+                // File position = (clip-local output samples) × pitchRatio, looped
+                const double localSample = localBeat * samplesPerBeat * pitchRatio;
+
+                inst.active             = true;
+                inst.startOffsetInBlock = outOffset;
+                inst.fileReadStart      = std::fmod(localSample, (double)playLen);
+                inst.fileTotalSamples   = playLen;
+                inst.pitchRatio         = pitchRatio;
+            }
+        }
+    }
+
+    // Pattern/NoteEvent step-trigger loop (unchanged) — skip if no patterns loaded
+    if (!runtime.patterns.empty())
+    {
     const auto& songSampleCache = getSongSampleCache();
     const int timelineStepsPerBar = 16;
     const int startStep = (int)std::floor(startBar * timelineStepsPerBar);
@@ -1325,6 +1563,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
             }
         }
     }
+    } // end if (!runtime.patterns.empty())
 
     dispatchScheduledSampleTriggers();
     MixRuntimeOverrides overrides;
@@ -1487,6 +1726,55 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
     if (playMode == PlayMode::Song)
         for (auto& synth : polySynths)
             synth.renderNextBlockRouted(mixerTrackBufs, safe, sampleRate);
+
+    // --- Audio clip rendering (Stage 1 — playhead-based loop mode) ------
+    // inst.active / fileReadStart / fileTotalSamples are set each block
+    // by processSongMode.  Uses try-lock: skip silently if lock unavailable.
+    {
+        const juce::SpinLock::ScopedTryLockType tryLock(audioClipLock_);
+        if (tryLock.isLocked())
+        {
+            for (auto& inst : audioClipInstances_)
+            {
+                if (!inst.active || inst.buffer == nullptr || inst.fileTotalSamples <= 0) continue;
+
+                // Use pitched buffer when available (Stretch/Elastique); else original
+                const juce::AudioBuffer<float>* playBuf =
+                    (inst.pitchedBuffer != nullptr) ? inst.pitchedBuffer.get() : inst.buffer.get();
+
+                const int    srcCh   = playBuf->getNumChannels();
+                const int    startS  = inst.startOffsetInBlock;
+                const int    fileLen = inst.fileTotalSamples;
+                const double pitch   = inst.pitchRatio;
+                double       filePos = inst.fileReadStart;
+
+                for (int s = startS; s < safe; ++s)
+                {
+                    // Loop: wrap fractional position into file range
+                    double wp = std::fmod(filePos, (double)fileLen);
+                    if (wp < 0.0) wp += (double)fileLen;
+
+                    // Linear interpolation between adjacent samples
+                    const int   s0   = (int)wp;
+                    const int   s1   = (s0 + 1) % fileLen;
+                    const float frac = (float)(wp - (double)s0);
+                    const float invF = 1.0f - frac;
+
+                    const float sL = playBuf->getSample(0, s0) * invF
+                                   + playBuf->getSample(0, s1) * frac;
+                    const float sR = (srcCh > 1)
+                                   ? playBuf->getSample(1, s0) * invF
+                                   + playBuf->getSample(1, s1) * frac
+                                   : sL;
+
+                    mixerTrackBufs[0].addSample(0, s, sL);
+                    mixerTrackBufs[0].addSample(1, s, sR);
+
+                    filePos += pitch;
+                }
+            }
+        }
+    }
 
     const float targetMasterTrim = masterPeak > 0.86f ? 0.86f / masterPeak : 1.0f;
     masterInputTrim_ = smoothingTowards(masterInputTrim_,

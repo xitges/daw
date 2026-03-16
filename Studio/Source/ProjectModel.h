@@ -480,6 +480,14 @@ struct AutomationLane
     }
 };
 
+enum class ClipType { Pattern, Audio };
+
+// Playback algorithm for audio clips.
+// Resample  — speed + pitch change together (lightweight, no external dep)
+// Stretch   — pitch-only (RubberBand offline, linear quality)
+// Elastique — pitch-only (RubberBand offline, high quality)
+enum class AudioClipMode { Resample, Stretch, Elastique };
+
 struct PlaylistClip
 {
     int          id           = 0;
@@ -490,6 +498,12 @@ struct PlaylistClip
     int          variationIdx = 0;
 
     juce::String name;
+
+    // Audio clip fields (ignored when clipType == Pattern)
+    ClipType      clipType      = ClipType::Pattern;
+    juce::String  audioFilePath;
+    float         pitchSemitone = 0.0f;        // -24 ~ +24 st
+    AudioClipMode audioClipMode = AudioClipMode::Resample;
 };
 
 struct Project
