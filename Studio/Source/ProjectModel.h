@@ -504,6 +504,14 @@ struct PlaylistClip
     juce::String  audioFilePath;
     float         pitchSemitone = 0.0f;        // -24 ~ +24 st
     AudioClipMode audioClipMode = AudioClipMode::Resample;
+    float         fadeInBars    = 0.0f;        // gain 0→1 ramp at clip start
+    float         fadeOutBars   = 0.0f;        // gain 1→0 ramp at clip end
+    float         sourceOffsetSamples         = 0.0f; // slip edit: current file read start (samples, looped)
+    float         originalSourceOffsetSamples = 0.0f; // reset target (defaults to 0 = file start)
+
+    // Pattern Clip slip edit (ignored when clipType == Audio)
+    float         patternStartOffsetBars         = 0.0f; // pattern internal start offset (bars, looped)
+    float         originalPatternStartOffsetBars = 0.0f; // reset target
 };
 
 struct Project

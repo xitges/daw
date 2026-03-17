@@ -29,6 +29,36 @@ namespace
         const float peakComp = peak > 0.72f ? 0.72f / peak : 1.0f;
         return juce::jlimit(0.42f, 1.0f, sourceComp * peakComp);
     }
+
+    // Fade gain for a clip at localBars position within the clip.
+    // Handles proportional clamping when fade-in + fade-out > clip length.
+    inline float computeClipFadeGain(const PlaylistClip& clip, float localBars)
+    {
+        if (clip.fadeInBars <= 0.0f && clip.fadeOutBars <= 0.0f) return 1.0f;
+
+        float fadeIn  = clip.fadeInBars;
+        float fadeOut = clip.fadeOutBars;
+
+        // Proportional clamp: keep the ratio when they overlap
+        const float total = fadeIn + fadeOut;
+        if (total > clip.lengthBars && total > 0.0f)
+        {
+            const float scale = clip.lengthBars / total;
+            fadeIn  *= scale;
+            fadeOut *= scale;
+        }
+
+        float gain = 1.0f;
+        if (fadeIn > 0.0f && localBars < fadeIn)
+            gain = juce::jlimit(0.0f, 1.0f, localBars / fadeIn);
+        if (fadeOut > 0.0f)
+        {
+            const float remain = clip.lengthBars - localBars;
+            if (remain < fadeOut)
+                gain = juce::jmin(gain, juce::jlimit(0.0f, 1.0f, remain / fadeOut));
+        }
+        return gain;
+    }
 }
 
 AudioEngine::AudioEngine()
@@ -1410,14 +1440,32 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                     ? 1.0
                     : std::pow(2.0, (double)clip->pitchSemitone / 12.0);
 
-                // File position = (clip-local output samples) × pitchRatio, looped
-                const double localSample = localBeat * samplesPerBeat * pitchRatio;
+                // File position = (clip-local output samples) × pitchRatio + slip offset, looped
+                const double localSample = localBeat * samplesPerBeat * pitchRatio
+                                         + (double)clip->sourceOffsetSamples;
 
                 inst.active             = true;
                 inst.startOffsetInBlock = outOffset;
                 inst.fileReadStart      = std::fmod(localSample, (double)playLen);
                 inst.fileTotalSamples   = playLen;
                 inst.pitchRatio         = pitchRatio;
+
+                // Fade envelope fields (proportional clamp applied here)
+                inst.localBeatAtBlockStart = localBeat;
+                inst.beatsPerSample        = 1.0 / samplesPerBeat;
+                inst.clipLengthBeats       = clip->lengthBars * 4.0f;
+                {
+                    float fi = clip->fadeInBars  * 4.0f;
+                    float fo = clip->fadeOutBars * 4.0f;
+                    const float tot = fi + fo;
+                    if (tot > inst.clipLengthBeats && tot > 0.0f)
+                    {
+                        const float sc = inst.clipLengthBeats / tot;
+                        fi *= sc; fo *= sc;
+                    }
+                    inst.fadeInBeats  = fi;
+                    inst.fadeOutBeats = fo;
+                }
             }
         }
     }
@@ -1459,12 +1507,15 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
             if (pattern == nullptr || pattern->stepCount <= 0)
                 continue;
 
-            const double patternBars = (double)pattern->stepCount / 16.0;
+            const double patternBars    = (double)pattern->stepCount / 16.0;
             const double localBarInClip = stepBarPos - clip.startBar;
-            const double localInPat     = std::fmod(juce::jmax(0.0, localBarInClip), patternBars);
+            const double shiftedLocal   = localBarInClip + (double)clip.patternStartOffsetBars;
+            const double localInPat     = std::fmod(juce::jmax(0.0, shiftedLocal), patternBars);
             const double pos01          = localInPat / patternBars;
             const int localStep = juce::jlimit(0, pattern->stepCount - 1,
                                                (int)std::floor(pos01 * (double)pattern->stepCount));
+
+            const float stepFadeGain = computeClipFadeGain(clip, (float)localBarInClip);
 
             for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
             {
@@ -1480,7 +1531,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                     const auto noteParams = makeNoteSynthParams(pattern->synthParams[(size_t)ch],
                                                                 midiPitch, 0.8f, noteLenSamples);
                     polySynths[(size_t)ch].noteOn(midiPitch, 0.8f, sampleRate, noteParams, noteLenSamples,
-                                                  songChannelVolume_[(size_t)ch],
+                                                  songChannelVolume_[(size_t)ch] * stepFadeGain,
                                                   songChannelPan_[(size_t)ch],
                                                   juce::jlimit(0, 7, pattern->channelMixerRouting[ch]));
                 }
@@ -1491,7 +1542,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                         (cit != songSampleCache.end()) ? cit->second[(size_t)ch] : nullptr;
 
                     scheduleSampleTrigger(ch, offsetInBuf, juce::jlimit(0, 7, pattern->channelMixerRouting[ch]), songBuffer.get(), songBuffer,
-                                          songChannelVolume_[(size_t)ch],
+                                          songChannelVolume_[(size_t)ch] * stepFadeGain,
                                           songChannelPan_[(size_t)ch],
                                           channelBasePitch[(size_t)ch].load(std::memory_order_relaxed) + pattern->channelPitch[ch],
                                           (float)(currentBpm / juce::jmax(1.0, runtime.projectBpm)));
@@ -1520,9 +1571,13 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                 if (pat->channelTypes[ch] != ChannelType::Melodic) continue;
                 updateSongMixState(*pat, ch);
 
+                const double patOffsetBeats = (double)clip.patternStartOffsetBars * 4.0;
+
                 for (const auto& note : pat->variations[clip.variationIdx].notes[ch])
                 {
-                    const double notePhase = std::fmod((double)note.startBeat, patternBeats);
+                    const double notePhaseRaw  = std::fmod((double)note.startBeat, patternBeats);
+                    // Shift note phase by -offset so the pattern effectively starts at offsetBeats
+                    const double notePhase     = std::fmod(notePhaseRaw - patOffsetBeats + patternBeats * 512.0, patternBeats);
                     const double relStart  = startBeatSong - clipStartBeat;
                     const double loopIdxD  = (relStart - notePhase) / patternBeats;
                     const int kStart = (loopIdxD < 0.0) ? 0 : juce::jmax(0, (int)loopIdxD - 1);
@@ -1533,6 +1588,9 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                         if (fireBeat < clipStartBeat || fireBeat >= clipEndBeat) continue;
                         if (fireBeat < startBeatSong || fireBeat >= endBeatSong)  continue;
 
+                        const float noteLocalBars = (float)((fireBeat - clipStartBeat) / 4.0);
+                        const float noteFadeGain  = computeClipFadeGain(clip, noteLocalBars);
+
                         const SynthParams& sp = pat->synthParams[(size_t)ch];
                         const int tp2 = juce::jlimit(0, 127, note.pitch + (int)std::round(channelBasePitch[(size_t)ch].load(std::memory_order_relaxed)));
 
@@ -1541,7 +1599,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                             const int noteLenSamples = (int)(note.lengthBeats * samplesPerBeat);
                             const auto noteParams = makeNoteSynthParams(sp, tp2, note.velocity, noteLenSamples);
                             polySynths[(size_t)ch].noteOn(tp2, note.velocity, sampleRate, noteParams, noteLenSamples,
-                                                          songChannelVolume_[(size_t)ch],
+                                                          songChannelVolume_[(size_t)ch] * noteFadeGain,
                                                           songChannelPan_[(size_t)ch],
                                                           juce::jlimit(0, 7, pat->channelMixerRouting[ch]));
                         }
@@ -1553,7 +1611,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                             const int offset = juce::jlimit(0, numSamples - 1,
                                                             (int)((fireBeat - startBeatSong) * samplesPerBeat));
                             scheduleSampleTrigger(ch, offset, juce::jlimit(0, 7, pat->channelMixerRouting[ch]), songBuffer.get(), songBuffer,
-                                                  songChannelVolume_[(size_t)ch] * note.velocity,
+                                                  songChannelVolume_[(size_t)ch] * note.velocity * noteFadeGain,
                                                   songChannelPan_[(size_t)ch],
                                                   channelBasePitch[(size_t)ch].load(std::memory_order_relaxed) + (float)(note.pitch - 60),
                                                   (float)(currentBpm / juce::jmax(1.0, runtime.projectBpm)));
@@ -1760,12 +1818,30 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
                     const float frac = (float)(wp - (double)s0);
                     const float invF = 1.0f - frac;
 
-                    const float sL = playBuf->getSample(0, s0) * invF
-                                   + playBuf->getSample(0, s1) * frac;
-                    const float sR = (srcCh > 1)
-                                   ? playBuf->getSample(1, s0) * invF
-                                   + playBuf->getSample(1, s1) * frac
-                                   : sL;
+                    float sL = playBuf->getSample(0, s0) * invF
+                             + playBuf->getSample(0, s1) * frac;
+                    float sR = (srcCh > 1)
+                             ? playBuf->getSample(1, s0) * invF
+                             + playBuf->getSample(1, s1) * frac
+                             : sL;
+
+                    // Fade gain envelope
+                    if (inst.fadeInBeats > 0.0f || inst.fadeOutBeats > 0.0f)
+                    {
+                        const float clipBeat = (float)(inst.localBeatAtBlockStart
+                                              + (double)(s - startS) * inst.beatsPerSample);
+                        float gain = 1.0f;
+                        if (inst.fadeInBeats > 0.0f && clipBeat < inst.fadeInBeats)
+                            gain = juce::jlimit(0.0f, 1.0f, clipBeat / inst.fadeInBeats);
+                        if (inst.fadeOutBeats > 0.0f)
+                        {
+                            const float remain = inst.clipLengthBeats - clipBeat;
+                            if (remain < inst.fadeOutBeats)
+                                gain = juce::jmin(gain, juce::jlimit(0.0f, 1.0f, remain / inst.fadeOutBeats));
+                        }
+                        sL *= gain;
+                        sR *= gain;
+                    }
 
                     mixerTrackBufs[0].addSample(0, s, sL);
                     mixerTrackBufs[0].addSample(1, s, sR);

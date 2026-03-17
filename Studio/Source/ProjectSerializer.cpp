@@ -117,6 +117,12 @@ bool ProjectSerializer::save(const Project& project, const juce::File& file)
         clipEl->setAttribute("audioFilePath",  clip.audioFilePath);
         clipEl->setAttribute("pitchSemitone",  (double)clip.pitchSemitone);
         clipEl->setAttribute("audioClipMode",  (int)clip.audioClipMode);
+        clipEl->setAttribute("fadeInBars",          (double)clip.fadeInBars);
+        clipEl->setAttribute("fadeOutBars",         (double)clip.fadeOutBars);
+        clipEl->setAttribute("sourceOffsetSamples",         (double)clip.sourceOffsetSamples);
+        clipEl->setAttribute("originalSourceOffsetSamples",      (double)clip.originalSourceOffsetSamples);
+        clipEl->setAttribute("patternStartOffsetBars",           (double)clip.patternStartOffsetBars);
+        clipEl->setAttribute("originalPatternStartOffsetBars",   (double)clip.originalPatternStartOffsetBars);
     }
 
     // ---- MixerTracks (M5)
@@ -456,6 +462,12 @@ bool ProjectSerializer::load(juce::File& file, Project& projectOut)
             clip.pitchSemitone  = (float)clipEl->getDoubleAttribute("pitchSemitone", 0.0);
             clip.audioClipMode  = (AudioClipMode)juce::jlimit(0, 2,
                                       clipEl->getIntAttribute("audioClipMode", 0));
+            clip.fadeInBars           = (float)clipEl->getDoubleAttribute("fadeInBars",          0.0);
+            clip.fadeOutBars          = (float)clipEl->getDoubleAttribute("fadeOutBars",         0.0);
+            clip.sourceOffsetSamples         = (float)clipEl->getDoubleAttribute("sourceOffsetSamples",         0.0);
+            clip.originalSourceOffsetSamples    = (float)clipEl->getDoubleAttribute("originalSourceOffsetSamples",    0.0);
+            clip.patternStartOffsetBars         = (float)clipEl->getDoubleAttribute("patternStartOffsetBars",         0.0);
+            clip.originalPatternStartOffsetBars = (float)clipEl->getDoubleAttribute("originalPatternStartOffsetBars", 0.0);
             // Mark missing audio files in the clip name
             if (clip.clipType == ClipType::Audio && clip.audioFilePath.isNotEmpty()
                 && !juce::File(clip.audioFilePath).existsAsFile())

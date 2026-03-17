@@ -782,6 +782,52 @@ MainComponent::MainComponent()
         markDirty();
     };
 
+    // Clip fade changed — update model and push runtime
+    playlist.onClipFadeChanged = [this](int clipId, float fadeInBars, float fadeOutBars)
+    {
+        for (auto& c : project.playlistClips)
+        {
+            if (c.id == clipId)
+            {
+                c.fadeInBars  = fadeInBars;
+                c.fadeOutBars = fadeOutBars;
+                break;
+            }
+        }
+        audioEngine.setProject(&project);
+        markDirty();
+    };
+
+    // Pattern slip edit — update patternStartOffsetBars and push runtime
+    playlist.onPatternSlipEdited = [this](int clipId, float /*oldOffset*/, float newOffset)
+    {
+        for (auto& c : project.playlistClips)
+        {
+            if (c.id == clipId)
+            {
+                c.patternStartOffsetBars = newOffset;
+                break;
+            }
+        }
+        audioEngine.setProject(&project);
+        markDirty();
+    };
+
+    // Audio slip edit — update sourceOffsetSamples and push runtime
+    playlist.onClipSlipEdited = [this](int clipId, float /*oldOffset*/, float newOffset)
+    {
+        for (auto& c : project.playlistClips)
+        {
+            if (c.id == clipId)
+            {
+                c.sourceOffsetSamples = newOffset;
+                break;
+            }
+        }
+        audioEngine.setProject(&project);
+        markDirty();
+    };
+
     // Phase 4 — double-click clip → navigate to its pattern
     playlist.onNavigateToPattern = [this](int patternId)
     {

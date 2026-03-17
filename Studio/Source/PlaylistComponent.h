@@ -130,6 +130,15 @@ public:
     std::function<void(int clipId, float oldPitch, float newPitch)>           onClipPitchChanged;
     std::function<void(int clipId, AudioClipMode oldMode, AudioClipMode mode)> onClipModeChanged;
 
+    // Fade changed — called on mouseUp after drag
+    std::function<void(int clipId, float fadeInBars, float fadeOutBars)> onClipFadeChanged;
+
+    // Slip edit — Alt+drag shifts sourceOffsetSamples, called on mouseUp
+    std::function<void(int clipId, float oldOffset, float newOffset)> onClipSlipEdited;
+
+    // Pattern slip edit — Alt+drag shifts patternStartOffsetBars, called on mouseUp
+    std::function<void(int clipId, float oldOffset, float newOffset)> onPatternSlipEdited;
+
     // Returns decoded AudioBuffer for waveform preview (host → AudioEngine)
     std::function<std::shared_ptr<juce::AudioBuffer<float>>(const juce::String& path)> getAudioBuffer;
 
@@ -415,6 +424,20 @@ private:
     int   dragStartMouseX = 0;
     int   dragStartMouseY = 0;
 
+    // Fade drag state
+    int   fadeDraggingClipId = -1;   // -1 = not dragging a fade handle
+    bool  fadeDraggingIn     = true; // true = fade-in handle, false = fade-out
+    float dragStartFade      = 0.0f; // value at drag start (bars)
+
+    // Slip drag state (Alt + drag inside audio clip)
+    int   slipDraggingClipId  = -1;
+    float dragStartOffset     = 0.0f; // sourceOffsetSamples at drag start
+    float dragSamplesPerPixel = 1.0f; // conversion factor for this drag
+
+    // Pattern slip drag state (Alt + drag inside pattern clip)
+    int   patSlipClipId       = -1;
+    float dragStartPatOffset  = 0.0f; // patternStartOffsetBars at drag start
+
     double playheadBar = -1.0;
 
     // Clip clipboard (copy/paste)
@@ -445,6 +468,9 @@ private:
     PlaylistClip* findClipAt(int x, int y);
     bool          isOnRightEdge(const PlaylistClip& clip, int mouseX) const;
     int           trackIndexAt(int mouseY) const;
+
+    // Returns 0=none, 1=fadeIn handle, 2=fadeOut handle
+    int           fadeHandleAt(const PlaylistClip& clip, int mouseX, int mouseY) const;
 
     // Clip operations
     void showContextMenu           (int clipId);
@@ -597,17 +623,21 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
         const int ty = headerHeight + clip.trackIndex * (trackHeight + trackGap) + 3;
         const int h  = trackHeight - 6;
 
-        const bool isAudioClip = (clip.clipType == ClipType::Audio);
-        const bool hasPattern  = !isAudioClip && clip.patternId > 0;
+        const bool isAudioClip  = (clip.clipType == ClipType::Audio);
+        const bool hasPattern   = !isAudioClip && clip.patternId > 0;
+        const bool isSlipTarget = (clip.id == slipDraggingClipId || clip.id == patSlipClipId);
 
         // Audio clips: teal/green tone to distinguish from pattern clips
         const juce::Colour fill = isAudioClip
             ? juce::Colour(0xff2d6b5a)
             : (hasPattern ? palette[(clip.patternId - 1) % paletteSize]
                           : juce::Colour(0xff3a3a46));
-        const juce::Colour border = isAudioClip
-            ? juce::Colour(0xff4db896)
-            : (hasPattern ? fill.brighter(0.4f) : juce::Colour(0xff9090a8));
+        // Slip-editing: bright white-gold outline to signal active slip
+        const juce::Colour border = isSlipTarget
+            ? juce::Colour(0xffffd080)
+            : (isAudioClip
+               ? juce::Colour(0xff4db896)
+               : (hasPattern ? fill.brighter(0.4f) : juce::Colour(0xff9090a8)));
 
         g.setColour(fill.withAlpha(clip.id == draggingClipId ? 0.6f : 0.85f));
         g.fillRoundedRectangle((float)x + 1, (float)ty, (float)w, (float)h, 4.0f);
@@ -678,6 +708,17 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
                                 minArr[i] = wave[i].min;
                             }
 
+                            // Pattern slip offset: shift waveform by patternStartOffsetBars
+                            // patternWidthPx = pixels representing one pattern cycle in the preview
+                            const double patternBarsLocal = (pat != nullptr && pat->stepCount > 0)
+                                ? (double)pat->stepCount / 16.0 : (double)clip.lengthBars;
+                            const float patternWidthPx = (clip.lengthBars > 0.0f)
+                                ? (float)((patternBarsLocal / (double)clip.lengthBars) * (double)wLen)
+                                : (float)wLen;
+                            const float patOffsetPx = (patternWidthPx > 0.0f)
+                                ? (clip.patternStartOffsetBars / (float)patternBarsLocal) * patternWidthPx
+                                : 0.0f;
+
                             // --- Layer 1: halo glow (wide, low alpha, transients only) ---
                             {
                                 juce::Path glowPath;
@@ -685,7 +726,8 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
                                 static constexpr float kStep = 1.0f;  // 1px step for glow
                                 for (float fpx = 0.0f; fpx < (float)previewW; fpx += kStep)
                                 {
-                                    const float sx  = juce::jlimit(0.0f, (float)(wLen - 1), fpx);
+                                    const float rawSx = std::fmod(fpx + patOffsetPx, patternWidthPx);
+                                    const float sx  = juce::jlimit(0.0f, (float)(wLen - 1), rawSx);
                                     const float wMx = lerpL3(maxArr.data(), wLen, sx);
                                     const float wMn = lerpL3(minArr.data(), wLen, sx);
                                     const float amp = (wMx - wMn) * 0.5f;
@@ -713,7 +755,8 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
 
                                 for (float fpx = 0.0f; fpx <= (float)(previewW - 1); fpx += kStep)
                                 {
-                                    const float sx  = juce::jlimit(0.0f, (float)(wLen - 1), fpx);
+                                    const float rawSx = std::fmod(fpx + patOffsetPx, patternWidthPx);
+                                    const float sx  = juce::jlimit(0.0f, (float)(wLen - 1), rawSx);
                                     float wMx = lerpL3(maxArr.data(), wLen, sx);
                                     float wMn = lerpL3(minArr.data(), wLen, sx);
                                     // Clamp to valid range after L3 ringing
@@ -844,10 +887,19 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
                     static constexpr float kStep = 0.5f;
                     const float fwPx = (float)fileWidthPx;
 
+                    // Slip offset: convert sourceOffsetSamples → pixels in file space
+                    const float offsetPx = (fileWidthPx > 0 && getAudioBuffer)
+                        ? [&]() -> float {
+                            auto buf_ = getAudioBuffer(clip.audioFilePath);
+                            if (buf_ == nullptr || buf_->getNumSamples() <= 0) return 0.0f;
+                            return clip.sourceOffsetSamples / (float)buf_->getNumSamples() * fwPx;
+                          }()
+                        : 0.0f;
+
                     for (float fpx = 0.0f; fpx <= (float)(previewW - 1); fpx += kStep)
                     {
-                        // Loop-tile: map clip pixel to file pixel via modulo
-                        const float cx  = std::fmod(fpx, fwPx);
+                        // Loop-tile with slip: shift by offsetPx, then wrap into file width
+                        const float cx  = std::fmod(std::fmod(fpx + offsetPx, fwPx) + fwPx, fwPx);
                         const float sx  = juce::jlimit(0.0f, (float)(wLen - 1), cx);
                         float wMx = lerpL3(maxArr.data(), wLen, sx);
                         float wMn = lerpL3(minArr.data(), wLen, sx);
@@ -905,6 +957,42 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
             }
         }
 
+        // Fade-in / fade-out overlay triangles (all clip types)
+        if (w > 4)
+        {
+            const float fadeInPx  = clip.fadeInBars  * (float)barWidth;
+            const float fadeOutPx = clip.fadeOutBars * (float)barWidth;
+
+            if (fadeInPx > 0.5f)
+            {
+                const float ex = juce::jmin(fadeInPx, (float)w);
+                juce::Path tri;
+                tri.addTriangle((float)x + 1,        (float)ty,
+                                (float)x + 1 + ex,   (float)ty,
+                                (float)x + 1,        (float)(ty + h));
+                g.setColour(juce::Colours::black.withAlpha(0.45f));
+                g.fillPath(tri);
+                // drag handle dot at fade edge, top of clip
+                g.setColour(juce::Colours::white.withAlpha(0.8f));
+                g.fillEllipse((float)x + 1 + ex - 4.0f, (float)ty, 8.0f, 8.0f);
+            }
+
+            if (fadeOutPx > 0.5f)
+            {
+                const float ex = juce::jmin(fadeOutPx, (float)w);
+                const float rx = (float)(x + 1 + w);
+                juce::Path tri;
+                tri.addTriangle(rx,        (float)ty,
+                                rx - ex,   (float)ty,
+                                rx,        (float)(ty + h));
+                g.setColour(juce::Colours::black.withAlpha(0.45f));
+                g.fillPath(tri);
+                // drag handle dot
+                g.setColour(juce::Colours::white.withAlpha(0.8f));
+                g.fillEllipse(rx - ex - 4.0f, (float)ty, 8.0f, 8.0f);
+            }
+        }
+
         juce::String assignedPatternName;
         if (project != nullptr && hasPattern)
         {
@@ -946,6 +1034,57 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
             g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
             g.setColour(juce::Colours::white.withAlpha(0.7f));
             g.drawText(varLetter, x + w - 14, ty + 2, 12, 10, juce::Justification::right);
+        }
+
+        // Pattern slip offset indicator
+        if (!isAudioClip && clip.patternStartOffsetBars != clip.originalPatternStartOffsetBars)
+        {
+            const juce::String offsetLabel = juce::String(clip.patternStartOffsetBars, 2) + " bar";
+            if (clip.id == patSlipClipId)
+            {
+                g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
+                const int lblW = 64, lblH = 13;
+                const int lblX = x + (w - lblW) / 2;
+                const int lblY = ty + h / 2 - lblH / 2;
+                g.setColour(juce::Colour(0xff604020).withAlpha(0.85f));
+                g.fillRoundedRectangle((float)lblX, (float)lblY, (float)lblW, (float)lblH, 3.0f);
+                g.setColour(juce::Colour(0xffffd080));
+                g.drawText(offsetLabel, lblX, lblY, lblW, lblH, juce::Justification::centred);
+            }
+            else if (w > 40)
+            {
+                g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+                g.setColour(juce::Colour(0xffffd080).withAlpha(0.85f));
+                g.drawText(offsetLabel, x + 4, ty + 1, w - 8, 12, juce::Justification::centredRight);
+            }
+        }
+
+        // Audio slip offset indicator: shown during active drag or when offset != original
+        if (isAudioClip && clip.sourceOffsetSamples != clip.originalSourceOffsetSamples)
+        {
+            const double bpmLocal_    = (project != nullptr) ? project->bpm : 120.0;
+            const double spBar_       = 44100.0 * 60.0 / bpmLocal_ * 4.0;
+            const float  offsetBars   = (float)((double)clip.sourceOffsetSamples / spBar_);
+            juce::String offsetLabel  = juce::String(offsetBars, 2) + " bar";
+            if (clip.id == slipDraggingClipId)
+            {
+                // During drag: gold pill badge at clip centre
+                g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
+                const int lblW = 64, lblH = 13;
+                const int lblX = x + (w - lblW) / 2;
+                const int lblY = ty + h / 2 - lblH / 2;
+                g.setColour(juce::Colour(0xff604020).withAlpha(0.85f));
+                g.fillRoundedRectangle((float)lblX, (float)lblY, (float)lblW, (float)lblH, 3.0f);
+                g.setColour(juce::Colour(0xffffd080));
+                g.drawText(offsetLabel, lblX, lblY, lblW, lblH, juce::Justification::centred);
+            }
+            else if (w > 40)
+            {
+                // Idle: small gold text at top-right corner
+                g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+                g.setColour(juce::Colour(0xffffd080).withAlpha(0.85f));
+                g.drawText(offsetLabel, x + 4, ty + 1, w - 8, 12, juce::Justification::centredRight);
+            }
         }
     }
 }
@@ -995,6 +1134,19 @@ inline int PlaylistComponent::trackIndexAt(int mouseY) const
     return juce::jlimit(0, getTrackCount() - 1, t);
 }
 
+inline int PlaylistComponent::fadeHandleAt(const PlaylistClip& clip, int mouseX, int mouseY) const
+{
+    const int cx  = trackHeaderWidth + (int)(clip.startBar    * barWidth);
+    const int cw  = (int)(clip.lengthBars * barWidth) - 2;
+    const int cy  = headerHeight + clip.trackIndex * (trackHeight + trackGap) + 3;
+    const int ch  = trackHeight - 6;
+    // Fade handles occupy the top 8px of the clip, 14px wide at each edge
+    if (mouseY < cy || mouseY > cy + 8) return 0;
+    if (mouseX >= cx     && mouseX <= cx + 14) return 1; // fade-in
+    if (mouseX >= cx + cw - 14 && mouseX <= cx + cw) return 2; // fade-out
+    return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Mouse events
 // ---------------------------------------------------------------------------
@@ -1042,12 +1194,12 @@ inline void PlaylistComponent::mouseDown(const juce::MouseEvent& e)
             m.addSeparator();
 
             juce::PopupMenu autoMenu;
-            autoMenu.addItem(10, "Master Volume  (0–1)");
-            autoMenu.addItem(11, "BPM  (60–200)");
-            autoMenu.addItem(12, "Ch 1 Volume");
-            autoMenu.addItem(13, "Ch 2 Volume");
-            autoMenu.addItem(14, "Ch 3 Volume");
-            m.addSubMenu("Add Automation Lane", autoMenu);
+            autoMenu.addItem(10, juce::String("Master Volume (0-1)"));
+            autoMenu.addItem(11, juce::String("BPM (60-200)"));
+            autoMenu.addItem(12, juce::String("Ch 1 Volume"));
+            autoMenu.addItem(13, juce::String("Ch 2 Volume"));
+            autoMenu.addItem(14, juce::String("Ch 3 Volume"));
+            m.addSubMenu(juce::String("Add Automation Lane"), autoMenu);
 
             m.showMenuAsync(juce::PopupMenu::Options().withMousePosition(),
                 [this, pasteBar, pasteTrack](int r)
@@ -1130,6 +1282,52 @@ inline void PlaylistComponent::mouseDown(const juce::MouseEvent& e)
     }
     dragLaneIdx = -1;
 
+    // Check fade handles first (top edge of audio clips)
+    if (clip != nullptr && !e.mods.isRightButtonDown())
+    {
+        const int fh = fadeHandleAt(*clip, pos.x, pos.y);
+        if (fh != 0)
+        {
+            fadeDraggingClipId = clip->id;
+            fadeDraggingIn     = (fh == 1);
+            dragStartFade      = fadeDraggingIn ? clip->fadeInBars : clip->fadeOutBars;
+            dragStartMouseX    = pos.x;
+            repaint();
+            return;
+        }
+    }
+    fadeDraggingClipId = -1;
+
+    // Alt + left-button drag on pattern clip → pattern slip edit
+    if (clip != nullptr && !e.mods.isRightButtonDown()
+        && e.mods.isAltDown() && clip->clipType == ClipType::Pattern)
+    {
+        patSlipClipId        = clip->id;
+        dragStartPatOffset   = clip->patternStartOffsetBars;
+        dragStartMouseX      = pos.x;
+        setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
+        repaint();
+        return;
+    }
+    patSlipClipId = -1;
+
+    // Alt + left-button drag on audio clip → slip edit
+    if (clip != nullptr && !e.mods.isRightButtonDown()
+        && e.mods.isAltDown() && clip->clipType == ClipType::Audio)
+    {
+        slipDraggingClipId = clip->id;
+        dragStartOffset    = clip->sourceOffsetSamples;
+        dragStartMouseX    = pos.x;
+        // samples per pixel: samplesPerBar / barWidth
+        const double bpmLocal = (project != nullptr) ? project->bpm : 120.0;
+        const double spBar    = 44100.0 * 60.0 / bpmLocal * 4.0;
+        dragSamplesPerPixel   = (float)(spBar / (double)barWidth);
+        setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
+        repaint();
+        return;
+    }
+    slipDraggingClipId = -1;
+
     if (clip != nullptr)
     {
         selectedClipId  = clip->id;
@@ -1165,6 +1363,75 @@ inline void PlaylistComponent::mouseDrag(const juce::MouseEvent& e)
                                (float)(relY - 4) / (float)(autoLaneHeight - 8));
                 repaint();
             }
+        }
+        return;
+    }
+
+    // Fade handle drag
+    if (fadeDraggingClipId >= 0)
+    {
+        if (auto* clip = findClipById(fadeDraggingClipId))
+        {
+            const float deltaX = (float)(e.getPosition().x - dragStartMouseX);
+            const float deltaBars = deltaX / (float)barWidth;
+            const float newFade = juce::jmax(0.0f,
+                fadeDraggingIn ? dragStartFade + deltaBars
+                               : dragStartFade - deltaBars);
+            // Clamp so fade-in + fade-out don't exceed clip length
+            const float maxFade = clip->lengthBars * 0.5f;
+            if (fadeDraggingIn)
+                clip->fadeInBars  = juce::jmin(newFade, maxFade);
+            else
+                clip->fadeOutBars = juce::jmin(newFade, maxFade);
+            repaint();
+        }
+        return;
+    }
+
+    // Pattern slip drag (Alt + drag on pattern clip)
+    if (patSlipClipId >= 0)
+    {
+        if (auto* clip = findClipById(patSlipClipId))
+        {
+            const float deltaBars = (float)(e.getPosition().x - dragStartMouseX) / (float)barWidth;
+            const float rawOffset = dragStartPatOffset + deltaBars;
+
+            float patternBars = 0.0f;
+            if (project != nullptr)
+                for (const auto& p : project->patterns)
+                    if (p.id == clip->patternId) { patternBars = (float)p.stepCount / 16.0f; break; }
+
+            if (patternBars > 0.0f)
+                clip->patternStartOffsetBars = std::fmod(std::fmod(rawOffset, patternBars) + patternBars, patternBars);
+            else
+                clip->patternStartOffsetBars = juce::jmax(0.0f, rawOffset);
+            repaint();
+        }
+        return;
+    }
+
+    // Slip drag (Alt + drag)
+    if (slipDraggingClipId >= 0)
+    {
+        if (auto* clip = findClipById(slipDraggingClipId))
+        {
+            const float deltaX       = (float)(e.getPosition().x - dragStartMouseX);
+            const float deltaOffset  = deltaX * dragSamplesPerPixel;
+            const float rawOffset    = dragStartOffset + deltaOffset;
+
+            // Wrap offset into [0, fileLen) if we have the buffer, else clamp ≥ 0
+            float fileLen = 0.0f;
+            if (getAudioBuffer)
+            {
+                auto buf = getAudioBuffer(clip->audioFilePath);
+                if (buf != nullptr && buf->getNumSamples() > 0)
+                    fileLen = (float)buf->getNumSamples();
+            }
+            if (fileLen > 0.0f)
+                clip->sourceOffsetSamples = std::fmod(std::fmod(rawOffset, fileLen) + fileLen, fileLen);
+            else
+                clip->sourceOffsetSamples = juce::jmax(0.0f, rawOffset);
+            repaint();
         }
         return;
     }
@@ -1218,6 +1485,41 @@ inline void PlaylistComponent::mouseUp(const juce::MouseEvent&)
         }
     }
     draggingClipId = -1;
+
+    // Fade handle drag end
+    if (fadeDraggingClipId >= 0)
+    {
+        if (auto* clip = findClipById(fadeDraggingClipId))
+        {
+            if (onClipFadeChanged)
+                onClipFadeChanged(fadeDraggingClipId, clip->fadeInBars, clip->fadeOutBars);
+        }
+        fadeDraggingClipId = -1;
+    }
+
+    // Pattern slip drag end
+    if (patSlipClipId >= 0)
+    {
+        if (auto* clip = findClipById(patSlipClipId))
+        {
+            if (onPatternSlipEdited && clip->patternStartOffsetBars != dragStartPatOffset)
+                onPatternSlipEdited(patSlipClipId, dragStartPatOffset, clip->patternStartOffsetBars);
+        }
+        patSlipClipId = -1;
+        setMouseCursor(juce::MouseCursor::NormalCursor);
+    }
+
+    // Audio slip drag end
+    if (slipDraggingClipId >= 0)
+    {
+        if (auto* clip = findClipById(slipDraggingClipId))
+        {
+            if (onClipSlipEdited && clip->sourceOffsetSamples != dragStartOffset)
+                onClipSlipEdited(slipDraggingClipId, dragStartOffset, clip->sourceOffsetSamples);
+        }
+        slipDraggingClipId = -1;
+        setMouseCursor(juce::MouseCursor::NormalCursor);
+    }
 }
 
 inline void PlaylistComponent::mouseDoubleClick(const juce::MouseEvent& e)
@@ -1301,6 +1603,18 @@ inline void PlaylistComponent::showContextMenu(int clipId)
         menu.addSubMenu("Variation", varMenu);
     }
 
+    // Reset Slip Offset (type-specific, enabled when offset differs from original)
+    if (clip->clipType == ClipType::Audio)
+    {
+        const bool canReset = (clip->sourceOffsetSamples != clip->originalSourceOffsetSamples);
+        menu.addItem(7, juce::String("Reset Slip Offset"), canReset);
+    }
+    else
+    {
+        const bool canReset = (clip->patternStartOffsetBars != clip->originalPatternStartOffsetBars);
+        menu.addItem(8, juce::String("Reset Pattern Offset"), canReset);
+    }
+
     menu.addSeparator();
     // "Split Here" — only meaningful when the cursor is strictly inside the clip
     const bool canSplit = (contextMenuBar_ > clip->startBar + 0.0625f) &&
@@ -1317,6 +1631,30 @@ inline void PlaylistComponent::showContextMenu(int clipId)
             if (result == 6)
             {
                 showClipPropertiesDialog(clipId);
+            }
+            else if (result == 7)
+            {
+                // Reset audio slip offset to original
+                if (auto* c = findClipById(clipId))
+                {
+                    const float prev = c->sourceOffsetSamples;
+                    c->sourceOffsetSamples = c->originalSourceOffsetSamples;
+                    if (onClipSlipEdited)
+                        onClipSlipEdited(clipId, prev, c->sourceOffsetSamples);
+                    repaint();
+                }
+            }
+            else if (result == 8)
+            {
+                // Reset pattern slip offset to original
+                if (auto* c = findClipById(clipId))
+                {
+                    const float prev = c->patternStartOffsetBars;
+                    c->patternStartOffsetBars = c->originalPatternStartOffsetBars;
+                    if (onPatternSlipEdited)
+                        onPatternSlipEdited(clipId, prev, c->patternStartOffsetBars);
+                    repaint();
+                }
             }
             else if (result == 1)
             {

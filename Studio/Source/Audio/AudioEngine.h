@@ -395,6 +395,13 @@ private:
         double fileReadStart      = 0.0;
         int    fileTotalSamples   = 0;      // = pitchedBuffer (if set) or buffer size
         double pitchRatio         = 1.0;    // 1.0 for Stretch/Elastique (tempo-preserving)
+
+        // Fade envelope parameters — set each block
+        double localBeatAtBlockStart = 0.0; // clip-local beat at startOffsetInBlock
+        double beatsPerSample        = 0.0; // = 1.0 / samplesPerBeat
+        float  fadeInBeats           = 0.0f;
+        float  fadeOutBeats          = 0.0f;
+        float  clipLengthBeats       = 0.0f;
     };
 
     mutable juce::SpinLock                                         audioClipLock_;
