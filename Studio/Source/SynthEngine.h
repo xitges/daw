@@ -502,6 +502,7 @@ public:
                 int voiceSlot = 0, float outputGain = 1.0f, float outputPan = 0.0f, int mixerTrack = 0)
     {
         useSamplerSource_ = false;  // reset to waveform mode; noteOnSampler re-enables
+        isPreviewVoice_   = false;  // reset; setAsPreviewVoice() opts in explicitly
         samplerSrc_.reset();
         beginResidualFade();
         noteOnFadeRemaining_ = kNoteOnFadeSamples;
@@ -674,6 +675,10 @@ public:
     bool isActive()  const { return envState_ != Env::Idle; }
     bool isRenderable() const { return envState_ != Env::Idle || residualFadeRemaining_ > 0; }
     int  getPitch()  const { return pitch_; }
+
+    // Preview-voice ownership — used by killPreviewVoices() in PolySynth.
+    void setAsPreviewVoice()       { isPreviewVoice_ = true; }
+    bool isPreviewVoice()    const { return isPreviewVoice_; }
     int  getMixerTrack() const { return mixerTrack_; }
     float getStealPriority() const
     {
@@ -1083,6 +1088,10 @@ private:
     bool  useSamplerSource_ = false;
     float samplerGain_      = 1.0f;
 
+    // Preview voice tag — set when triggered via editor Test Sound.
+    // Allows killPreviewVoices() to target only editor-audition voices.
+    bool  isPreviewVoice_   = false;
+
     void beginResidualFade()
     {
         if (std::abs(lastOutputL_) > 1.0e-5f || std::abs(lastOutputR_) > 1.0e-5f)
@@ -1249,6 +1258,7 @@ public:
         }
 
         voices_[voiceIdx].noteOn(pitch, velocity, sr, p, noteLenSamples, voiceIdx, outputGain, outputPan, mixerTrack);
+        lastUsedVoice_ = voiceIdx;
     }
 
     void noteOnSampler(int pitch, float velocity, double sr,
@@ -1285,6 +1295,7 @@ public:
         voices_[voiceIdx].noteOnSampler(pitch, velocity, sr, p, sp,
                                         std::move(bufOwner), noteLenSamples,
                                         voiceIdx, outputGain, outputPan, mixerTrack);
+        lastUsedVoice_ = voiceIdx;
     }
 
     void noteOff(int pitch)
@@ -1299,6 +1310,34 @@ public:
         for (auto& v : voices_)
             v.kill();
     }
+
+    // ---- Preview-voice management ------------------------------------------
+    // Tags the most recently allocated voice as an editor-preview voice.
+    // Call immediately after noteOn() / noteOnSampler() in preview paths only.
+    void markLastVoiceAsPreview()
+    {
+        if (lastUsedVoice_ >= 0 && lastUsedVoice_ < kNumVoices)
+            voices_[lastUsedVoice_].setAsPreviewVoice();
+    }
+
+    // Kill all voices that were tagged as preview.  Transport playback voices
+    // (isPreviewVoice_ == false) are unaffected.
+    void killPreviewVoices()
+    {
+        for (auto& v : voices_)
+            if (v.isPreviewVoice())
+                v.kill();
+    }
+
+    // True if any preview-tagged voice is still rendering (including release tails).
+    bool hasActivePreviewVoice() const
+    {
+        for (const auto& v : voices_)
+            if (v.isPreviewVoice() && v.isRenderable())
+                return true;
+        return false;
+    }
+    // -------------------------------------------------------------------------
 
     bool isAnyActive() const
     {
@@ -1382,7 +1421,8 @@ public:
     void reset()
     {
         for (auto& v : voices_) v = SynthVoice{};
-        stealIdx_ = 0;
+        stealIdx_      = 0;
+        lastUsedVoice_ = -1;
         lastBlockOutL_ = 0.0f;
         lastBlockOutR_ = 0.0f;
         lastTrackOutL_.fill(0.0f);
@@ -1393,7 +1433,8 @@ public:
 
 private:
     std::array<SynthVoice, kNumVoices> voices_;
-    int stealIdx_ = 0;
+    int stealIdx_     = 0;
+    int lastUsedVoice_ = -1;  // index of most recently allocated voice; -1 = none
     float lastBlockOutL_ = 0.0f;
     float lastBlockOutR_ = 0.0f;
     std::array<float, 8> lastTrackOutL_ {};

@@ -16,7 +16,8 @@
 // ---------------------------------------------------------------------------
 // Content panel
 // ---------------------------------------------------------------------------
-class SynthEditorContent : public juce::Component
+class SynthEditorContent : public juce::Component,
+                           private juce::Timer
 {
 public:
     struct WaveformPreview : public juce::Component
@@ -207,6 +208,8 @@ public:
 
     std::function<void()> onParamsChanged;
     std::function<void(const SynthParams&, int)> onPreviewRequested;
+    std::function<void()>      onStopPreviewRequested;   // stop editor preview immediately
+    std::function<bool()>      onIsPreviewActive;        // true while preview voice is rendering
     std::function<void(const SynthParams&)> onSavePresetRequested;
     std::function<void(const juce::String&)> onRenamePresetRequested;
     std::function<void(const juce::String&)> onDeletePresetRequested;
@@ -315,15 +318,28 @@ public:
         testNoteBox.setColour(juce::ComboBox::outlineColourId,    juce::Colour(0xff3498db).withAlpha(0.6f));
         addAndMakeVisible(testNoteBox);
 
-        testBtn.setButtonText("Test Sound");
-        testBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff204a87));
-        testBtn.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff3498db));
         testBtn.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
         testBtn.onClick = [this]
         {
-            if (onPreviewRequested)
-                onPreviewRequested(makeCurrentParams(), getSelectedPreviewMidiNote());
+            if (previewPlaying_)
+            {
+                // User wants to stop the current preview
+                if (onStopPreviewRequested) onStopPreviewRequested();
+                previewPlaying_ = false;
+                stopTimer();
+                updateTestButtonAppearance();
+            }
+            else
+            {
+                // Trigger preview and begin polling for natural end
+                if (onPreviewRequested)
+                    onPreviewRequested(makeCurrentParams(), getSelectedPreviewMidiNote());
+                previewPlaying_ = true;
+                startTimer(80);  // poll every 80 ms to detect when voice finishes naturally
+                updateTestButtonAppearance();
+            }
         };
+        updateTestButtonAppearance();
         addAndMakeVisible(testBtn);
 
         // ---- Enable toggle -----------------------------------------------
@@ -1027,6 +1043,38 @@ private:
         if (onParamsChanged) onParamsChanged();
     }
 
+    // Updates Test Sound button text and colour to reflect preview state.
+    void updateTestButtonAppearance()
+    {
+        if (previewPlaying_)
+        {
+            testBtn.setButtonText("Stop Preview");
+            testBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff8b2020));
+            testBtn.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xffcc3333));
+        }
+        else
+        {
+            testBtn.setButtonText("Test Sound");
+            testBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff204a87));
+            testBtn.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff3498db));
+        }
+    }
+
+    // Timer polling — auto-resets the button when the preview voice finishes naturally.
+    void timerCallback() override
+    {
+        if (!previewPlaying_) { stopTimer(); return; }
+
+        // Ask the engine if the voice is still alive
+        const bool stillActive = onIsPreviewActive ? onIsPreviewActive() : false;
+        if (!stillActive)
+        {
+            previewPlaying_ = false;
+            stopTimer();
+            updateTestButtonAppearance();
+        }
+    }
+
     juce::String getSelectedPresetName() const
     {
         const int idx = presetBox.getSelectedId() - 1;
@@ -1138,6 +1186,7 @@ private:
 
     ChannelSourceType currentSourceType_    = ChannelSourceType::Synth;
     SamplerParams     currentSamplerParams_ = {};
+    bool              previewPlaying_       = false;  // true while editor preview is active
 
     // Sampler waveform preview — set by MainComponent after loading the sample buffer.
     std::shared_ptr<const juce::AudioBuffer<float>> samplerPreviewBuffer_;
@@ -1168,6 +1217,8 @@ class SynthEditorPanel : public juce::Component
 public:
     std::function<void()>                            onParamsChanged;
     std::function<void(const SynthParams&, int)>     onPreviewRequested;
+    std::function<void()>                            onStopPreviewRequested;
+    std::function<bool()>                            onIsPreviewActive;
     std::function<void(const SynthParams&)>          onSavePresetRequested;
     std::function<void(const juce::String&)>         onRenamePresetRequested;
     std::function<void(const juce::String&)>         onDeletePresetRequested;
@@ -1179,6 +1230,8 @@ public:
         // std::function value at call time — assigned later by MainComponent.
         content_.onParamsChanged         = [this] { if (onParamsChanged)         onParamsChanged(); };
         content_.onPreviewRequested      = [this](const SynthParams& p, int n)   { if (onPreviewRequested)      onPreviewRequested(p, n); };
+        content_.onStopPreviewRequested  = [this]                                { if (onStopPreviewRequested)  onStopPreviewRequested(); };
+        content_.onIsPreviewActive       = [this]() -> bool                      { return onIsPreviewActive ? onIsPreviewActive() : false; };
         content_.onSavePresetRequested   = [this](const SynthParams& p)          { if (onSavePresetRequested)   onSavePresetRequested(p); };
         content_.onRenamePresetRequested = [this](const juce::String& s)         { if (onRenamePresetRequested) onRenamePresetRequested(s); };
         content_.onDeletePresetRequested = [this](const juce::String& s)         { if (onDeletePresetRequested) onDeletePresetRequested(s); };

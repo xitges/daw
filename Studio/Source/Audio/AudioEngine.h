@@ -170,6 +170,13 @@ public:
     // M13 — trigger a synth note directly (used by piano key preview for melodic synth channels)
     void previewSynthNote(int ch, int midiPitch, const SynthParams& p);
 
+    // Stop editor preview voices immediately on channel ch.
+    // Only kills voices tagged as preview — transport playback is unaffected.
+    void stopEditorPreview(int ch);
+
+    // True if any preview-tagged voice on ch is still rendering (including release tails).
+    bool isEditorPreviewActive(int ch) const;
+
     // Snapshot — rebuild the PlaybackSnapshot from the active pattern.
     // Call on the message thread whenever pattern data changes.
     void updatePatternSnapshot();

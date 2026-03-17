@@ -1124,6 +1124,14 @@ MainComponent::MainComponent()
         {
             audioEngine.previewSynthNote(ch, midiPitch, params);
         };
+        synthEditorWindow->panel.onStopPreviewRequested = [this, ch]
+        {
+            audioEngine.stopEditorPreview(ch);
+        };
+        synthEditorWindow->panel.onIsPreviewActive = [this, ch]() -> bool
+        {
+            return audioEngine.isEditorPreviewActive(ch);
+        };
         synthEditorWindow->panel.onSavePresetRequested = [this](const SynthParams& params)
         {
             auto dialog = std::make_shared<juce::AlertWindow>("Save Synth Preset",

@@ -691,6 +691,7 @@ void AudioEngine::previewSynthNote(int ch, int midiPitch, const SynthParams& p)
             polySynths[(size_t)ch].noteOnSampler(midiPitch, 0.8f, sampleRate,
                                                  noteParams, snap.samplerParams[(size_t)ch],
                                                  std::move(buf), noteLenSamples);
+            polySynths[(size_t)ch].markLastVoiceAsPreview();
             return;
         }
         // No buffer loaded — fall through to synth only if synth is also enabled.
@@ -699,6 +700,19 @@ void AudioEngine::previewSynthNote(int ch, int midiPitch, const SynthParams& p)
 
     const auto noteParams = makeNoteSynthParams(p, midiPitch, 0.8f, noteLenSamples);
     polySynths[(size_t)ch].noteOn(midiPitch, 0.8f, sampleRate, noteParams, noteLenSamples);
+    polySynths[(size_t)ch].markLastVoiceAsPreview();
+}
+
+void AudioEngine::stopEditorPreview(int ch)
+{
+    if (ch < 0 || ch >= 16) return;
+    polySynths[(size_t)ch].killPreviewVoices();
+}
+
+bool AudioEngine::isEditorPreviewActive(int ch) const
+{
+    if (ch < 0 || ch >= 16) return false;
+    return polySynths[(size_t)ch].hasActivePreviewVoice();
 }
 
 // ---- M5 — Mixer track controls ------------------------------------------
