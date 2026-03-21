@@ -200,7 +200,7 @@ private:
     }
 
     //--------------------------------------------------------------------------
-    juce::AbstractFifo fifo_ { 0 };
+    juce::AbstractFifo fifo_ { 1 };   // resized in startRecording()
     std::vector<float> fifoBuffer_;
     std::unique_ptr<juce::AudioFormatWriter> writer_;
     std::atomic<bool>  recording_ { false };
