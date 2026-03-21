@@ -13,6 +13,7 @@
       <FILE id="PSer01" name="ProjectSerializer.h" compile="0" resource="0" file="Source/ProjectSerializer.h"/>
       <FILE id="PSer02" name="ProjectSerializer.cpp" compile="1" resource="0" file="Source/ProjectSerializer.cpp"/>
       <GROUP id="{B250E479-C067-930A-5CB3-146F1368C278}" name="Audio">
+        <FILE id="ARec01" name="AudioRecorder.h" compile="0" resource="0" file="Source/Audio/AudioRecorder.h"/>
         <FILE id="LYtVJ3" name="AudioEngine.cpp" compile="1" resource="0" file="Source/Audio/AudioEngine.cpp"/>
         <FILE id="Jwt7Sb" name="AudioEngine.h" compile="0" resource="0" file="Source/Audio/AudioEngine.h"/>
         <FILE id="fJVcpn" name="SamplePlayer.cpp" compile="1" resource="0"
@@ -65,7 +66,8 @@
   </MODULES>
   <JUCEOPTIONS JUCE_STRICT_REFCOUNTEDPOINTER="1" JUCE_PLUGINHOST_AU="1" JUCE_PLUGINHOST_VST3="1"/>
   <EXPORTFORMATS>
-    <XCODE_MAC targetFolder="Builds/MacOSX">
+    <XCODE_MAC targetFolder="Builds/MacOSX" microphonePermissionNeeded="1"
+              microphonePermissionsText="XitgeS needs microphone access to record audio.">
       <CONFIGURATIONS>
         <CONFIGURATION isDebug="1" name="Debug" targetName="XitgeS" headerPath="$(SOURCE_ROOT)/Source $(SOURCE_ROOT)/Source/Audio /opt/homebrew/include" libraryPath="/opt/homebrew/lib" extraLinkerFlags="-lrubberband -F/System/Library/PrivateFrameworks -framework MultitouchSupport"/>
         <CONFIGURATION isDebug="0" name="Release" targetName="XitgeS" headerPath="$(SOURCE_ROOT)/Source $(SOURCE_ROOT)/Source/Audio /opt/homebrew/include" libraryPath="/opt/homebrew/lib" extraLinkerFlags="-lrubberband -F/System/Library/PrivateFrameworks -framework MultitouchSupport"/>

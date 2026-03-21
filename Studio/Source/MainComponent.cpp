@@ -162,17 +162,89 @@ MainComponent::MainComponent()
         audioEngine.setBPM(project.bpm);
         audioEngine.setPlayMode(toolbar.getPlayMode());
         audioEngine.play();
+
+        // Start recording if armed
+        if (audioEngine.isRecordArmed())
+        {
+            // Build recording file path
+            juce::File recDir;
+            if (currentFile.existsAsFile())
+                recDir = currentFile.getParentDirectory().getChildFile("Recordings");
+            else
+                recDir = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+                             .getChildFile("Studio").getChildFile("Recordings");
+            recDir.createDirectory();
+
+            auto now = juce::Time::getCurrentTime();
+            auto filename = "Recording_" + now.formatted("%Y%m%d_%H%M%S") + ".wav";
+            auto recFile = recDir.getChildFile(filename);
+
+            if (audioEngine.startRecording(recFile))
+                toolbar.setRecordingActive(true);
+        }
     };
 
     toolbar.onStop = [this]
     {
         pausedBarSong = -1.0;   // toolbar stop = reset to beginning
+
+        // Stop recording first (before stopping transport)
+        if (audioEngine.isRecording())
+        {
+            audioEngine.stopRecording();
+            toolbar.setRecordingActive(false);
+        }
+
         audioEngine.stop();
         audioEngine.allSynthNotesOff();
         channelRack.setPlaybackStep(-1);
         playlist.setPlayheadBar(-1.0);
         if (pianoRollWindow != nullptr)
             pianoRollWindow->content.pianoRoll.setPlayheadBeat(-1.0);
+    };
+
+    toolbar.onRecordToggled = [this](bool armed)
+    {
+        audioEngine.setRecordArmed(armed);
+    };
+
+    // When recording finishes, auto-create an audio clip in the playlist
+    audioEngine.onRecordingFinished = [this](const juce::File& recordedFile,
+                                             double startBar, double lengthBars)
+    {
+        if (!recordedFile.existsAsFile() || lengthBars <= 0.0)
+            return;
+
+        // Find next available clip ID
+        int maxId = 0;
+        for (const auto& c : project.playlistClips)
+            if (c.id > maxId) maxId = c.id;
+
+        PlaylistClip clip;
+        clip.id            = maxId + 1;
+        clip.clipType      = ClipType::Audio;
+        clip.audioFilePath = recordedFile.getFullPathName();
+        clip.name          = recordedFile.getFileNameWithoutExtension();
+        clip.startBar      = (float)startBar;
+        clip.lengthBars    = (float)lengthBars;
+        clip.trackIndex    = 0;   // place on first track
+
+        project.playlistClips.push_back(clip);
+        audioEngine.loadAudioClip(clip.id, recordedFile, clip.lengthBars);
+        audioEngine.refreshSongCacheAsync();
+
+        // Refresh playlist UI (PlaylistComponent reads project.playlistClips directly)
+        playlist.repaint();
+        markDirty();
+
+        // Disarm record after successful recording
+        audioEngine.setRecordArmed(false);
+        toolbar.setRecordingActive(false);
+    };
+
+    toolbar.onInputMonitoringToggled = [this](bool on)
+    {
+        audioEngine.setInputMonitoring(on);
     };
 
     toolbar.onBPMChanged = [this](double bpm)
@@ -2703,6 +2775,13 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
             if (pianoRollWindow != nullptr)
                 pianoRollWindow->content.pianoRoll.setRecording(false);
 
+            // Stop recording on any pause/stop via Space
+            if (audioEngine.isRecording())
+            {
+                audioEngine.stopRecording();
+                toolbar.setRecordingActive(false);
+            }
+
             if (doubleSpace)
             {
                 // Double-Space: stop and return to beginning (no auto-play)
@@ -2838,11 +2917,18 @@ void MainComponent::resized()
 
 void MainComponent::timerCallback()
 {
-    if (!audioEngine.isPlaying()) return;
+    // --- Input level metering (always active) ---
+    toolbar.setInputLevels(audioEngine.getInputLevelL(), audioEngine.getInputLevelR());
 
-    //const double bpm = project.bpm > 0.0 ? project.bpm : 70.0;
-    const double bpm = audioEngine.getBPM();
-    const double sr  = audioEngine.getSampleRate();
+    // --- Recording elapsed time ---
+    if (audioEngine.isRecording())
+    {
+        const double sr = audioEngine.getSampleRate();
+        if (sr > 0.0)
+            toolbar.setRecordingElapsed((double)audioEngine.getRecordingSamplesWritten() / sr);
+    }
+
+    if (!audioEngine.isPlaying()) return;
 
     if (toolbar.getPlayMode() == PlayMode::Song)
     {

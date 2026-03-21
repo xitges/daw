@@ -168,7 +168,7 @@ void AudioEngine::rebuildRuntimeStateFromProject()
 
 void AudioEngine::initialise()
 {
-    auto err = deviceManager.initialiseWithDefaultDevices(0, 2);
+    auto err = deviceManager.initialiseWithDefaultDevices(2, 2);
     if (err.isNotEmpty())
         DBG("AudioDeviceManager error: " << err);
 
@@ -232,6 +232,67 @@ void AudioEngine::stop()
             cacheLoader_->signalThreadShouldExit();
     }
     resetAudioClipTriggers();
+}
+
+// --- Recording ----------------------------------------------------------
+
+bool AudioEngine::startRecording(const juce::File& outputFile)
+{
+    recordStartBar_ = songBeatPosition_.load(std::memory_order_relaxed) / 4.0;
+    return recorder_.startRecording(outputFile, sampleRate, 2);
+}
+
+juce::File AudioEngine::stopRecording()
+{
+    if (!recorder_.isRecording())
+        return {};
+
+    const double endBar = songBeatPosition_.load(std::memory_order_relaxed) / 4.0;
+    const double lengthBars = juce::jmax(0.0, endBar - recordStartBar_);
+    const double startBar = recordStartBar_;
+
+    recorder_.stopRecording();
+    auto file = recorder_.getRecordedFile();
+
+    if (onRecordingFinished && file.existsAsFile())
+    {
+        juce::MessageManager::callAsync([this, file, startBar, lengthBars]
+        {
+            if (onRecordingFinished)
+                onRecordingFinished(file, startBar, lengthBars);
+        });
+    }
+
+    return file;
+}
+
+juce::File AudioEngine::getRecordingDirectory() const
+{
+    // If a project file is set, store recordings next to it
+    if (project != nullptr)
+    {
+        const auto& clips = project->playlistClips;
+        // Look for any existing audio clip to infer project location
+        for (const auto& clip : clips)
+        {
+            if (clip.clipType == ClipType::Audio && clip.audioFilePath.isNotEmpty())
+            {
+                juce::File f(clip.audioFilePath);
+                if (f.existsAsFile())
+                {
+                    auto dir = f.getParentDirectory().getChildFile("Recordings");
+                    dir.createDirectory();
+                    return dir;
+                }
+            }
+        }
+    }
+
+    // Fallback: ~/Documents/Studio/Recordings/
+    auto dir = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+                   .getChildFile("Studio").getChildFile("Recordings");
+    dir.createDirectory();
+    return dir;
 }
 
 // --- Audio clip management (Stage 1) ------------------------------------
@@ -1175,8 +1236,8 @@ void AudioEngine::handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMe
 // ---- Audio callbacks ---------------------------------------------------
 
 void AudioEngine::audioDeviceIOCallbackWithContext(
-    const float* const*,
-    int,
+    const float* const* inputChannelData,
+    int numInputChannels,
     float* const* outputChannelData,
     int numOutputChannels,
     int numSamples,
@@ -1185,6 +1246,44 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     juce::AudioBuffer<float> buffer(outputChannelData, numOutputChannels, numSamples);
     buffer.clear();
     scheduledSampleTriggers_.clear();
+
+    // --- Recording: push input into lock-free FIFO ---
+    if (recorder_.isRecording() && inputChannelData != nullptr && numInputChannels > 0)
+        recorder_.writeBlock(inputChannelData, numInputChannels, numSamples);
+
+    // --- Input monitoring: mix input directly to output ---
+    if (inputMonitoring_.load(std::memory_order_relaxed)
+        && inputChannelData != nullptr && numInputChannels > 0)
+    {
+        const int chToCopy = juce::jmin(numInputChannels, numOutputChannels);
+        for (int c = 0; c < chToCopy; ++c)
+            buffer.addFrom(c, 0, inputChannelData[c], numSamples);
+    }
+
+    // --- Input level metering (peak detection for UI) ---
+    if (inputChannelData != nullptr && numInputChannels > 0)
+    {
+        float peakL = 0.0f, peakR = 0.0f;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float absL = std::abs(inputChannelData[0][i]);
+            if (absL > peakL) peakL = absL;
+        }
+        if (numInputChannels > 1)
+        {
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float absR = std::abs(inputChannelData[1][i]);
+                if (absR > peakR) peakR = absR;
+            }
+        }
+        else
+        {
+            peakR = peakL;
+        }
+        inputLevelL_.store(peakL, std::memory_order_relaxed);
+        inputLevelR_.store(peakR, std::memory_order_relaxed);
+    }
 
     // M8 — clear per-channel plugin MIDI buffers at the start of each block
     for (auto& mb : instrumentMidiBuffers)

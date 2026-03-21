@@ -15,7 +15,8 @@
 class ToolbarComponent : public juce::Component,
                          public juce::Button::Listener,
                          public juce::Slider::Listener,
-                         public juce::ComboBox::Listener
+                         public juce::ComboBox::Listener,
+                         public juce::Timer
 {
 public:
     ToolbarComponent();
@@ -26,6 +27,7 @@ public:
     void buttonClicked(juce::Button*) override;
     void sliderValueChanged(juce::Slider*) override;
     void comboBoxChanged(juce::ComboBox*) override;
+    void timerCallback() override;
 
     bool     isPlaying()   const { return playing; }
     PlayMode getPlayMode() const { return playMode; }
@@ -86,6 +88,20 @@ public:
     // Trackpad multitouch controller toggle
     std::function<void()>  onToggleTrackpad;
 
+    // Recording
+    std::function<void(bool armed)> onRecordToggled;
+    std::function<void(bool on)>    onInputMonitoringToggled;
+
+    // Set recording state (for visual feedback)
+    void setRecordingActive(bool active);
+    bool isRecordArmed() const { return recordArmed_; }
+
+    // Input level metering — call from MainComponent timer
+    void setInputLevels(float levelL, float levelR);
+
+    // Recording elapsed time — call from MainComponent timer
+    void setRecordingElapsed(double seconds);
+
 private:
     // Row 1 — transport
     juce::TextButton playButton   { "Play" };
@@ -126,7 +142,19 @@ private:
     // Trackpad multitouch button
     juce::TextButton trackpadBtn      { "Touch" };
 
-    bool     playing  = false;
+    // Input monitoring button
+    juce::TextButton monitorBtn       { "Mon" };
+
+    // Recording elapsed time label
+    juce::Label      recTimeLabel;
+
+    bool     playing     = false;
+    bool     recordArmed_ = false;
+    bool     recordingActive_ = false;
+    int      blinkCounter_ = 0;        // for armed state blinking
+    float    inputLevelL_ = 0.0f;
+    float    inputLevelR_ = 0.0f;
+    double   recElapsedSec_ = 0.0;
     PlayMode playMode = PlayMode::Pattern;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ToolbarComponent)

@@ -12,6 +12,7 @@
 #include <JuceHeader.h>
 #include "../ProjectModel.h"
 // RubberBand is included only in AudioEngine.cpp — not needed in the header
+#include "AudioRecorder.h"
 #include "SamplePlayer.h"
 #include "Sequencer.h"
 #include "../SynthEngine.h"
@@ -250,6 +251,32 @@ public:
     //          Song mode should pass the last clip end bar).
     // Returns true on success.
     bool renderToFile(const juce::File& outputFile, PlayMode mode, int numBars);
+
+    // --- Recording -----------------------------------------------------------
+    void setRecordArmed(bool armed)  { recordArmed_.store(armed, std::memory_order_relaxed); }
+    bool isRecordArmed() const       { return recordArmed_.load(std::memory_order_relaxed); }
+    bool isRecording()   const       { return recorder_.isRecording(); }
+
+    void setInputMonitoring(bool on) { inputMonitoring_.store(on, std::memory_order_relaxed); }
+    bool isInputMonitoring() const   { return inputMonitoring_.load(std::memory_order_relaxed); }
+
+    /** Start recording to file.  Call from message thread (usually in play()). */
+    bool startRecording(const juce::File& outputFile);
+    /** Stop recording and return the recorded file. */
+    juce::File stopRecording();
+
+    /** Get the recording output directory (creates it if needed). */
+    juce::File getRecordingDirectory() const;
+
+    /** Total frames written so far (for elapsed-time display). */
+    juce::int64 getRecordingSamplesWritten() const { return recorder_.getTotalSamplesWritten(); }
+
+    /** Fired on message thread when recording stops (carries the recorded file). */
+    std::function<void(const juce::File& recordedFile, double startBar, double lengthBars)> onRecordingFinished;
+
+    /** Input level (peak) for metering — updated on audio thread, read on message thread. */
+    float getInputLevelL() const { return inputLevelL_.load(std::memory_order_relaxed); }
+    float getInputLevelR() const { return inputLevelR_.load(std::memory_order_relaxed); }
 
     // Dynamic EQ accessors (call on message thread; processBlock runs on audio thread)
     DynamicEQProcessor& getTrackDynEQ (int t)  { return trackDynEQs_[(size_t)juce::jlimit(0,7,t)]; }
@@ -584,6 +611,14 @@ private:
     float                            masterInputTrim_ = 1.0f;
     float                            masterGlueEnvelope_ = 0.0f;
     juce::Random                     stepParamRng_;   // for per-step probability (audio thread)
+
+    // --- Recording ---
+    AudioRecorder recorder_;
+    std::atomic<bool> recordArmed_     { false };
+    std::atomic<bool> inputMonitoring_ { false };
+    double recordStartBar_ = 0.0;   // song beat position when recording began
+    std::atomic<float> inputLevelL_ { 0.0f };
+    std::atomic<float> inputLevelR_ { 0.0f };
 
     // M8 — VST/AU instrument plugin hosting
     // Lock held by message thread (ScopedLock) on load/unload,

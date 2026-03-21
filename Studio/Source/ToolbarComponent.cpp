@@ -18,13 +18,23 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(recordButton);
     playButton.addListener(this);
     stopButton.addListener(this);
-    recordButton.addListener(this);
 
     playButton  .setColour(juce::TextButton::buttonColourId, juce::Colour(0xffb0b0b8));
     playButton  .setColour(juce::TextButton::textColourOffId, juce::Colour(0xff000000));
     stopButton  .setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3c));
-    recordButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffff453a));
-    recordButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffffffff));
+    recordButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3c));
+    recordButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffff453a));
+    recordButton.setClickingTogglesState(true);
+    recordButton.onClick = [this]
+    {
+        recordArmed_ = recordButton.getToggleState();
+        // Update button colour based on arm state
+        recordButton.setColour(juce::TextButton::buttonColourId,
+            recordArmed_ ? juce::Colour(0xffff453a) : juce::Colour(0xff3a3a3c));
+        recordButton.setColour(juce::TextButton::textColourOffId,
+            recordArmed_ ? juce::Colour(0xffffffff) : juce::Colour(0xffff453a));
+        if (onRecordToggled) onRecordToggled(recordArmed_);
+    };
 
     // ---- Row 1: Play mode combo
     addAndMakeVisible(playModeBox);
@@ -145,9 +155,95 @@ ToolbarComponent::ToolbarComponent()
     trackpadBtn.setClickingTogglesState(true);
     trackpadBtn.onClick = [this] { if (onToggleTrackpad) onToggleTrackpad(); };
 
+    // ---- Input monitoring button
+    addAndMakeVisible(monitorBtn);
+    monitorBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff323232));
+    monitorBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff888888));
+    monitorBtn.setClickingTogglesState(true);
+    monitorBtn.onClick = [this]
+    {
+        const bool on = monitorBtn.getToggleState();
+        monitorBtn.setColour(juce::TextButton::buttonColourId,
+            on ? juce::Colour(0xff1a5a1a) : juce::Colour(0xff323232));
+        monitorBtn.setColour(juce::TextButton::textColourOffId,
+            on ? juce::Colour(0xff44ff44) : juce::Colour(0xff888888));
+        if (onInputMonitoringToggled) onInputMonitoringToggled(on);
+    };
+
+    // ---- Recording elapsed time label (hidden by default)
+    addAndMakeVisible(recTimeLabel);
+    recTimeLabel.setText("", juce::dontSendNotification);
+    recTimeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffff453a));
+    recTimeLabel.setFont(juce::Font(juce::FontOptions().withHeight(12.0f).withStyle("Bold")));
+    recTimeLabel.setJustificationType(juce::Justification::centredLeft);
+
+    // Start timer for blinking and level meter updates
+    startTimerHz(15);
 }
 
 ToolbarComponent::~ToolbarComponent() {}
+
+void ToolbarComponent::setRecordingActive(bool active)
+{
+    recordingActive_ = active;
+    blinkCounter_ = 0;
+    if (!active)
+    {
+        // Restore arm state appearance
+        const bool armed = recordButton.getToggleState();
+        recordButton.setColour(juce::TextButton::buttonColourId,
+            armed ? juce::Colour(0xffff453a) : juce::Colour(0xff3a3a3c));
+        recordButton.setColour(juce::TextButton::textColourOffId,
+            armed ? juce::Colour(0xffffffff) : juce::Colour(0xffff453a));
+        recordButton.setButtonText("Rec");
+        recTimeLabel.setText("", juce::dontSendNotification);
+        recElapsedSec_ = 0.0;
+    }
+}
+
+void ToolbarComponent::setInputLevels(float levelL, float levelR)
+{
+    inputLevelL_ = levelL;
+    inputLevelR_ = levelR;
+}
+
+void ToolbarComponent::setRecordingElapsed(double seconds)
+{
+    recElapsedSec_ = seconds;
+}
+
+void ToolbarComponent::timerCallback()
+{
+    ++blinkCounter_;
+
+    if (recordingActive_)
+    {
+        // Solid red with pulsing brightness
+        const bool bright = (blinkCounter_ % 15) < 10;  // ~67% on
+        recordButton.setColour(juce::TextButton::buttonColourId,
+            bright ? juce::Colour(0xffcc0000) : juce::Colour(0xff880000));
+        recordButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffffffff));
+        recordButton.setButtonText("REC");
+
+        // Update elapsed time
+        const int mins = (int)(recElapsedSec_ / 60.0);
+        const int secs = (int)(recElapsedSec_) % 60;
+        recTimeLabel.setText(juce::String::formatted("%d:%02d", mins, secs),
+                            juce::dontSendNotification);
+    }
+    else if (recordArmed_)
+    {
+        // Blink between red and dark when armed (waiting for play)
+        const bool on = (blinkCounter_ % 10) < 5;  // ~50% duty cycle
+        recordButton.setColour(juce::TextButton::buttonColourId,
+            on ? juce::Colour(0xffff453a) : juce::Colour(0xff3a3a3c));
+        recordButton.setColour(juce::TextButton::textColourOffId,
+            on ? juce::Colour(0xffffffff) : juce::Colour(0xffff453a));
+    }
+
+    // Repaint input level meter area
+    repaint(recordButton.getRight(), 4, 80, 32);
+}
 
 // ---------------------------------------------------------------------------
 
@@ -180,9 +276,41 @@ void ToolbarComponent::paint(juce::Graphics& g)
     g.setColour(juce::Colours::white.withAlpha(0.07f));
     g.drawLine(0.0f, 40.0f, (float)getWidth(), 40.0f, 1.0f);
 
-    // Bottom border — green accent line
+    // Bottom border — accent line
     g.setColour(juce::Colour(0xffb0b0b8).withAlpha(0.5f));
     g.fillRect(0.0f, (float)(getHeight() - 2), (float)getWidth(), 2.0f);
+
+    // --- Input level meter (stereo, drawn after Rec button) ---
+    if (monitorBtn.getToggleState() || recordArmed_ || recordingActive_)
+    {
+        const int meterX = recordButton.getRight() + 4;
+        const int meterY = 10;
+        const int meterW = 50;
+        const int meterH = 8;   // each bar height
+        const int gap = 4;
+
+        auto drawMeter = [&](int y, float level)
+        {
+            // Background
+            g.setColour(juce::Colour(0xff1a1a1a));
+            g.fillRoundedRectangle((float)meterX, (float)y, (float)meterW, (float)meterH, 2.0f);
+
+            // Level bar
+            const float w = juce::jmin(level, 1.0f) * (float)meterW;
+            if (w > 0.0f)
+            {
+                // Green → yellow → red gradient based on level
+                juce::Colour col = level < 0.7f ? juce::Colour(0xff44cc44)
+                                 : level < 0.9f ? juce::Colour(0xffcccc00)
+                                 :                 juce::Colour(0xffff4444);
+                g.setColour(col);
+                g.fillRoundedRectangle((float)meterX, (float)y, w, (float)meterH, 2.0f);
+            }
+        };
+
+        drawMeter(meterY, inputLevelL_);
+        drawMeter(meterY + meterH + gap, inputLevelR_);
+    }
 }
 
 void ToolbarComponent::resized()
@@ -194,7 +322,11 @@ void ToolbarComponent::resized()
         playButton  .setBounds(row.removeFromLeft(44).reduced(2));
         stopButton  .setBounds(row.removeFromLeft(44).reduced(2));
         recordButton.setBounds(row.removeFromLeft(44).reduced(2));
-        row.removeFromLeft(12);
+        row.removeFromLeft(54);   // space for input level meter
+        recTimeLabel.setBounds(row.removeFromLeft(40).reduced(2));
+        row.removeFromLeft(4);
+        monitorBtn  .setBounds(row.removeFromLeft(40).reduced(2));
+        row.removeFromLeft(8);
 
         playModeBox.setBounds(row.removeFromLeft(90).reduced(2));
         row.removeFromLeft(12);
