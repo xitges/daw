@@ -1631,6 +1631,28 @@ MainComponent::MainComponent()
                 audioEngine.triggerLaunchpadPad(padIdx);
             };
 
+            launchpadWindow->panel.onPadStopped = [this](int padIdx)
+            {
+                audioEngine.stopLaunchpadPad(padIdx);
+            };
+
+            launchpadWindow->panel.onStopAll = [this]()
+            {
+                audioEngine.stopAllLaunchpadPads();
+            };
+
+            launchpadWindow->panel.onDefaultsLoaded = [this]()
+            {
+                for (int i = 0; i < 64; ++i)
+                {
+                    const auto& pad = project.launchpadPads[(size_t)i];
+                    if (pad.filePath.isNotEmpty())
+                        audioEngine.loadLaunchpadSample(i, juce::File(pad.filePath));
+                    else
+                        audioEngine.unloadLaunchpadSample(i);
+                }
+            };
+
             // Sample dropped / assigned → load into audio engine
             launchpadWindow->panel.onSampleDropped = [this](int padIdx, juce::File file)
             {
@@ -1783,7 +1805,15 @@ MainComponent::MainComponent()
             trackpadController.onPadEvent = [this](int padIdx, float /*velocity*/, bool isNoteOn)
             {
                 if (isNoteOn)
+                {
                     audioEngine.triggerLaunchpadPad(padIdx);
+                }
+                else
+                {
+                    if (padIdx >= 0 && padIdx < 64
+                        && project.launchpadPads[(size_t)padIdx].playMode == PadPlayMode::Gate)
+                        audioEngine.stopLaunchpadPad(padIdx);
+                }
             };
             trackpadController.start();
         }

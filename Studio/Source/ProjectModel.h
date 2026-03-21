@@ -15,6 +15,7 @@
 enum class PlayMode    { Pattern, Song };
 enum class ChannelType { Drum, Melodic };
 enum class ScaleType   { Major, Minor };
+enum class PadPlayMode { OneShot, Loop, Gate };
 inline constexpr int kMaxPatternSteps = 128;
 
 struct KeySignature
@@ -585,8 +586,9 @@ namespace SynthPresets
 struct LaunchpadPad
 {
     juce::String filePath;   // empty = not assigned
-    float        volume = 0.8f;
-    float        pitch  = 0.0f;   // semitones offset
+    float        volume   = 0.8f;
+    float        pitch    = 0.0f;   // semitones offset
+    PadPlayMode  playMode = PadPlayMode::OneShot;
 };
 
 // M8 — VST/AU instrument plugin slot per channel

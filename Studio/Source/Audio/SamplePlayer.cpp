@@ -53,6 +53,18 @@ void SamplePlayer::triggerAt(int offsetInBuffer)
     triggered = true;
 }
 
+void SamplePlayer::stop()
+{
+    if (playPosition >= 0.0)
+    {
+        residualTailL = lastOutputL;
+        residualTailR = lastOutputR;
+        residualFadeRemaining = kResidualFadeSamples;
+    }
+    playPosition = -1.0;
+    looping_ = false;
+}
+
 void SamplePlayer::prepare(double sr, int)
 {
     playerSampleRate = sr;
@@ -159,20 +171,28 @@ void SamplePlayer::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             continue;
         }
 
-        const int pos0 = (int)playPosition;
+        int pos0 = (int)playPosition;
         if (pos0 >= srcSamples)
         {
-            // Drain smoothed values to avoid stale state on next trigger
-            smoothVolume_.skip(safeSamples - i);
-            smoothPan_.skip(safeSamples - i);
-            playPosition = -1.0;
-            startOffset_ = 0;
-            outputBuffer.addSample(0, i, mixedL);
-            if (outChannels > 1)
-                outputBuffer.addSample(1, i, mixedR);
-            lastOutputL = mixedL;
-            lastOutputR = mixedR;
-            continue;
+            if (looping_)
+            {
+                playPosition = std::fmod(playPosition, (double)srcSamples);
+                pos0 = (int)playPosition;
+            }
+            else
+            {
+                // Drain smoothed values to avoid stale state on next trigger
+                smoothVolume_.skip(safeSamples - i);
+                smoothPan_.skip(safeSamples - i);
+                playPosition = -1.0;
+                startOffset_ = 0;
+                outputBuffer.addSample(0, i, mixedL);
+                if (outChannels > 1)
+                    outputBuffer.addSample(1, i, mixedR);
+                lastOutputL = mixedL;
+                lastOutputR = mixedR;
+                continue;
+            }
         }
 
         // Per-sample smoothed volume and pan (constant-power law)

@@ -19,6 +19,9 @@ public:
     void loadFile(const juce::File& file);
     void trigger();
     void triggerAt(int offsetInBuffer);   // sample-accurate trigger (audio thread only)
+    void stop();                          // immediate stop with residual fade
+    void setLooping(bool loop) { looping_ = loop; }
+    bool isPlaying() const     { return playPosition >= 0.0; }
     void prepare(double sampleRate, int bufferSize);
     void reset();
     void renderNextBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples);
@@ -125,6 +128,7 @@ private:
     bool muted = false;
     int  mixerTrack_ = 0;
 
+    bool looping_ = false;
     std::atomic<bool> triggered { false };
     int triggerOffset_ = 0;   // set by triggerAt(), consumed in renderNextBlock (audio thread only)
     int startOffset_   = 0;   // active start-offset for the current render block

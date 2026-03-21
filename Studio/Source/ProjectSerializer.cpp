@@ -218,6 +218,8 @@ bool ProjectSerializer::save(const Project& project, const juce::File& file)
             padEl->setAttribute("file",   pad.filePath);
             padEl->setAttribute("volume", (double)pad.volume);
             padEl->setAttribute("pitch",  (double)pad.pitch);
+            if (pad.playMode != PadPlayMode::OneShot)
+                padEl->setAttribute("playMode", (int)pad.playMode);
         }
     }
 
@@ -652,6 +654,8 @@ bool ProjectSerializer::load(juce::File& file, Project& projectOut)
                 (float)padEl->getDoubleAttribute("volume", 0.8);
             loaded.launchpadPads[(size_t)i].pitch =
                 (float)padEl->getDoubleAttribute("pitch",  0.0);
+            loaded.launchpadPads[(size_t)i].playMode =
+                static_cast<PadPlayMode>(padEl->getIntAttribute("playMode", 0));
         }
     }
 

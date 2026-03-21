@@ -528,12 +528,34 @@ void AudioEngine::updatePatternSnapshot()
 void AudioEngine::triggerLaunchpadPad(int padIdx)
 {
     if (padIdx < 0 || padIdx >= 64) return;
+    auto& player = launchpadPlayers[(size_t)padIdx];
     if (project != nullptr)
     {
-        launchpadPlayers[(size_t)padIdx].setVolume(project->launchpadPads[(size_t)padIdx].volume);
-        launchpadPlayers[(size_t)padIdx].setPitch (project->launchpadPads[(size_t)padIdx].pitch);
+        const auto& pad = project->launchpadPads[(size_t)padIdx];
+        player.setVolume(pad.volume);
+        player.setPitch(pad.pitch);
+
+        const bool loop = (pad.playMode == PadPlayMode::Loop);
+        if (loop && player.isPlaying())
+        {
+            player.stop();
+            return;
+        }
+        player.setLooping(loop);
     }
-    launchpadPlayers[(size_t)padIdx].trigger();
+    player.trigger();
+}
+
+void AudioEngine::stopLaunchpadPad(int padIdx)
+{
+    if (padIdx < 0 || padIdx >= 64) return;
+    launchpadPlayers[(size_t)padIdx].stop();
+}
+
+void AudioEngine::stopAllLaunchpadPads()
+{
+    for (auto& lp : launchpadPlayers)
+        lp.stop();
 }
 
 void AudioEngine::loadLaunchpadSample(int padIdx, const juce::File& file)

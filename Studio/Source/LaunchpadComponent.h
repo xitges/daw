@@ -53,6 +53,11 @@ public:
         loadDefaultBtn.onClick = [this] { loadDefaultPads(); };
         addAndMakeVisible(loadDefaultBtn);
 
+        stopAllBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff8b2020));
+        stopAllBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+        stopAllBtn.onClick = [this] { if (onStopAll) onStopAll(); };
+        addAndMakeVisible(stopAllBtn);
+
         statusLabel.setColour(juce::Label::textColourId, juce::Colour(0xff888888));
         statusLabel.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
         statusLabel.setText("Drop samples onto pads", juce::dontSendNotification);
@@ -130,6 +135,9 @@ public:
 
     // Callbacks set by MainComponent
     std::function<void(int padIdx)>                                      onPadTriggered;
+    std::function<void(int padIdx)>                                      onPadStopped;
+    std::function<void()>                                                onStopAll;
+    std::function<void()>                                                onDefaultsLoaded;
     std::function<void(int padIdx, juce::File)>                          onSampleDropped;
     std::function<void(const std::vector<RecordedHit>&, int numBars)>    onConvertToPattern;
     std::function<double()>                                              getBPM;
@@ -169,6 +177,7 @@ private:
     juce::TextButton convertBtn   { "> Pattern" };
     juce::TextButton saveDefaultBtn { "Save Default" };
     juce::TextButton loadDefaultBtn { "Load Default" };
+    juce::TextButton stopAllBtn     { "Stop All" };
     juce::ComboBox   barsBox;
     juce::Label      statusLabel;
 
@@ -197,8 +206,11 @@ private:
         auto* s = getSettings();
         if (s == nullptr) return;
         for (int i = 0; i < kPads; ++i)
-            s->setValue("launchpadDefault" + juce::String(i),
-                        project->launchpadPads[(size_t)i].filePath);
+        {
+            const auto& pad = project->launchpadPads[(size_t)i];
+            s->setValue("launchpadDefault" + juce::String(i), pad.filePath);
+            s->setValue("launchpadDefaultMode" + juce::String(i), (int)pad.playMode);
+        }
         s->save();
         statusLabel.setText("Default saved!", juce::dontSendNotification);
     }
@@ -209,9 +221,14 @@ private:
         auto* s = getSettings();
         if (s == nullptr) return;
         for (int i = 0; i < kPads; ++i)
+        {
             project->launchpadPads[(size_t)i].filePath =
                 s->getValue("launchpadDefault" + juce::String(i), {});
+            project->launchpadPads[(size_t)i].playMode =
+                static_cast<PadPlayMode>(s->getIntValue("launchpadDefaultMode" + juce::String(i), 0));
+        }
         repaint();
+        if (onDefaultsLoaded) onDefaultsLoaded();
         statusLabel.setText("Defaults loaded!", juce::dontSendNotification);
     }
 
@@ -265,6 +282,11 @@ private:
 
         if (onPadTriggered) onPadTriggered(idx);
         repaint();
+    }
+
+    void stopPad(int idx)
+    {
+        if (onPadStopped) onPadStopped(idx);
     }
 
     void onRecButtonClicked()
@@ -329,6 +351,8 @@ inline void LaunchpadPanel::resized()
     saveDefaultBtn .setBounds(bar.removeFromLeft(84).reduced(1));
     bar.removeFromLeft(4);
     loadDefaultBtn .setBounds(bar.removeFromLeft(84).reduced(1));
+    bar.removeFromLeft(4);
+    stopAllBtn     .setBounds(bar.removeFromLeft(64).reduced(1));
     bar.removeFromLeft(6);
     statusLabel    .setBounds(bar);
 }
@@ -412,6 +436,17 @@ inline void LaunchpadPanel::paint(juce::Graphics& g)
                              juce::Justification::centred, 1);
         }
 
+        // Play mode indicator (bottom-right corner)
+        if (hasFile && project->launchpadPads[(size_t)i].playMode != PadPlayMode::OneShot)
+        {
+            const auto mode = project->launchpadPads[(size_t)i].playMode;
+            const juce::String ml = (mode == PadPlayMode::Loop) ? "L" : "G";
+            g.setColour(juce::Colours::white.withAlpha(0.55f));
+            g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+            g.drawText(ml, (int)b.getRight() - 14, (int)b.getBottom() - 13, 11, 11,
+                       juce::Justification::centredRight);
+        }
+
         // Keyboard shortcut label (top-left, pads 0-31)
         const juce::String kl = keyLabelForPad(i);
         if (kl.isNotEmpty())
@@ -479,6 +514,14 @@ inline void LaunchpadPanel::showContextMenu(int padIdx)
     {
         menu.addSeparator();
         menu.addItem(2, "Clear");
+
+        // Play mode submenu
+        const auto currentMode = project->launchpadPads[(size_t)padIdx].playMode;
+        juce::PopupMenu modeMenu;
+        modeMenu.addItem(10, "One-Shot", true, currentMode == PadPlayMode::OneShot);
+        modeMenu.addItem(11, "Loop",     true, currentMode == PadPlayMode::Loop);
+        modeMenu.addItem(12, "Gate",     true, currentMode == PadPlayMode::Gate);
+        menu.addSubMenu("Play Mode", modeMenu);
     }
 
     menu.showMenuAsync(juce::PopupMenu::Options().withMousePosition(),
@@ -507,6 +550,12 @@ inline void LaunchpadPanel::showContextMenu(int padIdx)
             {
                 if (project != nullptr)
                     project->launchpadPads[(size_t)padIdx].filePath = {};
+                repaint();
+            }
+            else if (result >= 10 && result <= 12 && project != nullptr)
+            {
+                project->launchpadPads[(size_t)padIdx].playMode =
+                    static_cast<PadPlayMode>(result - 10);
                 repaint();
             }
         });
