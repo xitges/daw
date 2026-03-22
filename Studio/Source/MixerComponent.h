@@ -25,6 +25,7 @@ public:
     std::function<void(float)>                  onMasterPanChanged;
     std::function<void(int track)>              onFXButtonClicked;    // M14
     std::function<void(int track)>              onEQButtonClicked;    // DynEQ (0-7=tracks, 8=master)
+    std::function<void(int track)>              onAutoTuneButtonClicked; // Auto-Tune
 
     MixerComponent()
     {
@@ -90,6 +91,7 @@ private:
     std::unique_ptr<juce::TextButton> muteBtns  [numTracks + 1];
     std::unique_ptr<juce::TextButton> soloBtns  [numTracks + 1];
     std::unique_ptr<juce::TextButton> fxBtns    [numTracks];     // M14 FX open button
+    std::unique_ptr<juce::TextButton> atBtns    [numTracks];     // Auto-Tune button
     std::unique_ptr<juce::TextButton> eqBtns    [numTracks + 1]; // DynEQ (inserts + master)
     std::unique_ptr<juce::Label>      routeLabel[numTracks];     // "ch: 0,8" info
 
@@ -171,6 +173,13 @@ private:
             };
             addAndMakeVisible(*fxBtns[t]);
 
+            // Auto-Tune button
+            atBtns[t] = std::make_unique<juce::TextButton>("AT");
+            atBtns[t]->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a2a4a));
+            atBtns[t]->setColour(juce::TextButton::textColourOnId, juce::Colour(0xffbb88ff));
+            atBtns[t]->onClick = [this, t] { if (onAutoTuneButtonClicked) onAutoTuneButtonClicked(t); };
+            addAndMakeVisible(*atBtns[t]);
+
             // Dynamic EQ button
             eqBtns[t] = std::make_unique<juce::TextButton>("EQ");
             eqBtns[t]->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a2a4a));
@@ -209,6 +218,9 @@ private:
         // FX button row (M14)
         if (!isMaster && fxBtns[t])
             fxBtns[t]->setBounds(area.removeFromBottom(18).reduced(1, 0));
+        // Auto-Tune button
+        if (!isMaster && atBtns[t])
+            atBtns[t]->setBounds(area.removeFromBottom(18).reduced(1, 0));
         const auto btnRow = area.removeFromBottom(22);
         if (!isMaster && muteBtns[t] && soloBtns[t])
         {

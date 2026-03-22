@@ -206,6 +206,27 @@ bool ProjectSerializer::save(const Project& project, const juce::File& file)
         fEl->setAttribute("reverbWidth",    (double)fp.reverbWidth);
     }
 
+    // ---- AutoTune per track (sparse — only write if enabled or non-default)
+    {
+        auto* atEl = root.createNewChildElement("AutoTune");
+        for (int t = 0; t < 8; ++t)
+        {
+            const auto& at = project.autoTuneParams[(size_t)t];
+            if (!at.enabled && at.keyTonic == 0 && at.scaleType == 0
+                && at.retuneSpeed == 0.0f && at.mix == 1.0f && at.formantPreserve)
+                continue; // all defaults — skip
+
+            auto* tEl = atEl->createNewChildElement("Track");
+            tEl->setAttribute("i",               t);
+            tEl->setAttribute("enabled",         at.enabled ? 1 : 0);
+            tEl->setAttribute("keyTonic",        at.keyTonic);
+            tEl->setAttribute("scaleType",       at.scaleType);
+            tEl->setAttribute("retuneSpeed",     (double)at.retuneSpeed);
+            tEl->setAttribute("mix",             (double)at.mix);
+            tEl->setAttribute("formantPreserve", at.formantPreserve ? 1 : 0);
+        }
+    }
+
     // ---- Launchpad pad assignments
     auto* lpEl = root.createNewChildElement("Launchpad");
     for (int i = 0; i < 64; ++i)
@@ -638,6 +659,23 @@ bool ProjectSerializer::load(juce::File& file, Project& projectOut)
             fp.reverbDamp     = (float)fEl->getDoubleAttribute("reverbDamp",    0.5);
             fp.reverbWet      = (float)fEl->getDoubleAttribute("reverbWet",     0.25);
             fp.reverbWidth    = (float)fEl->getDoubleAttribute("reverbWidth",   1.0);
+        }
+    }
+
+    // ---- AutoTune per track
+    if (auto* atEl = xml->getChildByName("AutoTune"))
+    {
+        for (auto* tEl : atEl->getChildIterator())
+        {
+            const int t = tEl->getIntAttribute("i", -1);
+            if (t < 0 || t >= 8) continue;
+            auto& at            = loaded.autoTuneParams[(size_t)t];
+            at.enabled          = tEl->getIntAttribute("enabled", 0) != 0;
+            at.keyTonic         = tEl->getIntAttribute("keyTonic", 0);
+            at.scaleType        = tEl->getIntAttribute("scaleType", 0);
+            at.retuneSpeed      = (float)tEl->getDoubleAttribute("retuneSpeed", 0.0);
+            at.mix              = (float)tEl->getDoubleAttribute("mix", 1.0);
+            at.formantPreserve  = tEl->getIntAttribute("formantPreserve", 1) != 0;
         }
     }
 

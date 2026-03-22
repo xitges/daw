@@ -1675,6 +1675,31 @@ MainComponent::MainComponent()
         fxEditorWindow->toFront(true);
     };
 
+    // Auto-Tune editor
+    mixer.onAutoTuneButtonClicked = [this](int t)
+    {
+        autoTuneEditorTrack = t;
+
+        if (autoTuneEditorWindow == nullptr)
+        {
+            autoTuneEditorWindow = std::make_unique<AutoTuneEditorWindow>();
+            autoTuneEditorWindow->centreWithSize(360, 380);
+        }
+
+        autoTuneEditorWindow->setTrackName("Track " + juce::String(t + 1));
+        autoTuneEditorWindow->panel.loadParams(project.autoTuneParams[(size_t)t]);
+
+        autoTuneEditorWindow->panel.onParamsChanged = [this, t]
+        {
+            autoTuneEditorWindow->panel.applyToParams(project.autoTuneParams[(size_t)t]);
+            audioEngine.rebuildRuntimeStateFromProject();
+            markDirty();
+        };
+
+        autoTuneEditorWindow->setVisible(true);
+        autoTuneEditorWindow->toFront(true);
+    };
+
     // Dynamic EQ windows (0-7 = track, 8 = master)
     mixer.onEQButtonClicked = [this](int t)
     {
@@ -1919,6 +1944,7 @@ MainComponent::~MainComponent()
     for (auto& w : dynEQWindows)        w.reset();
     pluginBrowserWindow.reset();
     audioDeviceWindow.reset();
+    autoTuneEditorWindow.reset();
     fxEditorWindow.reset();
     synthEditorWindow.reset();
     pianoRollWindow.reset();
@@ -2935,6 +2961,15 @@ void MainComponent::timerCallback()
         const double sr = audioEngine.getSampleRate();
         if (sr > 0.0)
             toolbar.setRecordingElapsed((double)audioEngine.getRecordingSamplesWritten() / sr);
+    }
+
+    // --- Auto-Tune pitch display ---
+    if (autoTuneEditorWindow != nullptr && autoTuneEditorWindow->isVisible()
+        && autoTuneEditorTrack >= 0 && autoTuneEditorTrack < 8)
+    {
+        const auto& proc = audioEngine.getAutoTuneProcessor(autoTuneEditorTrack);
+        autoTuneEditorWindow->panel.setDetectedPitch(proc.getDetectedPitchHz(),
+                                                      proc.getTargetPitchHz());
     }
 
     if (!audioEngine.isPlaying()) return;

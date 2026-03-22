@@ -19,6 +19,7 @@
 #include "../FXProcessor.h"
 #include "../PluginManager.h"
 #include "../DynamicEQProcessor.h"
+#include "../AutoTuneProcessor.h"
 
 // Snapshot of active-pattern data for lock-free audio thread access.
 // Built on the message thread; read-only on the audio thread.
@@ -282,6 +283,10 @@ public:
     DynamicEQProcessor& getTrackDynEQ (int t)  { return trackDynEQs_[(size_t)juce::jlimit(0,7,t)]; }
     DynamicEQProcessor& getMasterDynEQ()        { return masterDynEQ_; }
 
+    // Auto-Tune accessor (for UI pitch metering)
+    const AutoTuneProcessor& getAutoTuneProcessor(int t) const
+    { return autoTuneProcessors_[(size_t)juce::jlimit(0, 7, t)]; }
+
     // M8 — VST/AU instrument plugins
     // loadPlugin: creates + prepares the plugin instance (call on message thread).
     // getPlugin:  returns the raw pointer for editor creation (message thread only).
@@ -309,6 +314,7 @@ private:
         float  masterVolume = 1.0f;
         float  masterPan    = 0.0f;
         std::array<FXParams, 8> fxParams = {};
+        std::array<AutoTuneParams, 8> autoTuneParams = {};
         std::array<MixerTrack, 8> mixerTracks = {};
         std::vector<Pattern> patterns;
         std::vector<PlaylistClip> playlistClips;
@@ -474,6 +480,7 @@ private:
     std::array<SampleVoicePool, 16> sampleVoicePools;
     std::array<PolySynth, 16>   polySynths;       // M13
     std::array<FXChain, 8>      fxChains;         // M14
+    std::array<AutoTuneProcessor, 8> autoTuneProcessors_; // Auto-Tune per track
     std::array<SamplePlayer, 64> launchpadPlayers; // Launchpad one-shot players
     SamplePlayer browserPreviewPlayer;              // M15 — dedicated browser preview
 

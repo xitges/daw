@@ -148,8 +148,9 @@ void AudioEngine::rebuildRuntimeStateFromProject()
         state.projectBpm   = project->bpm;
         state.masterVolume = project->masterVolume;
         state.masterPan    = project->masterPan;
-        state.fxParams     = project->fxParams;
-        state.patterns     = project->patterns;
+        state.fxParams       = project->fxParams;
+        state.autoTuneParams = project->autoTuneParams;
+        state.patterns       = project->patterns;
         state.playlistClips = project->playlistClips;
         state.automationLanes = project->automationLanes;
 
@@ -644,6 +645,8 @@ void AudioEngine::allSynthNotesOff()
         ps.allNotesOff();
     for (auto& fx : fxChains)
         fx.reset();
+    for (auto& at : autoTuneProcessors_)
+        at.reset();
 }
 
 void AudioEngine::clearTransientPlaybackState()
@@ -655,6 +658,8 @@ void AudioEngine::clearTransientPlaybackState()
         synth.reset();
     for (auto& fx : fxChains)
         fx.reset();
+    for (auto& at : autoTuneProcessors_)
+        at.reset();
     for (auto& lp : launchpadPlayers)
         lp.reset();
     browserPreviewPlayer.reset();
@@ -1432,6 +1437,7 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     // M13/M14 — prepare synths and FX chains
     for (auto& s : polySynths) s.prepare(sampleRate, bufferSize);
     for (auto& fx : fxChains)  fx.prepare(sampleRate, bufferSize);
+    for (auto& at : autoTuneProcessors_) at.prepare(sampleRate, bufferSize);
 
     // Launchpad players
     for (auto& lp : launchpadPlayers) lp.prepare(sampleRate, bufferSize);
@@ -1472,6 +1478,7 @@ void AudioEngine::audioDeviceStopped()
     for (auto& pool : sampleVoicePools) pool.reset();
     for (auto& s : polySynths)         s.reset();
     for (auto& fx : fxChains)          fx.reset();
+    for (auto& at : autoTuneProcessors_) at.reset();
     for (auto& lp : launchpadPlayers)  lp.reset();
     resetMixProcessingState();
 
@@ -2150,6 +2157,17 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
         trackInputTrim_[(size_t)t] = smoothingTowards(trackInputTrim_[(size_t)t], targetTrim, 0.18f);
         mixerTrackBufs[(size_t)t].applyGain(trackInputTrim_[(size_t)t]);
 
+        // Auto-Tune insert (pre-FX for cleanest pitch detection)
+        {
+            const AutoTuneParams& atp = runtime.autoTuneParams[(size_t)t];
+            if (atp.enabled)
+            {
+                float* atL = mixerTrackBufs[(size_t)t].getWritePointer(0);
+                float* atR = mixerTrackBufs[(size_t)t].getWritePointer(1);
+                autoTuneProcessors_[(size_t)t].processBlock(atL, atR, safe, atp);
+            }
+        }
+
         const FXParams& fp = runtime.fxParams[(size_t)t];
         fxChains[(size_t)t].processBlock(mixerTrackBufs[(size_t)t], safe, fp, bpm.load(std::memory_order_relaxed));
 
@@ -2370,6 +2388,7 @@ bool AudioEngine::renderToFile(const juce::File& outputFile, PlayMode mode, int 
     for (auto& pool : sampleVoicePools) pool.reset();
     for (auto& s : polySynths) s.reset();
     for (auto& fx : fxChains)  fx.reset();
+    for (auto& at : autoTuneProcessors_) at.reset();
 
     // Set up playback state for offline pass
     const double samplesPerBar = (sampleRate * 60.0 / bpm.load(std::memory_order_relaxed)) * 4.0;

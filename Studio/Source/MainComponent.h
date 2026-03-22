@@ -11,6 +11,7 @@
 #include "MixerComponent.h"
 #include "SynthEditorComponent.h"
 #include "FXEditorComponent.h"
+#include "AutoTuneEditorComponent.h"
 #include "LaunchpadComponent.h"
 #include "SampleBrowserComponent.h"
 #include "PluginBrowserComponent.h"
@@ -61,6 +62,8 @@ private:
     // M13/M14 — floating synth + FX editors
     std::unique_ptr<SynthEditorWindow> synthEditorWindow;
     std::unique_ptr<FXEditorWindow>    fxEditorWindow;
+    std::unique_ptr<AutoTuneEditorWindow> autoTuneEditorWindow;
+    int autoTuneEditorTrack = -1;
     int synthEditorChannel = -1;
     int fxEditorTrack      = -1;
 

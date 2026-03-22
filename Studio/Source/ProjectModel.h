@@ -620,6 +620,17 @@ struct FXParams
     float reverbWidth   = 1.0f;     // 0.0 – 1.0
 };
 
+// Auto-Tune — real-time pitch correction (hyper-pop / T-Pain style)
+struct AutoTuneParams
+{
+    bool  enabled         = false;
+    int   keyTonic        = 0;       // 0=C, 1=C#, … 11=B
+    int   scaleType       = 0;       // 0=Major, 1=Minor (maps to ScaleType)
+    float retuneSpeed     = 0.0f;    // 0.0 = instant (robotic), 1.0 = slow/natural
+    float mix             = 1.0f;    // 0.0 = dry, 1.0 = fully corrected
+    bool  formantPreserve = true;    // preserve vocal formants
+};
+
 // M5 — one strip in the mixer
 struct MixerTrack
 {
@@ -785,6 +796,9 @@ struct Project
 
     // M14 — per-mixer-track FX params
     std::array<FXParams, 8> fxParams = {};
+
+    // Auto-Tune — per-mixer-track pitch correction
+    std::array<AutoTuneParams, 8> autoTuneParams = {};
 
     // Launchpad — 8×8 pad assignments
     std::array<LaunchpadPad, 64> launchpadPads = {};

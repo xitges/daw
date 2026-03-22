@@ -44,6 +44,10 @@
       <FILE id="FXP001" name="FXProcessor.h" compile="0" resource="0" file="Source/FXProcessor.h"/>
       <FILE id="SynE01" name="SynthEditorComponent.h" compile="0" resource="0" file="Source/SynthEditorComponent.h"/>
       <FILE id="FXE001" name="FXEditorComponent.h" compile="0" resource="0" file="Source/FXEditorComponent.h"/>
+      <FILE id="PD0001" name="PitchDetector.h" compile="0" resource="0" file="Source/PitchDetector.h"/>
+      <FILE id="ATP001" name="AutoTuneProcessor.h" compile="0" resource="0" file="Source/AutoTuneProcessor.h"/>
+      <FILE id="ATP002" name="AutoTuneProcessor.cpp" compile="1" resource="0" file="Source/AutoTuneProcessor.cpp"/>
+      <FILE id="ATE001" name="AutoTuneEditorComponent.h" compile="0" resource="0" file="Source/AutoTuneEditorComponent.h"/>
       <FILE id="PMgr01" name="PluginManager.h" compile="0" resource="0" file="Source/PluginManager.h"/>
       <FILE id="PMgr02" name="PluginManager.cpp" compile="1" resource="0" file="Source/PluginManager.cpp"/>
       <FILE id="PBrw01" name="PluginBrowserComponent.h" compile="0" resource="0" file="Source/PluginBrowserComponent.h"/>
