@@ -265,6 +265,9 @@ void ToolbarComponent::paint(juce::Graphics& g)
 
         auto drawMeter = [&](int y, float level)
         {
+            if (std::isnan(level) || std::isinf(level) || level < 0.0f)
+                level = 0.0f;
+
             g.setColour(juce::Colour(0xff1a1a1a));
             g.fillRoundedRectangle((float)meterX, (float)y, (float)meterW, (float)meterH, 2.0f);
 

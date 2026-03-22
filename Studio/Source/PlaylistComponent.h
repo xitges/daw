@@ -648,9 +648,12 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
         if (clip.trackIndex < 0 || clip.trackIndex >= tc) continue;
 
         const int x  = trackHeaderWidth + (int)(clip.startBar  * barWidth);
-        const int w  = (int)(clip.lengthBars * barWidth) - 2;
+        const int w  = juce::jmin((int)(clip.lengthBars * barWidth) - 2, getWidth() * 4);
         const int ty = headerHeight + clip.trackIndex * (trackHeight + trackGap) + 3;
         const int h  = trackHeight - 6;
+
+        // Skip clips entirely outside visible area
+        if (x + w < 0 || x > getWidth()) continue;
 
         const bool isAudioClip  = (clip.clipType == ClipType::Audio);
         const bool hasPattern   = !isAudioClip && clip.patternId > 0;
@@ -1140,10 +1143,10 @@ inline PlaylistClip* PlaylistComponent::findClipAt(int x, int y)
     {
         if (clip.trackIndex < 0 || clip.trackIndex >= tc) continue;
         const int cx = trackHeaderWidth + (int)(clip.startBar   * barWidth);
-        const int cw = (int)(clip.lengthBars * barWidth) - 2;
+        const int cw = juce::jmin((int)(clip.lengthBars * barWidth) - 2, getWidth() * 4);
         const int cy = headerHeight + clip.trackIndex * (trackHeight + trackGap) + 3;
         const int ch = trackHeight - 6;
-        if (juce::Rectangle<int>(cx, cy, cw, ch).contains(x, y))
+        if (cw > 0 && juce::Rectangle<int>(cx, cy, cw, ch).contains(x, y))
             return &clip;
     }
     return nullptr;
@@ -1151,7 +1154,9 @@ inline PlaylistClip* PlaylistComponent::findClipAt(int x, int y)
 
 inline bool PlaylistComponent::isOnRightEdge(const PlaylistClip& clip, int mouseX) const
 {
-    const int rightEdge = trackHeaderWidth + (int)((clip.startBar + clip.lengthBars) * barWidth);
+    const float rawRight = (clip.startBar + clip.lengthBars) * barWidth;
+    if (rawRight > 1e8f) return false;
+    const int rightEdge = trackHeaderWidth + (int)rawRight;
     return mouseX >= (rightEdge - resizeHotspot) && mouseX <= (rightEdge + 2);
 }
 
@@ -1166,9 +1171,10 @@ inline int PlaylistComponent::trackIndexAt(int mouseY) const
 inline int PlaylistComponent::fadeHandleAt(const PlaylistClip& clip, int mouseX, int mouseY) const
 {
     const int cx  = trackHeaderWidth + (int)(clip.startBar    * barWidth);
-    const int cw  = (int)(clip.lengthBars * barWidth) - 2;
+    const int cw  = juce::jmin((int)(clip.lengthBars * barWidth) - 2, getWidth() * 4);
     const int cy  = headerHeight + clip.trackIndex * (trackHeight + trackGap) + 3;
     const int ch  = trackHeight - 6;
+    if (cw <= 0) return 0;
     // Fade handles occupy the top 8px of the clip, 14px wide at each edge
     if (mouseY < cy || mouseY > cy + 8) return 0;
     if (mouseX >= cx     && mouseX <= cx + 14) return 1; // fade-in
