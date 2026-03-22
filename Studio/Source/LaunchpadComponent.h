@@ -103,9 +103,9 @@ public:
     // FileDragAndDropTarget (OS file drag from Finder etc.)
     bool isInterestedInFileDrag(const juce::StringArray&) override { return true; }
     void fileDragEnter(const juce::StringArray&, int x, int y) override
-        { dragOverPad = padIndexAt(x, y - kTopBarH); repaint(); }
+        { dragOverPad = padIndexAt(x, y - topBarHeight()); repaint(); }
     void fileDragMove(const juce::StringArray&, int x, int y) override
-        { dragOverPad = padIndexAt(x, y - kTopBarH); repaint(); }
+        { dragOverPad = padIndexAt(x, y - topBarHeight()); repaint(); }
     void fileDragExit(const juce::StringArray&) override
         { dragOverPad = -1; repaint(); }
     void filesDropped(const juce::StringArray& files, int x, int y) override;
@@ -116,16 +116,16 @@ public:
         return juce::File(d.description.toString()).existsAsFile();
     }
     void itemDragEnter(const juce::DragAndDropTarget::SourceDetails& d) override
-        { dragOverPad = padIndexAt(d.localPosition.x, d.localPosition.y - kTopBarH); repaint(); }
+        { dragOverPad = padIndexAt(d.localPosition.x, d.localPosition.y - topBarHeight()); repaint(); }
     void itemDragMove(const juce::DragAndDropTarget::SourceDetails& d) override
-        { dragOverPad = padIndexAt(d.localPosition.x, d.localPosition.y - kTopBarH); repaint(); }
+        { dragOverPad = padIndexAt(d.localPosition.x, d.localPosition.y - topBarHeight()); repaint(); }
     void itemDragExit(const juce::DragAndDropTarget::SourceDetails&) override
         { dragOverPad = -1; repaint(); }
     void itemDropped(const juce::DragAndDropTarget::SourceDetails& d) override
     {
         dragOverPad = -1;
         if (project == nullptr) return;
-        const int idx = padIndexAt(d.localPosition.x, d.localPosition.y - kTopBarH);
+        const int idx = padIndexAt(d.localPosition.x, d.localPosition.y - topBarHeight());
         if (idx < 0) return;
         const juce::File file(d.description.toString());
         project->launchpadPads[(size_t)idx].filePath = file.getFullPathName();
@@ -232,14 +232,20 @@ private:
         statusLabel.setText("Defaults loaded!", juce::dontSendNotification);
     }
 
-    static constexpr int kTopBarH = 42;
-    static constexpr int kGap     = 4;
+    static constexpr int kTopBarRowH = 30;
+    static constexpr int kGap       = 4;
+
+    int topBarHeight() const
+    {
+        // Two-row layout when width < 500, single row when wider
+        return (getWidth() < 500) ? kTopBarRowH * 2 + 4 : kTopBarRowH + 8;
+    }
 
     // ---- layout -------------------------------------------------------
     int padSize() const
     {
         const int avW = getWidth()  - 20;
-        const int avH = getHeight() - kTopBarH - 10;
+        const int avH = getHeight() - topBarHeight() - 10;
         return juce::jmax(20, juce::jmin(avW / kCols, avH / kRows));
     }
 
@@ -249,7 +255,7 @@ private:
         const int totalW = kCols * ps + (kCols - 1) * kGap;
         const int totalH = kRows * ps + (kRows - 1) * kGap;
         const int ox     = (getWidth()  - totalW) / 2;
-        const int oy     = kTopBarH + (getHeight() - kTopBarH - totalH) / 2;
+        const int oy     = topBarHeight() + 6;  // 상단 바 바로 아래에 붙임
         return { ox + (idx % kCols) * (ps + kGap),
                  oy + (idx / kCols) * (ps + kGap), ps, ps };
     }
@@ -259,7 +265,7 @@ private:
         for (int i = 0; i < kPads; ++i)
         {
             const auto b = padBounds(i);
-            if (b.contains(x, y + kTopBarH)) return i;
+            if (b.contains(x, y + topBarHeight())) return i;
         }
         return -1;
     }
@@ -341,20 +347,49 @@ private:
 
 inline void LaunchpadPanel::resized()
 {
-    auto bar = getLocalBounds().removeFromTop(kTopBarH).reduced(6, 6);
-    recBtn         .setBounds(bar.removeFromLeft(50).reduced(1));
-    bar.removeFromLeft(4);
-    barsBox        .setBounds(bar.removeFromLeft(68).reduced(1));
-    bar.removeFromLeft(4);
-    convertBtn     .setBounds(bar.removeFromLeft(80).reduced(1));
-    bar.removeFromLeft(4);
-    saveDefaultBtn .setBounds(bar.removeFromLeft(84).reduced(1));
-    bar.removeFromLeft(4);
-    loadDefaultBtn .setBounds(bar.removeFromLeft(84).reduced(1));
-    bar.removeFromLeft(4);
-    stopAllBtn     .setBounds(bar.removeFromLeft(64).reduced(1));
-    bar.removeFromLeft(6);
-    statusLabel    .setBounds(bar);
+    const bool narrow = getWidth() < 500;
+
+    if (narrow)
+    {
+        // Two-row layout for inline panel
+        auto topArea = getLocalBounds().removeFromTop(topBarHeight()).reduced(4, 2);
+        auto row1 = topArea.removeFromTop(kTopBarRowH);
+        auto row2 = topArea;
+
+        // Row 1: REC, bars, convert, stop all
+        recBtn         .setBounds(row1.removeFromLeft(44).reduced(1));
+        row1.removeFromLeft(3);
+        barsBox        .setBounds(row1.removeFromLeft(62).reduced(1));
+        row1.removeFromLeft(3);
+        convertBtn     .setBounds(row1.removeFromLeft(72).reduced(1));
+        row1.removeFromLeft(3);
+        stopAllBtn     .setBounds(row1.removeFromLeft(58).reduced(1));
+        row1.removeFromLeft(4);
+        statusLabel    .setBounds(row1);
+
+        // Row 2: save, load defaults
+        saveDefaultBtn .setBounds(row2.removeFromLeft(78).reduced(1));
+        row2.removeFromLeft(3);
+        loadDefaultBtn .setBounds(row2.removeFromLeft(78).reduced(1));
+    }
+    else
+    {
+        // Single-row layout (original — for floating window / wide panel)
+        auto bar = getLocalBounds().removeFromTop(topBarHeight()).reduced(6, 6);
+        recBtn         .setBounds(bar.removeFromLeft(50).reduced(1));
+        bar.removeFromLeft(4);
+        barsBox        .setBounds(bar.removeFromLeft(68).reduced(1));
+        bar.removeFromLeft(4);
+        convertBtn     .setBounds(bar.removeFromLeft(80).reduced(1));
+        bar.removeFromLeft(4);
+        saveDefaultBtn .setBounds(bar.removeFromLeft(84).reduced(1));
+        bar.removeFromLeft(4);
+        loadDefaultBtn .setBounds(bar.removeFromLeft(84).reduced(1));
+        bar.removeFromLeft(4);
+        stopAllBtn     .setBounds(bar.removeFromLeft(64).reduced(1));
+        bar.removeFromLeft(6);
+        statusLabel    .setBounds(bar);
+    }
 }
 
 inline void LaunchpadPanel::paint(juce::Graphics& g)
@@ -363,9 +398,9 @@ inline void LaunchpadPanel::paint(juce::Graphics& g)
 
     // Top bar background
     g.setColour(juce::Colour(0xff16213e));
-    g.fillRect(0, 0, getWidth(), kTopBarH);
+    g.fillRect(0, 0, getWidth(), topBarHeight());
     g.setColour(juce::Colour(0xff0f3460));
-    g.drawLine(0.0f, (float)kTopBarH, (float)getWidth(), (float)kTopBarH, 1.0f);
+    g.drawLine(0.0f, (float)topBarHeight(), (float)getWidth(), (float)topBarHeight(), 1.0f);
 
     // Subtle divider after keyboard rows (rows 0-3)
     {
@@ -462,13 +497,13 @@ inline void LaunchpadPanel::paint(juce::Graphics& g)
     if (isRecording)
     {
         g.setColour(juce::Colour(0xffdd0000).withAlpha(0.12f));
-        g.fillRect(0, kTopBarH, getWidth(), getHeight() - kTopBarH);
+        g.fillRect(0, topBarHeight(), getWidth(), getHeight() - topBarHeight());
     }
 }
 
 inline void LaunchpadPanel::mouseDown(const juce::MouseEvent& e)
 {
-    const int idx = padIndexAt(e.x, e.y - kTopBarH);
+    const int idx = padIndexAt(e.x, e.y - topBarHeight());
     if (idx < 0) return;
 
     if (e.mods.isRightButtonDown()) { showContextMenu(idx); return; }
@@ -478,7 +513,7 @@ inline void LaunchpadPanel::mouseDown(const juce::MouseEvent& e)
 
 inline void LaunchpadPanel::mouseMove(const juce::MouseEvent& e)
 {
-    const int idx = padIndexAt(e.x, e.y - kTopBarH);
+    const int idx = padIndexAt(e.x, e.y - topBarHeight());
     if (idx != hoveredPad) { hoveredPad = idx; repaint(); }
 }
 
@@ -492,7 +527,7 @@ inline void LaunchpadPanel::filesDropped(const juce::StringArray& files, int x, 
     dragOverPad = -1;
     if (files.isEmpty() || project == nullptr) return;
 
-    const int idx = padIndexAt(x, y - kTopBarH);
+    const int idx = padIndexAt(x, y - topBarHeight());
     if (idx < 0) return;
 
     const juce::File file(files[0]);

@@ -64,8 +64,10 @@ private:
     int synthEditorChannel = -1;
     int fxEditorTrack      = -1;
 
-    // Launchpad — floating performance pad window
-    std::unique_ptr<LaunchpadWindow> launchpadWindow;
+    // Launchpad — inline right panel (toggled)
+    LaunchpadPanel   launchpadPanel;
+    bool             showLaunchpad = false;
+
     std::unique_ptr<juce::DocumentWindow> audioDeviceWindow;
 
     // M8 — plugin browser + per-channel plugin editor windows

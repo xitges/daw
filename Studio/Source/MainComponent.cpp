@@ -1695,130 +1695,119 @@ MainComponent::MainComponent()
 
     toolbar.onToggleMixer = [this] { showMixer = !showMixer; resized(); };
 
-    // Launchpad toggle
+    // Launchpad — inline panel callbacks (wired once at construction)
+    launchpadPanel.setProject(&project);
+    addChildComponent(launchpadPanel);   // hidden initially
+
+    launchpadPanel.onPadTriggered = [this](int padIdx)
+    {
+        audioEngine.triggerLaunchpadPad(padIdx);
+    };
+
+    launchpadPanel.onPadStopped = [this](int padIdx)
+    {
+        audioEngine.stopLaunchpadPad(padIdx);
+    };
+
+    launchpadPanel.onStopAll = [this]()
+    {
+        audioEngine.stopAllLaunchpadPads();
+    };
+
+    launchpadPanel.onDefaultsLoaded = [this]()
+    {
+        for (int i = 0; i < 64; ++i)
+        {
+            const auto& pad = project.launchpadPads[(size_t)i];
+            if (pad.filePath.isNotEmpty())
+                audioEngine.loadLaunchpadSample(i, juce::File(pad.filePath));
+            else
+                audioEngine.unloadLaunchpadSample(i);
+        }
+    };
+
+    launchpadPanel.onSampleDropped = [this](int padIdx, juce::File file)
+    {
+        audioEngine.loadLaunchpadSample(padIdx, file);
+        markDirty();
+    };
+
+    launchpadPanel.onConvertToPattern =
+        [this](const std::vector<LaunchpadPanel::RecordedHit>& hits, int numBars)
+    {
+        auto* dialog = new juce::AlertWindow("Save as Pattern", "Pattern name:",
+                                              juce::MessageBoxIconType::NoIcon);
+        dialog->addTextEditor("name", "Pad Recording");
+        dialog->addButton("OK",     1);
+        dialog->addButton("Cancel", 0);
+
+        auto hitsCopy = hits;
+        dialog->enterModalState(true,
+            juce::ModalCallbackFunction::create(
+                [this, hitsCopy, numBars, dialog](int result)
+            {
+                if (result == 1)
+                {
+                    juce::String patName = dialog->getTextEditorContents("name").trim();
+                    if (patName.isEmpty()) patName = "Pad Recording";
+
+                    Pattern newPat;
+                    newPat.id         = nextPatternId();
+                    newPat.name       = patName;
+                    newPat.stepCount  = numBars * 16;
+                    newPat.lengthBars = numBars;
+
+                    std::map<int, int> padToChannel;
+                    int nextCh = 0;
+                    for (const auto& hit : hitsCopy)
+                    {
+                        if (padToChannel.count(hit.padIdx) == 0 &&
+                            nextCh < Pattern::kMaxChannels)
+                        {
+                            padToChannel[hit.padIdx] = nextCh;
+                            const auto fp = project.launchpadPads[(size_t)hit.padIdx].filePath;
+                            if (fp.isNotEmpty())
+                            {
+                                newPat.samplePaths[nextCh] = fp;
+                                audioEngine.loadSample(nextCh, juce::File(fp));
+                            }
+                            ++nextCh;
+                        }
+                    }
+
+                    for (const auto& hit : hitsCopy)
+                    {
+                        auto it = padToChannel.find(hit.padIdx);
+                        if (it == padToChannel.end()) continue;
+                        const int ch   = it->second;
+                        const int step = (int)std::round(hit.beatPos / 0.25)
+                                         % newPat.stepCount;
+                        if (step >= 0 && step < newPat.stepCount)
+                            newPat.variations[0].steps[ch][step] = true;
+                    }
+
+                    project.patterns.push_back(newPat);
+                    toolbar.updatePatternList(project.patterns, newPat.id);
+                    selectPattern(newPat.id);
+                    markDirty();
+
+                    juce::AlertWindow::showMessageBoxAsync(
+                        juce::MessageBoxIconType::InfoIcon,
+                        "Pattern Created",
+                        "\"" + newPat.name + "\" added with "
+                        + juce::String(nextCh) + " channel(s).");
+                }
+                delete dialog;
+            }), false);
+    };
+
+    launchpadPanel.getBPM = [this]() { return project.bpm; };
+
+    // Launchpad toggle — show/hide inline panel
     toolbar.onToggleLaunchpad = [this]
     {
-        if (launchpadWindow == nullptr)
-        {
-            launchpadWindow = std::make_unique<LaunchpadWindow>();
-            launchpadWindow->panel.setProject(&project);
-
-            // Pad pressed → trigger one-shot sample
-            launchpadWindow->panel.onPadTriggered = [this](int padIdx)
-            {
-                audioEngine.triggerLaunchpadPad(padIdx);
-            };
-
-            launchpadWindow->panel.onPadStopped = [this](int padIdx)
-            {
-                audioEngine.stopLaunchpadPad(padIdx);
-            };
-
-            launchpadWindow->panel.onStopAll = [this]()
-            {
-                audioEngine.stopAllLaunchpadPads();
-            };
-
-            launchpadWindow->panel.onDefaultsLoaded = [this]()
-            {
-                for (int i = 0; i < 64; ++i)
-                {
-                    const auto& pad = project.launchpadPads[(size_t)i];
-                    if (pad.filePath.isNotEmpty())
-                        audioEngine.loadLaunchpadSample(i, juce::File(pad.filePath));
-                    else
-                        audioEngine.unloadLaunchpadSample(i);
-                }
-            };
-
-            // Sample dropped / assigned → load into audio engine
-            launchpadWindow->panel.onSampleDropped = [this](int padIdx, juce::File file)
-            {
-                audioEngine.loadLaunchpadSample(padIdx, file);
-                markDirty();
-            };
-
-            // Convert recorded sequence → new pattern
-            launchpadWindow->panel.onConvertToPattern =
-                [this](const std::vector<LaunchpadPanel::RecordedHit>& hits, int numBars)
-            {
-                // Ask for a name before creating the pattern
-                auto* dialog = new juce::AlertWindow("Save as Pattern", "Pattern name:",
-                                                      juce::MessageBoxIconType::NoIcon);
-                dialog->addTextEditor("name", "Pad Recording");
-                dialog->addButton("OK",     1);
-                dialog->addButton("Cancel", 0);
-
-                auto hitsCopy = hits;
-                dialog->enterModalState(true,
-                    juce::ModalCallbackFunction::create(
-                        [this, hitsCopy, numBars, dialog](int result)
-                    {
-                        if (result == 1)
-                        {
-                            juce::String patName = dialog->getTextEditorContents("name").trim();
-                            if (patName.isEmpty()) patName = "Pad Recording";
-
-                            Pattern newPat;
-                            newPat.id         = nextPatternId();
-                            newPat.name       = patName;
-                            newPat.stepCount  = numBars * 16;
-                            newPat.lengthBars = numBars;
-
-                            // Map each unique pad to a channel
-                            std::map<int, int> padToChannel;
-                            int nextCh = 0;
-                            for (const auto& hit : hitsCopy)
-                            {
-                                if (padToChannel.count(hit.padIdx) == 0 &&
-                                    nextCh < Pattern::kMaxChannels)
-                                {
-                                    padToChannel[hit.padIdx] = nextCh;
-                                    const auto fp = project.launchpadPads[(size_t)hit.padIdx].filePath;
-                                    if (fp.isNotEmpty())
-                                    {
-                                        // Store path in pattern so selectPattern can reload it
-                                        newPat.samplePaths[nextCh] = fp;
-                                        audioEngine.loadSample(nextCh, juce::File(fp));
-                                    }
-                                    ++nextCh;
-                                }
-                            }
-
-                            // Quantize hits to nearest 16th-note step
-                            for (const auto& hit : hitsCopy)
-                            {
-                                auto it = padToChannel.find(hit.padIdx);
-                                if (it == padToChannel.end()) continue;
-                                const int ch   = it->second;
-                                const int step = (int)std::round(hit.beatPos / 0.25)
-                                                 % newPat.stepCount;
-                                if (step >= 0 && step < newPat.stepCount)
-                                    newPat.variations[0].steps[ch][step] = true;
-                            }
-
-                            project.patterns.push_back(newPat);
-                            toolbar.updatePatternList(project.patterns, newPat.id);
-                            selectPattern(newPat.id);
-                            markDirty();
-
-                            juce::AlertWindow::showMessageBoxAsync(
-                                juce::MessageBoxIconType::InfoIcon,
-                                "Pattern Created",
-                                "\"" + newPat.name + "\" added with "
-                                + juce::String(nextCh) + " channel(s).");
-                        }
-                        delete dialog;
-                    }), false);
-            };
-
-            // Provide BPM to the panel for beat-accurate recording
-            launchpadWindow->panel.getBPM = [this]() { return project.bpm; };
-        }
-
-        const bool nowVisible = !launchpadWindow->isVisible();
-        launchpadWindow->setVisible(nowVisible);
-        if (nowVisible) launchpadWindow->toFront(true);
+        showLaunchpad = !showLaunchpad;
+        resized();
     };
 
     // M12 — MIDI device selection popup
@@ -1923,7 +1912,6 @@ MainComponent::~MainComponent()
     for (auto& w : dynEQWindows)        w.reset();
     pluginBrowserWindow.reset();
     audioDeviceWindow.reset();
-    launchpadWindow.reset();
     fxEditorWindow.reset();
     synthEditorWindow.reset();
     pianoRollWindow.reset();
@@ -2254,8 +2242,7 @@ void MainComponent::reloadProjectIntoUI()
         else
             audioEngine.unloadLaunchpadSample(i);
     }
-    if (launchpadWindow != nullptr)
-        launchpadWindow->panel.setProject(&project);
+    launchpadPanel.setProject(&project);
 
     // Restore active pattern if valid, otherwise fall back to the first pattern
     activePatternId = project.activePatternId;
@@ -2727,9 +2714,9 @@ void MainComponent::saveProjectAs()
 
 bool MainComponent::keyPressed(const juce::KeyPress& key)
 {
-    // Forward to launchpad if the window is open (works even when main window is focused)
-    if (launchpadWindow != nullptr && launchpadWindow->isVisible())
-        if (launchpadWindow->panel.handleKey(key))
+    // Forward to launchpad if the panel is visible
+    if (showLaunchpad)
+        if (launchpadPanel.handleKey(key))
             return true;
 
     const auto cmd   = juce::ModifierKeys::commandModifier;
@@ -2871,6 +2858,14 @@ void MainComponent::resized()
 
     // Toolbar is now 80px (two rows)
     toolbar.setBounds(area.removeFromTop(80));
+
+    // Launchpad — right panel, toolbar 바로 아래 풀 높이
+    launchpadPanel.setVisible(showLaunchpad);
+    if (showLaunchpad)
+    {
+        const int padW = juce::jmin(450, area.getWidth() / 2);
+        launchpadPanel.setBounds(area.removeFromRight(padW));
+    }
 
     // M5 — Mixer panel anchored at bottom, visible only when toggled
     mixer.setVisible(showMixer);
