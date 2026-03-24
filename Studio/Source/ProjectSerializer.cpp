@@ -157,6 +157,8 @@ bool ProjectSerializer::save(const Project& project, const juce::File& file)
         clipEl->setAttribute("originalSourceOffsetSamples",      (double)clip.originalSourceOffsetSamples);
         clipEl->setAttribute("patternStartOffsetBars",           (double)clip.patternStartOffsetBars);
         clipEl->setAttribute("originalPatternStartOffsetBars",   (double)clip.originalPatternStartOffsetBars);
+        if (clip.muted)
+            clipEl->setAttribute("muted", true);
     }
 
     // ---- MixerTracks (M5)
@@ -580,6 +582,7 @@ bool ProjectSerializer::load(juce::File& file, Project& projectOut)
             clip.originalSourceOffsetSamples    = (float)clipEl->getDoubleAttribute("originalSourceOffsetSamples",    0.0);
             clip.patternStartOffsetBars         = (float)clipEl->getDoubleAttribute("patternStartOffsetBars",         0.0);
             clip.originalPatternStartOffsetBars = (float)clipEl->getDoubleAttribute("originalPatternStartOffsetBars", 0.0);
+            clip.muted = clipEl->getBoolAttribute("muted", false);
             // Mark missing audio files in the clip name
             if (clip.clipType == ClipType::Audio && clip.audioFilePath.isNotEmpty()
                 && !juce::File(clip.audioFilePath).existsAsFile())

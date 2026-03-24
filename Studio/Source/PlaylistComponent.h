@@ -140,6 +140,9 @@ public:
     // Pattern slip edit — Alt+drag shifts patternStartOffsetBars, called on mouseUp
     std::function<void(int clipId, float oldOffset, float newOffset)> onPatternSlipEdited;
 
+    // Clip mute toggle
+    std::function<void(int clipId, bool muted)> onClipMuteToggled;
+
     // Automation undo callbacks
     std::function<void(int laneIdx, int ptIdx, AutomationPoint pt)>                          onAutomationPointAdded;
     std::function<void(int laneIdx, int ptIdx, AutomationPoint before, AutomationPoint after)> onAutomationPointMoved;
@@ -671,11 +674,24 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
                ? juce::Colour(0xff4db896)
                : (hasPattern ? fill.brighter(0.4f) : juce::Colour(0xff9090a8)));
 
-        g.setColour(fill.withAlpha(clip.id == draggingClipId ? 0.6f : 0.85f));
+        const float baseAlpha = clip.id == draggingClipId ? 0.6f : 0.85f;
+        g.setColour(fill.withAlpha(clip.muted ? baseAlpha * 0.35f : baseAlpha));
         g.fillRoundedRectangle((float)x + 1, (float)ty, (float)w, (float)h, 4.0f);
 
-        g.setColour(border);
+        g.setColour(clip.muted ? border.withAlpha(0.4f) : border);
         g.drawRoundedRectangle((float)x + 1, (float)ty, (float)w, (float)h, 4.0f, 1.3f);
+
+        // Muted indicator — diagonal hatch lines + "M" badge
+        if (clip.muted)
+        {
+            g.setColour(juce::Colour(0x30ffffff));
+            for (int hx = x + 1; hx < x + w; hx += 8)
+                g.drawLine((float)hx, (float)ty, (float)(hx + h), (float)(ty + h), 0.5f);
+
+            g.setColour(juce::Colour(0xccff6666));
+            g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f).withStyle("Bold")));
+            g.drawText("M", x + w - 16, ty + 2, 14, 12, juce::Justification::centredRight);
+        }
 
         // Resize handle stripe
         g.setColour(border.withAlpha(0.5f));
@@ -1806,6 +1822,8 @@ inline void PlaylistComponent::showContextMenu(int clipId)
                           (contextMenuBar_ < clip->startBar + clip->lengthBars - 0.0625f);
     menu.addItem(5, "Split Here", canSplit);
     menu.addSeparator();
+    menu.addItem(9, clip->muted ? "Unmute Clip" : "Mute Clip");
+    menu.addSeparator();
     menu.addItem(3, "Copy Clip");
     menu.addItem(4, "Detach to New Pattern", clip->patternId > 0);
     menu.addItem(2, "Delete");
@@ -1894,6 +1912,15 @@ inline void PlaylistComponent::showContextMenu(int clipId)
                         onAudioClipDropped)
                         onAudioClipDropped(clipB.id, clipB.audioFilePath);
 
+                    repaint();
+                }
+            }
+            else if (result == 9)
+            {
+                if (auto* c = findClipById(clipId))
+                {
+                    c->muted = !c->muted;
+                    if (onClipMuteToggled) onClipMuteToggled(clipId, c->muted);
                     repaint();
                 }
             }

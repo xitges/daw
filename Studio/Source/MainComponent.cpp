@@ -989,6 +989,16 @@ MainComponent::MainComponent()
         markDirty();
     };
 
+    playlist.onClipMuteToggled = [this](int clipId, bool muted)
+    {
+        for (auto& c : project.playlistClips)
+        {
+            if (c.id == clipId) { c.muted = muted; break; }
+        }
+        audioEngine.setProject(&project);
+        markDirty();
+    };
+
     // Automation undo callbacks
     playlist.onAutomationPointAdded = [this](int laneIdx, int ptIdx, AutomationPoint pt)
     {

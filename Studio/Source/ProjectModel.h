@@ -821,6 +821,8 @@ struct PlaylistClip
     // Pattern Clip slip edit (ignored when clipType == Audio)
     float         patternStartOffsetBars         = 0.0f; // pattern internal start offset (bars, looped)
     float         originalPatternStartOffsetBars = 0.0f; // reset target
+
+    bool          muted = false;  // clip mute — skipped during playback when true
 };
 
 struct Project

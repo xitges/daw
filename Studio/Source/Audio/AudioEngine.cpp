@@ -1759,6 +1759,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                     if (c.id == inst.clipId && c.clipType == ClipType::Audio)
                         { clip = &c; break; }
                 if (clip == nullptr) continue;
+                if (clip->muted) continue;
 
                 const double clipStartBeat = clip->startBar * 4.0;
                 const double clipEndBeat   = (clip->startBar + clip->lengthBars) * 4.0;
@@ -1857,6 +1858,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
 
         for (const auto& clip : runtime.playlistClips)
         {
+            if (clip.muted) continue;
             if (stepBarPos < clip.startBar || stepBarPos >= clip.startBar + clip.lengthBars)
                 continue;
 
@@ -1968,6 +1970,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
 
         for (const auto& clip : runtime.playlistClips)
         {
+            if (clip.muted) continue;
             const Pattern* pat = runtime.findPatternById(clip.patternId);
             if (pat == nullptr || pat->stepCount <= 0) continue;
 
