@@ -74,6 +74,7 @@ public:
 
     // M10 — Export callback
     std::function<void()>  onExport;
+    std::function<void()>  onExportStems;
 
     // M5 — Mixer toggle
     std::function<void()>  onToggleMixer;
@@ -128,8 +129,9 @@ private:
     juce::TextButton saveFileBtn   { "Save"    };
     juce::TextButton saveAsFileBtn { "Save As" };
 
-    // M10 — export button
-    juce::TextButton exportBtn     { "Export WAV" };
+    // M10 — export buttons
+    juce::TextButton exportBtn      { "Export WAV" };
+    juce::TextButton exportStemsBtn { "Stems" };
 
     // M5 — mixer toggle button
     juce::TextButton mixerBtn      { "Mixer" };

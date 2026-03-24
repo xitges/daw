@@ -71,6 +71,7 @@ public:
     std::function<void()>                     onClearAllSteps;
     std::function<void(int ch)>               onOpenPianoRoll;      // M3
     std::function<void(int newStepCount)>     onStepCountChanged;   // M3
+    std::function<void(float swing)>          onSwingChanged;        // Groove swing
     std::function<void(int ch, ChannelType)>  onChannelTypeChanged; // M3
     std::function<void(int ch)>               onOpenSynthEditor;    // M13
     std::function<void(int ch)>               onDeleteChannel;      // delete channel
@@ -179,6 +180,12 @@ public:
 
     }
 
+    // Set swing slider from pattern data
+    void setSwingAmount(float swing)
+    {
+        swingSlider.setValue((double)swing, juce::dontSendNotification);
+    }
+
     // Callback fired when user edits step params in the inspector
     std::function<void(int ch, int step, const StepParams&)> onStepParamsChanged;
 
@@ -197,7 +204,7 @@ public:
     static constexpr int ROW_HEIGHT      = 58;
     static constexpr int LABEL_WIDTH     = 250;
     static constexpr int HEADER_HEIGHT   = 30;
-    static constexpr int INSPECTOR_HEIGHT = 114; // height of step inspector strip (3 rows)
+    static constexpr int INSPECTOR_HEIGHT = 140; // height of step inspector strip (4 rows)
 
 private:
     std::vector<ChannelRow> channels;
@@ -207,6 +214,8 @@ private:
     juce::TextButton addChannelBtn { "+ Add Channel" };
     juce::TextButton clearStepsBtn { "Clear Steps" };
     juce::Slider     stepCountSlider;
+    juce::Slider     swingSlider;        // Groove swing 0..1
+    juce::Label      swingLabel;
 
     // Variation A/B/C/D buttons
     juce::TextButton varBtnA { "A" }, varBtnB { "B" }, varBtnC { "C" }, varBtnD { "D" };
@@ -236,6 +245,7 @@ private:
     juce::Slider inspPitchSlider;      // pitch offset -12..+12 st
     juce::Slider inspCutoffSlider;     // cutoff mod -3..+3 octaves (Phase 2)
     juce::Slider inspStartOffSlider;   // sample start offset 0..1 (Phase 2)
+    juce::Slider inspTimingSlider;     // timing offset -0.5..+0.5 (Groove)
     juce::TextButton inspResetBtn { "Reset" };
 
     void openInspector(int ch, int step);   // select a step for inspection

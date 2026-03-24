@@ -565,6 +565,17 @@ void AudioEngine::updatePatternSnapshot()
 
     snap.patternId = pat->id;
     snap.stepCount = juce::jlimit(1, PlaybackSnapshot::kSteps, pat->stepCount);
+    snap.swingAmount = pat->swingAmount;
+
+    // Sync swing + per-step timing to sequencer
+    sequencer.setSwingAmount(pat->swingAmount);
+    for (int s = 0; s < PlaybackSnapshot::kSteps; ++s)
+    {
+        // Aggregate per-step timing offset from all channels (use channel 0 as reference,
+        // since timing offset is a rhythmic property, not per-channel)
+        sequencer.setStepTimingOffset(s, pat->variations[activeVariationIdx_.load(std::memory_order_relaxed)]
+                                           .stepParams[0][s].timingOffset);
+    }
 
     const int varIdx = activeVariationIdx_.load(std::memory_order_relaxed);
     for (int ch = 0; ch < PlaybackSnapshot::kCh; ++ch)
@@ -2447,6 +2458,82 @@ bool AudioEngine::renderToFile(const juce::File& outputFile, PlayMode mode, int 
     deviceManager.addAudioCallback(this);
 
     return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Stem Export — renders each mixer track to a separate WAV in the given folder
+// ---------------------------------------------------------------------------
+
+int AudioEngine::renderStemsToFolder(const juce::File& folder, PlayMode mode, int numBars)
+{
+    if (!folder.isDirectory())
+        folder.createDirectory();
+
+    if (!folder.isDirectory() || project == nullptr)
+        return 0;
+
+    // Save original mute/solo state
+    struct TrackState { bool muted; bool soloed; };
+    std::array<TrackState, 8> savedState;
+    for (int t = 0; t < 8; ++t)
+    {
+        savedState[(size_t)t].muted  = project->mixerTracks[(size_t)t].muted;
+        savedState[(size_t)t].soloed = project->mixerTracks[(size_t)t].soloed;
+    }
+
+    int exported = 0;
+
+    // --- Render each track individually ---
+    for (int t = 0; t < 8; ++t)
+    {
+        // Check if any channel routes to this track
+        bool hasContent = false;
+        for (const auto& pat : project->patterns)
+            for (int ch = 0; ch < 16; ++ch)
+                if (pat.channelMixerRouting[ch] == t)
+                    hasContent = true;
+
+        if (!hasContent) continue; // skip empty tracks
+
+        // Solo this track, mute all others
+        for (int i = 0; i < 8; ++i)
+        {
+            project->mixerTracks[(size_t)i].muted = false;
+            project->mixerTracks[(size_t)i].soloed = (i == t);
+        }
+
+        // Build filename: "Track_1_Name.wav"
+        juce::String trackName = project->mixerTracks[(size_t)t].name
+                                    .replaceCharacters(" /\\:", "____");
+        juce::File outFile = folder.getChildFile(
+            "Track_" + juce::String(t + 1) + "_" + trackName + ".wav");
+
+        if (renderToFile(outFile, mode, numBars))
+            ++exported;
+    }
+
+    // --- Render master (all tracks) ---
+    for (int i = 0; i < 8; ++i)
+    {
+        project->mixerTracks[(size_t)i].muted = false;
+        project->mixerTracks[(size_t)i].soloed = false;
+    }
+
+    juce::File masterFile = folder.getChildFile("Master.wav");
+    if (renderToFile(masterFile, mode, numBars))
+        ++exported;
+
+    // --- Restore original mute/solo state ---
+    for (int t = 0; t < 8; ++t)
+    {
+        project->mixerTracks[(size_t)t].muted  = savedState[(size_t)t].muted;
+        project->mixerTracks[(size_t)t].soloed = savedState[(size_t)t].soloed;
+    }
+
+    // Rebuild runtime state with restored mute/solo
+    rebuildRuntimeStateFromProject();
+
+    return exported;
 }
 
 // ---------------------------------------------------------------------------

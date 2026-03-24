@@ -55,6 +55,12 @@ void Sequencer::setStepCount(int newCount)
         currentStep = 0;
 }
 
+void Sequencer::setStepTimingOffset(int step, float offset)
+{
+    if (step >= 0 && step < MAX_STEPS)
+        stepTimingOffset[step] = juce::jlimit(-0.5f, 0.5f, offset);
+}
+
 void Sequencer::recalcSamplesPerStep()
 {
     // 4/4박자 기준 16분음표
@@ -81,8 +87,11 @@ void Sequencer::processBlock(int numSamples)
     while (sampleCounter >= samplesPerStep)
     {
         sampleCounter -= samplesPerStep;
-        const int offsetInBuffer = juce::jlimit(0, numSamples - 1, (int)std::round(timeToFire));
-        advanceStep(offsetInBuffer);
+
+        // Compute base offset in buffer
+        int baseOffset = juce::jlimit(0, numSamples - 1, (int)std::round(timeToFire));
+
+        advanceStep(baseOffset);
         timeToFire += samplesPerStep;
     }
 }
@@ -98,8 +107,35 @@ void Sequencer::advanceStep(int offsetInBuffer)
 
 void Sequencer::triggerCurrentStep(int offsetInBuffer)
 {
+    // === Apply swing ===
+    // Swing shifts even-numbered steps (1, 3, 5, ...) — the "off-beat" 16th notes.
+    // swingAmount 0.0 = straight, 0.33 = triplet feel, 0.5 = dotted feel.
+    int adjustedOffset = offsetInBuffer;
+
+    if (swingAmount > 0.001f && (currentStep % 2 == 1))
+    {
+        // Push odd steps (off-beats) later by swingAmount * samplesPerStep
+        adjustedOffset += (int)std::round(swingAmount * samplesPerStep);
+    }
+
+    // === Apply per-step timing offset ===
+    // timingOffset: -0.5..+0.5 of one step duration
+    const float perStepOffset = stepTimingOffset[currentStep];
+    if (std::abs(perStepOffset) > 0.001f)
+    {
+        adjustedOffset += (int)std::round((double)perStepOffset * samplesPerStep);
+    }
+
+    // Note: adjustedOffset may go beyond current buffer boundaries.
+    // This is acceptable — the AudioEngine's trigger dispatch handles
+    // sample-accurate scheduling. Negative offsets get clamped to 0
+    // (trigger fires at buffer start, slightly early).
+    // Positive overflow means the trigger fires in the next buffer.
+    // For simplicity, clamp to valid range for this buffer.
+    // TODO: proper cross-buffer scheduling for perfect timing.
+    adjustedOffset = juce::jlimit(0, juce::jmax(0, (int)(samplesPerStep) - 1), adjustedOffset);
+
     for (int ch = 0; ch < CHANNEL_COUNT; ++ch)
         if (pattern[ch][currentStep])
-            onTrigger(ch, currentStep, offsetInBuffer);
+            onTrigger(ch, currentStep, adjustedOffset);
 }
-

@@ -258,11 +258,15 @@ struct StepParams
     float cutoffMod      = 0.0f;  // -3..+3 octaves applied on top of channel cutoff (0 = no change)
     float startOffsetFrac = 0.0f; // 0..1  — normalized source-buffer start position (0 = channel default)
 
+    // Groove — per-step timing offset
+    float timingOffset   = 0.0f;  // -0.5..+0.5 — fraction of one step duration (0 = on grid)
+
     bool isDefault() const noexcept
     {
         return velocity == 1.0f && gate == 1.0f
             && probability == 1.0f && pitchOffset == 0
-            && cutoffMod == 0.0f && startOffsetFrac == 0.0f;
+            && cutoffMod == 0.0f && startOffsetFrac == 0.0f
+            && timingOffset == 0.0f;
     }
     void reset() { *this = StepParams{}; }
 };
@@ -707,6 +711,7 @@ struct Pattern
     juce::String name       = "Pattern 1";
     int          lengthBars = 1;
     int          stepCount  = 16;
+    float        swingAmount = 0.0f;  // 0.0 = straight, 0.33 = triplet, 0.5 = dotted swing
 
     static constexpr int kMaxChannels  = 16;
     static constexpr int kMaxSteps     = kMaxPatternSteps;

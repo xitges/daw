@@ -138,6 +138,11 @@ ToolbarComponent::ToolbarComponent()
     exportBtn.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
     exportBtn.onClick = [this] { if (onExport) onExport(); };
 
+    addAndMakeVisible(exportStemsBtn);
+    exportStemsBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a4a2a));
+    exportStemsBtn.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+    exportStemsBtn.onClick = [this] { if (onExportStems) onExportStems(); };
+
     addAndMakeVisible(mixerBtn);
     mixerBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff323232));
     mixerBtn.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
@@ -334,8 +339,9 @@ void ToolbarComponent::resized()
         renamePatBtn.setBounds(row.removeFromLeft(56).reduced(2));
 
         // File + Export buttons on the right side
-        exportBtn    .setBounds(row.removeFromRight(76).reduced(2));
-        saveAsFileBtn.setBounds(row.removeFromRight(58).reduced(2));
+        exportStemsBtn.setBounds(row.removeFromRight(52).reduced(2));
+        exportBtn     .setBounds(row.removeFromRight(76).reduced(2));
+        saveAsFileBtn .setBounds(row.removeFromRight(58).reduced(2));
         saveFileBtn  .setBounds(row.removeFromRight(46).reduced(2));
         openFileBtn  .setBounds(row.removeFromRight(46).reduced(2));
         newFileBtn   .setBounds(row.removeFromRight(40).reduced(2));

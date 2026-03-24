@@ -117,6 +117,7 @@ ChannelRackComponent::ChannelRackComponent()
     inspPitchSlider.setNumDecimalPlacesToDisplay(0);
     setupInspSlider(inspCutoffSlider,  -3.0,  3.0,  0.01, juce::Colour(0xffcc6699), " oct");
     setupInspSlider(inspStartOffSlider, 0.0,  1.0,  0.01, juce::Colour(0xff669966), "");
+    setupInspSlider(inspTimingSlider, -0.5,  0.5,  0.01, juce::Colour(0xff9977cc), "");
 
     inspVelSlider.onValueChange = [this]
     {
@@ -166,6 +167,37 @@ ChannelRackComponent::ChannelRackComponent()
             onStepParamsChanged(inspectorCh, inspectorStep, stepParamsStore[inspectorCh][inspectorStep]);
         repaint();
     };
+    inspTimingSlider.onValueChange = [this]
+    {
+        if (inspectorCh < 0 || inspectorStep < 0) return;
+        stepParamsStore[inspectorCh][inspectorStep].timingOffset = (float)inspTimingSlider.getValue();
+        if (onStepParamsChanged)
+            onStepParamsChanged(inspectorCh, inspectorStep, stepParamsStore[inspectorCh][inspectorStep]);
+        repaint();
+    };
+
+    // --- Swing slider setup ---
+    addAndMakeVisible(swingSlider);
+    swingSlider.setRange(0.0, 0.5, 0.01);
+    swingSlider.setValue(0.0, juce::dontSendNotification);
+    swingSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    swingSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 40, 20);
+    swingSlider.setNumDecimalPlacesToDisplay(2);
+    swingSlider.setColour(juce::Slider::thumbColourId,             juce::Colour(0xff9977cc));
+    swingSlider.setColour(juce::Slider::trackColourId,             juce::Colour(0xff9977cc).withAlpha(0.6f));
+    swingSlider.setColour(juce::Slider::backgroundColourId,        juce::Colour(0xff1c1c1e));
+    swingSlider.setColour(juce::Slider::textBoxTextColourId,       juce::Colours::white);
+    swingSlider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff141418));
+    swingSlider.setColour(juce::Slider::textBoxOutlineColourId,    juce::Colour(0xff2a2a35));
+    swingSlider.onValueChange = [this]
+    {
+        if (onSwingChanged) onSwingChanged((float)swingSlider.getValue());
+    };
+
+    addAndMakeVisible(swingLabel);
+    swingLabel.setText("Swing", juce::dontSendNotification);
+    swingLabel.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
+    swingLabel.setColour(juce::Label::textColourId, juce::Colour(0xffb0b0b8));
 
     inspResetBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a2020));
     inspResetBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffff8888));
@@ -315,6 +347,7 @@ void ChannelRackComponent::openInspector(int ch, int step)
     inspPitchSlider  .setVisible(true);
     inspCutoffSlider .setVisible(true);
     inspStartOffSlider.setVisible(true);
+    inspTimingSlider .setVisible(true);
     inspResetBtn     .setVisible(true);
     layoutInspector();
     repaint();
@@ -330,6 +363,7 @@ void ChannelRackComponent::closeInspector()
     inspPitchSlider  .setVisible(false);
     inspCutoffSlider .setVisible(false);
     inspStartOffSlider.setVisible(false);
+    inspTimingSlider .setVisible(false);
     inspResetBtn     .setVisible(false);
     repaint();
 }
@@ -344,6 +378,7 @@ void ChannelRackComponent::refreshInspector()
     inspPitchSlider  .setValue((double)p.pitchOffset,juce::dontSendNotification);
     inspCutoffSlider .setValue(p.cutoffMod,          juce::dontSendNotification);
     inspStartOffSlider.setValue(p.startOffsetFrac,   juce::dontSendNotification);
+    inspTimingSlider .setValue(p.timingOffset,        juce::dontSendNotification);
 
     const juce::String chName = (inspectorCh < (int)channels.size())
                                 ? channels[(size_t)inspectorCh].name : "Ch";
@@ -369,6 +404,7 @@ void ChannelRackComponent::layoutInspector()
     inspPitchSlider  .setBounds(col2, iy + 48, slW, slH);
     inspCutoffSlider .setBounds(15,   iy + 74, slW, slH);
     inspStartOffSlider.setBounds(col2, iy + 74, slW, slH);
+    inspTimingSlider .setBounds(15,   iy + 100, slW, slH);
     inspResetBtn     .setBounds(getWidth() - 70, iy, 60, 20);
 }
 
@@ -400,6 +436,7 @@ void ChannelRackComponent::drawInspector(juce::Graphics& g)
     g.drawText("PITCH",    col2, iy + 38, 50, 10, juce::Justification::centredLeft);
     g.drawText("CUTOFF",   15,   iy + 64, 50, 10, juce::Justification::centredLeft);
     g.drawText("START",    col2, iy + 64, 50, 10, juce::Justification::centredLeft);
+    g.drawText("TIMING",   15,   iy + 90, 50, 10, juce::Justification::centredLeft);
 }
 
 // ---------------------------------------------------------------------------
@@ -412,6 +449,9 @@ void ChannelRackComponent::loadPattern(const Pattern& pat, int varIdx)
     // Sync step count
     stepCount = juce::jlimit(1, Pattern::kMaxSteps, pat.stepCount);
     stepCountSlider.setValue(stepCount, juce::dontSendNotification);
+
+    // Sync swing
+    swingSlider.setValue((double)pat.swingAmount, juce::dontSendNotification);
 
     // Sync step params store (always, so badges and inspector reflect the pattern)
     for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
@@ -457,6 +497,7 @@ void ChannelRackComponent::saveToPattern(Pattern& pat, int varIdx) const
 {
     const int vi = (varIdx >= 0) ? varIdx : activeVariation;
     pat.stepCount = stepCount;
+    pat.swingAmount = (float)swingSlider.getValue();
     for (int ch = 0; ch < (int)channels.size() && ch < Pattern::kMaxChannels; ++ch)
     {
         for (int s = 0; s < Pattern::kMaxSteps; ++s)
@@ -936,6 +977,11 @@ void ChannelRackComponent::resized()
     varBtnB.setBounds(varBtnX + 1 * (varBtnW + 2), varBtnY, varBtnW, varBtnH);
     varBtnC.setBounds(varBtnX + 2 * (varBtnW + 2), varBtnY, varBtnW, varBtnH);
     varBtnD.setBounds(varBtnX + 3 * (varBtnW + 2), varBtnY, varBtnW, varBtnH);
+
+    // Swing slider — right of variation buttons
+    const int swingX = varBtnX + 4 * (varBtnW + 2) + 12;
+    swingLabel.setBounds(swingX, controlsY + 2, 40, 26);
+    swingSlider.setBounds(swingX + 38, controlsY + 2, 110, 26);
 
     // Inspector position update (only if open)
     if (inspectorCh >= 0) layoutInspector();

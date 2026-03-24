@@ -29,9 +29,10 @@ struct PlaybackSnapshot
     static constexpr int kSteps = kMaxPatternSteps;
     static constexpr int kNotes = 256;  // max notes per channel
 
-    int  patternId = -1;
-    int  stepCount = 16;
-    bool steps[kCh][kSteps] = {};
+    int   patternId = -1;
+    int   stepCount = 16;
+    float swingAmount = 0.0f;  // 0.0 = straight, 0.33 = triplet, 0.5 = dotted
+    bool  steps[kCh][kSteps] = {};
 
     StepParams stepParams[kCh][kSteps] = {};  // per-step expression (Pattern mode)
 
@@ -65,6 +66,7 @@ public:
     bool isPlaying() const;
 
     void setPatternStepCount(int stepCount);
+    void setSwingAmount(float swing) { sequencer.setSwingAmount(swing); }
     void setPlayMode(PlayMode mode);
     void setProject(Project* projectPtr);
 
@@ -252,6 +254,10 @@ public:
     //          Song mode should pass the last clip end bar).
     // Returns true on success.
     bool renderToFile(const juce::File& outputFile, PlayMode mode, int numBars);
+
+    // Stem export — renders each mixer track to a separate WAV file.
+    // Returns number of successfully exported stems (0–9: 8 tracks + master).
+    int renderStemsToFolder(const juce::File& folder, PlayMode mode, int numBars);
 
     // --- Recording -----------------------------------------------------------
     void setRecordArmed(bool armed)  { recordArmed_.store(armed, std::memory_order_relaxed); }

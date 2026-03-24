@@ -32,6 +32,8 @@ bool ProjectSerializer::save(const Project& project, const juce::File& file)
         patEl->setAttribute("name",       pat.name);
         patEl->setAttribute("stepCount",  pat.stepCount);
         patEl->setAttribute("lengthBars", pat.lengthBars);
+        if (pat.swingAmount != 0.0f)
+            patEl->setAttribute("swing",  (double)pat.swingAmount);
 
         for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
         {
@@ -114,6 +116,8 @@ bool ProjectSerializer::save(const Project& project, const juce::File& file)
                         spEl->setAttribute("cutM",  (double)stepP.cutoffMod);
                     if (stepP.startOffsetFrac != 0.0f)
                         spEl->setAttribute("stOff", (double)stepP.startOffsetFrac);
+                    if (stepP.timingOffset != 0.0f)
+                        spEl->setAttribute("tOff", (double)stepP.timingOffset);
                 }
                 for (const auto& note : pat.variations[vi].notes[ch])
                 {
@@ -362,7 +366,8 @@ bool ProjectSerializer::load(juce::File& file, Project& projectOut)
             pat.name      = patEl->getStringAttribute("name",   "Pattern");
             pat.stepCount = juce::jlimit(1, Pattern::kMaxSteps,
                                          patEl->getIntAttribute("stepCount", 16));
-            pat.lengthBars= patEl->getIntAttribute("lengthBars",1);
+            pat.lengthBars  = patEl->getIntAttribute("lengthBars", 1);
+            pat.swingAmount = (float)patEl->getDoubleAttribute("swing", 0.0);
 
             for (auto* chEl : patEl->getChildIterator())
             {
@@ -454,8 +459,9 @@ bool ProjectSerializer::load(juce::File& file, Project& projectOut)
                                 stepP.gate           = (float)nEl->getDoubleAttribute("gate",  1.0);
                                 stepP.probability    = (float)nEl->getDoubleAttribute("prob",  1.0);
                                 stepP.pitchOffset    = nEl->getIntAttribute("pit", 0);
-                                stepP.cutoffMod      = (float)nEl->getDoubleAttribute("cutM",  0.0);
+                                stepP.cutoffMod       = (float)nEl->getDoubleAttribute("cutM",  0.0);
                                 stepP.startOffsetFrac = (float)nEl->getDoubleAttribute("stOff", 0.0);
+                                stepP.timingOffset    = (float)nEl->getDoubleAttribute("tOff",  0.0);
                             }
                             continue;
                         }

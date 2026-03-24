@@ -26,6 +26,8 @@ public:
     void setBPM(double bpm);
     void setStep(int channel, int step, bool active);
     void setStepCount(int newCount);
+    void setSwingAmount(float swing) { swingAmount = juce::jlimit(0.0f, 1.0f, swing); }
+    void setStepTimingOffset(int step, float offset);  // per-step timing
 
     bool isPlaying() const { return playing; }
     int  getCurrentStep() const { return currentStep; }
@@ -50,6 +52,8 @@ private:
     double sampleCounter    = 0.0;
     bool   playing          = false;
     bool   fireStepZeroOnNextBlock = false;
+    float  swingAmount      = 0.0f;   // 0.0 = straight, 0.5 = dotted swing
+    float  stepTimingOffset[MAX_STEPS] = {}; // per-step timing offset (-0.5..+0.5)
 
     void advanceStep(int offsetInBuffer);
     void triggerCurrentStep(int offsetInBuffer);

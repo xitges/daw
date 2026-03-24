@@ -447,6 +447,55 @@ MainComponent::MainComponent()
             });
     };
 
+    toolbar.onExportStems = [this]
+    {
+        syncPatternToEngine();
+
+        int numBars = 0;
+        if (toolbar.getPlayMode() == PlayMode::Pattern)
+        {
+            if (auto* pat = findPattern(activePatternId))
+                numBars = juce::jmax(1, (int)std::ceil((double)pat->stepCount / 16.0)) * 4;
+            if (numBars <= 0) numBars = 4;
+        }
+        else
+        {
+            for (const auto& clip : project.playlistClips)
+                numBars = juce::jmax(numBars, (int)std::ceil(clip.startBar + clip.lengthBars));
+            if (numBars <= 0) numBars = 8;
+        }
+
+        const int      barsToRender = numBars;
+        const PlayMode modeToRender = toolbar.getPlayMode();
+
+        fileChooser = std::make_shared<juce::FileChooser>(
+            "Select Folder for Stems",
+            juce::File::getSpecialLocation(juce::File::userDocumentsDirectory));
+
+        fileChooser->launchAsync(
+            juce::FileBrowserComponent::openMode |
+            juce::FileBrowserComponent::canSelectDirectories,
+            [this, barsToRender, modeToRender](const juce::FileChooser& fc)
+            {
+                auto folder = fc.getResult();
+                if (!folder.isDirectory()) return;
+
+                audioEngine.stop();
+
+                int count = audioEngine.renderStemsToFolder(folder, modeToRender, barsToRender);
+                if (count > 0)
+                    juce::AlertWindow::showMessageBoxAsync(
+                        juce::MessageBoxIconType::InfoIcon,
+                        "Stem Export Complete",
+                        juce::String(count) + " stems saved to:\n" + folder.getFullPathName());
+                else
+                    juce::AlertWindow::showMessageBoxAsync(
+                        juce::MessageBoxIconType::WarningIcon,
+                        "Stem Export Failed",
+                        "Could not export stems.");
+            });
+    };
+
     toolbar.setProjectTitle("", false);
 
     // ---- Playlist inside Viewport
@@ -582,6 +631,17 @@ MainComponent::MainComponent()
             audioEngine.setPatternStepCount(newCount);
             if (pianoRollWindow != nullptr && pianoRollWindow->isVisible())
                 pianoRollWindow->content.pianoRoll.updateStepCount();
+        }
+        markDirty();
+    };
+
+    // ---- Groove swing
+    channelRack.onSwingChanged = [this](float swing)
+    {
+        if (auto* pat = findPattern(activePatternId))
+        {
+            pat->swingAmount = swing;
+            audioEngine.setSwingAmount(swing);
         }
         markDirty();
     };
