@@ -359,6 +359,8 @@ public:
         waveBox.addItem("Pulse",    5);
         waveBox.addItem("Noise",    6);
         waveBox.addItem("Supersaw", 7);
+        waveBox.addItem("Plucked",  8);
+        waveBox.addItem("Wind",     9);
         waveBox.setSelectedId(2, juce::dontSendNotification);
         waveBox.onChange = [this] { notify(); };
         addAndMakeVisible(waveBox);

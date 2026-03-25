@@ -633,17 +633,19 @@ public:
         if (useKarplusStrong_)
         {
             ksDelayLen_ = juce::jlimit(2, kKSMaxDelay - 1, (int)std::round(sr / frequency_));
-            ksDamping_ = 0.5f;
-            ksDecay_   = 0.996f;
+            // --- Steel-string acoustic fingerpicking tuning ---
+            ksDamping_    = 0.15f;  // bright: upper harmonics ring longer
+            ksDecay_      = 0.9985f; // ~1-2s natural sustain
+            ksStiffness_  = 0.3f;   // mild inharmonicity
 
-            // Excitation: 70% shaped noise + 30% short triangle impulse,
-            // filtered through one-pole LP at ~4000 Hz for warmth.
-            const float exciteCutoff = 4000.0f; // hardcoded, Phase 2 param
+            // Excitation: 80% bright noise + 20% sharp impulse
+            // High LP cutoff (8kHz) for steel-string snap/shimmer
+            const float exciteCutoff = 8000.0f;
             const float exciteAlpha = 1.0f - std::exp(-2.0f * 3.14159265f * exciteCutoff / (float)sr);
             float exciteLP = 0.0f;
 
-            // Triangle impulse: ramps up then down over the delay length
-            const float triHalf = (float)ksDelayLen_ * 0.5f;
+            // Short impulse concentrated in first 1/4 of delay line (sharp pluck)
+            const float impulsePeak = (float)ksDelayLen_ * 0.15f;
 
             for (int i = 0; i < ksDelayLen_; ++i)
             {
@@ -651,17 +653,27 @@ public:
                 noiseSeed_ = noiseSeed_ * 1664525u + 1013904223u;
                 const float noise = (float)(int32_t)noiseSeed_ * (1.0f / 2147483648.0f);
 
-                // Triangle impulse component (peaks at center, 0 at edges)
-                const float tri = 1.0f - std::abs((float)i - triHalf) / triHalf;
+                // Sharp impulse: exponential decay from start (finger pluck transient)
+                const float impulse = std::exp(-(float)i / std::max(1.0f, impulsePeak));
 
-                // Mix: 70% noise + 30% triangle
-                const float raw = noise * 0.7f + tri * 0.3f;
+                // Mix: 80% noise + 20% impulse
+                const float raw = noise * 0.8f + impulse * 0.2f;
 
                 // One-pole LP filter on excitation
                 exciteLP += (raw - exciteLP) * exciteAlpha;
 
-                ksDelayLine_[i] = exciteLP * velocity * 0.8f;
+                ksDelayLine_[i] = exciteLP * velocity * 0.85f;
             }
+
+            // Pluck position comb: closer to bridge (0.10) for brighter articulation
+            const float pluckPos = 0.10f;
+            const int combDelay = juce::jmax(1, (int)(ksDelayLen_ * pluckPos));
+            for (int i = ksDelayLen_ - 1; i >= 0; --i)
+            {
+                const float delayed = (i >= combDelay) ? ksDelayLine_[i - combDelay] : 0.0f;
+                ksDelayLine_[i] = ksDelayLine_[i] - delayed;
+            }
+
             for (int i = ksDelayLen_; i < kKSMaxDelay; ++i)
                 ksDelayLine_[i] = 0.0f;
 
@@ -669,6 +681,71 @@ public:
             ksLPState_    = 0.0f;
             ksDCBlock_z1_ = 0.0f;
             ksDCBlock_y1_ = 0.0f;
+            ksAP_x1_ = 0.0f;
+            ksAP_y1_ = 0.0f;
+
+            // Body resonance: low body (180Hz, Q=1.2) — soundboard warmth
+            ksBody_z1_ = 0.0f;
+            ksBody_z2_ = 0.0f;
+            {
+                const float bodyFreq = 180.0f;
+                const float bodyQ    = 1.2f;
+                const float w0 = 2.0f * 3.14159265f * bodyFreq / (float)sr;
+                const float sinW0 = std::sin(w0);
+                const float cosW0 = std::cos(w0);
+                const float alpha = sinW0 / (2.0f * bodyQ);
+                const float a0 = 1.0f + alpha;
+                ksBodyB0_ =  (alpha) / a0;
+                ksBodyB1_ =  0.0f;
+                ksBodyB2_ = (-alpha) / a0;
+                ksBodyA1_ = (-2.0f * cosW0) / a0;
+                ksBodyA2_ = (1.0f - alpha) / a0;
+            }
+
+            // Presence peak: 3kHz, Q=2.0 — steel-string sparkle
+            ksPres_z1_ = 0.0f;
+            ksPres_z2_ = 0.0f;
+            {
+                const float presFreq = 3000.0f;
+                const float presQ    = 2.0f;
+                const float w0 = 2.0f * 3.14159265f * presFreq / (float)sr;
+                const float sinW0 = std::sin(w0);
+                const float cosW0 = std::cos(w0);
+                const float alpha = sinW0 / (2.0f * presQ);
+                const float a0 = 1.0f + alpha;
+                ksPresB0_ =  (alpha) / a0;
+                ksPresB1_ =  0.0f;
+                ksPresB2_ = (-alpha) / a0;
+                ksPresA1_ = (-2.0f * cosW0) / a0;
+                ksPresA2_ = (1.0f - alpha) / a0;
+            }
+
+            // Micro-chorus: subtle per-voice LFO for "alive" string vibration
+            ksChorusPhase_ = SynthVoicing::stableHash01(voiceSlot * 577 + 31);
+            ksChorusRate_  = 0.8f + SynthVoicing::stableHash01(voiceSlot * 397 + 67) * 0.6f; // 0.8-1.4 Hz
+        }
+
+        // Wind instrument init (waveform 8 = "Wind")
+        useWindModel_ = (p.waveform == 8);
+        if (useWindModel_)
+        {
+            // Bore delay: closed tube → half wavelength
+            windDelayLen_ = juce::jlimit(2, kKSMaxDelay - 1, (int)std::round(sr / (2.0 * frequency_)));
+
+            // Hardcoded defaults for Phase 1
+            windBreathTarget_  = juce::jlimit(0.2f, 0.65f, velocity * 0.5f);
+            windReedStiffness_ = 0.6f;
+            windBoreLoss_      = 0.3f;
+            windNoiseAmount_   = 0.08f;
+
+            // Zero-fill bore (no initial excitation — reed drives it)
+            for (int i = 0; i < kKSMaxDelay; ++i)
+                windDelayLine_[i] = 0.0f;
+
+            windWritePos_   = 0;
+            windLPState_    = 0.0f;
+            windDCBlock_z1_ = 0.0f;
+            windDCBlock_y1_ = 0.0f;
         }
     }
 
@@ -964,14 +1041,89 @@ public:
                 float rawSampleL = 0.0f, rawSampleR = 0.0f;
                 if (useKarplusStrong_)   // Waveform 7 — Karplus-Strong plucked string
                 {
-                    const float delaySample = ksDelayLine_[ksWritePos_];
+                    // Micro-chorus: read from fractional delay position
+                    // LFO modulates read offset by ±0.4 samples for subtle pitch wobble
+                    ksChorusPhase_ += ksChorusRate_ / (float)sr;
+                    if (ksChorusPhase_ >= 1.0f) ksChorusPhase_ -= 1.0f;
+                    const float chorusMod = std::sin(ksChorusPhase_ * 6.283185307f) * 0.4f;
+                    const float fractReadPos = (float)ksWritePos_ + chorusMod;
+                    const int readIdx0 = ((int)fractReadPos % ksDelayLen_ + ksDelayLen_) % ksDelayLen_;
+                    const int readIdx1 = (readIdx0 + 1) % ksDelayLen_;
+                    const float frac = fractReadPos - std::floor(fractReadPos);
+                    const float delaySample = ksDelayLine_[readIdx0] * (1.0f - frac)
+                                            + ksDelayLine_[readIdx1] * frac;
+
+                    // Loss filter: one-pole LP (low damping = bright steel-string)
                     ksLPState_ = (1.0f - ksDamping_) * delaySample + ksDamping_ * ksLPState_;
-                    ksDelayLine_[ksWritePos_] = ksLPState_ * ksDecay_;
+
+                    // Allpass dispersion (string stiffness)
+                    const float apIn = ksLPState_;
+                    const float apOut = ksStiffness_ * apIn + ksAP_x1_ - ksStiffness_ * ksAP_y1_;
+                    ksAP_x1_ = apIn;
+                    ksAP_y1_ = apOut;
+
+                    // Write feedback into delay line
+                    ksDelayLine_[ksWritePos_] = apOut * ksDecay_;
                     ksWritePos_ = (ksWritePos_ + 1) % ksDelayLen_;
+
                     // DC blocker
                     const float dcOut = delaySample - ksDCBlock_z1_ + 0.995f * ksDCBlock_y1_;
                     ksDCBlock_z1_ = delaySample;
                     ksDCBlock_y1_ = dcOut;
+
+                    // Body resonance: low body (180Hz soundboard warmth)
+                    const float bodyOut = ksBodyB0_ * dcOut + ksBody_z1_;
+                    ksBody_z1_ = ksBodyB1_ * dcOut - ksBodyA1_ * bodyOut + ksBody_z2_;
+                    ksBody_z2_ = ksBodyB2_ * dcOut - ksBodyA2_ * bodyOut;
+
+                    // Presence peak (3kHz steel-string sparkle)
+                    const float presOut = ksPresB0_ * dcOut + ksPres_z1_;
+                    ksPres_z1_ = ksPresB1_ * dcOut - ksPresA1_ * presOut + ksPres_z2_;
+                    ksPres_z2_ = ksPresB2_ * dcOut - ksPresA2_ * presOut;
+
+                    // Mix: 65% dry + 25% body (+4dB) + 10% presence (+3dB)
+                    const float mixed = dcOut * 0.65f
+                                      + bodyOut * 1.58f * 0.25f   // +4dB ≈ 1.58×
+                                      + presOut * 1.41f * 0.10f;  // +3dB ≈ 1.41×
+
+                    rawSampleL = rawSampleR = mixed;
+                }
+                else if (useWindModel_)   // Waveform 8 — Wind instrument (reed + bore)
+                {
+                    // Breath pressure driven by ADSR envelope
+                    float breath = envLevel_ * windBreathTarget_;
+
+                    // Add breath noise for realism
+                    breath += nextNoise() * windNoiseAmount_ * breath;
+
+                    // Read bore output (from opposite end of delay line)
+                    const int readPos = (windWritePos_ + 1) % windDelayLen_;
+                    const float boreOut = windDelayLine_[readPos];
+
+                    // Bore loss filter on feedback
+                    windLPState_ = (1.0f - windBoreLoss_) * boreOut + windBoreLoss_ * windLPState_;
+
+                    // Closed-end reflection: invert signal
+                    const float boreFeedback = -windLPState_;
+
+                    // Reed input = breath pressure + bore feedback
+                    const float reedIn = juce::jlimit(-1.0f, 1.0f, breath + boreFeedback * 0.95f);
+
+                    // Reed nonlinearity: cubic soft clipper
+                    // flow = reedIn * (1 - reedIn^2) — creates odd harmonics (clarinet character)
+                    const float reedInSq = reedIn * reedIn;
+                    float flow = reedIn * (1.0f - reedInSq * windReedStiffness_);
+                    flow = juce::jlimit(-1.0f, 1.0f, flow);
+
+                    // Write flow into bore delay line
+                    windDelayLine_[windWritePos_] = flow;
+                    windWritePos_ = (windWritePos_ + 1) % windDelayLen_;
+
+                    // DC blocker on output
+                    const float dcOut = boreOut - windDCBlock_z1_ + 0.995f * windDCBlock_y1_;
+                    windDCBlock_z1_ = boreOut;
+                    windDCBlock_y1_ = dcOut;
+
                     rawSampleL = rawSampleR = dcOut;
                 }
                 else if (oscWaveform_ == 5)   // White noise — no phase oscillation
@@ -1154,11 +1306,46 @@ private:
     float ksDelayLine_[kKSMaxDelay] = {};
     int   ksDelayLen_   = 100;      // delay line length in samples (= sr / freq)
     int   ksWritePos_   = 0;
-    float ksLPState_    = 0.0f;     // one-pole LP filter state (damping)
+    float ksLPState_    = 0.0f;     // one-pole LP filter state (damping/loss)
     float ksDCBlock_z1_ = 0.0f;     // DC blocker state
     float ksDCBlock_y1_ = 0.0f;
-    float ksDamping_    = 0.5f;     // LP coeff: 0=bright, 1=dark
+    float ksDamping_    = 0.4f;     // loss filter coeff: 0=bright, 1=dark
     float ksDecay_      = 0.996f;   // feedback gain (controls sustain)
+    // Step 4: allpass dispersion (string stiffness)
+    float ksAP_x1_      = 0.0f;     // allpass previous input
+    float ksAP_y1_      = 0.0f;     // allpass previous output
+    float ksStiffness_  = 0.5f;     // allpass coeff (hardcoded Phase 1)
+    // Step 5: body resonance — two BPFs (low body + presence)
+    float ksBody_z1_    = 0.0f;
+    float ksBody_z2_    = 0.0f;
+    float ksBodyB0_     = 0.0f;     // low body BPF coefficients
+    float ksBodyB1_     = 0.0f;
+    float ksBodyB2_     = 0.0f;
+    float ksBodyA1_     = 0.0f;
+    float ksBodyA2_     = 0.0f;
+    float ksPres_z1_    = 0.0f;     // presence peak BPF state
+    float ksPres_z2_    = 0.0f;
+    float ksPresB0_     = 0.0f;
+    float ksPresB1_     = 0.0f;
+    float ksPresB2_     = 0.0f;
+    float ksPresA1_     = 0.0f;
+    float ksPresA2_     = 0.0f;
+    // Micro-chorus: slow LFO modulates fractional delay read position
+    float ksChorusPhase_  = 0.0f;
+    float ksChorusRate_   = 0.0f;   // Hz (randomised per voice)
+
+    // Wind instrument model (active when useWindModel_ == true)
+    bool  useWindModel_      = false;
+    float windDelayLine_[kKSMaxDelay] = {};
+    int   windDelayLen_      = 100;
+    int   windWritePos_      = 0;
+    float windLPState_       = 0.0f;    // bore loss filter state
+    float windDCBlock_z1_    = 0.0f;
+    float windDCBlock_y1_    = 0.0f;
+    float windBreathTarget_  = 0.4f;    // velocity-based target pressure
+    float windReedStiffness_ = 0.6f;    // reed nonlinearity amount
+    float windBoreLoss_      = 0.3f;    // bore LP coefficient
+    float windNoiseAmount_   = 0.08f;   // breath noise mix
 
     // Preview voice tag — set when triggered via editor Test Sound.
     // Allows killPreviewVoices() to target only editor-audition voices.
