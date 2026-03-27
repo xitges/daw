@@ -502,13 +502,16 @@ public:
                     selectSingleNote(i);
 
                 draggingIdx    = i;
-                resizingNote   = (pos.x >= r.getRight() - resizeZone);
+                const bool nearLeftEdge  = (pos.x <= r.getX() + resizeZone);
+                const bool nearRightEdge = (pos.x >= r.getRight() - resizeZone);
+                resizingNote   = nearLeftEdge || nearRightEdge;
+                resizeFromLeft = nearLeftEdge && !nearRightEdge;
                 dragStartBeat  = noteList[(size_t)i].startBeat;
                 dragStartPitch = noteList[(size_t)i].pitch;
                 dragStartLen   = noteList[(size_t)i].lengthBeats;
-                // Anchor resize from the actual note right edge, not the raw click position.
-                // Using pos.x introduces an offset that misaligns the snap grid.
-                dragStartMouseX = resizingNote ? xFromBeat(dragStartBeat + dragStartLen) : pos.x;
+                dragStartMouseX = resizingNote
+                    ? (resizeFromLeft ? xFromBeat(dragStartBeat) : xFromBeat(dragStartBeat + dragStartLen))
+                    : pos.x;
                 dragStartMouseY = pos.y;
                 captureSelectedNoteDragState();
                 return;
@@ -605,11 +608,26 @@ public:
         {
             // Alt = free resize (no snap); otherwise snap to grid
             // Minimum is always 1/64 note regardless of snap setting
-            const float raw = dragStartLen + dx;
-            const float snapped = e.mods.isAltDown()
-                                  ? raw
-                                  : snapBeat(raw);
-            note.lengthBeats = juce::jmax(kMinNoteLen, snapped);
+            if (resizeFromLeft)
+            {
+                const float fixedEnd = dragStartBeat + dragStartLen;
+                float newStart = dragStartBeat + dx;
+                const float maxStart = fixedEnd - kMinNoteLen;
+                newStart = juce::jlimit(0.0f, maxStart, newStart);
+                if (! e.mods.isAltDown())
+                    newStart = snapBeat(newStart);
+                newStart = juce::jlimit(0.0f, maxStart, newStart);
+                note.startBeat = newStart;
+                note.lengthBeats = juce::jmax(kMinNoteLen, fixedEnd - newStart);
+            }
+            else
+            {
+                const float raw = dragStartLen + dx;
+                const float snapped = e.mods.isAltDown()
+                                      ? raw
+                                      : snapBeat(raw);
+                note.lengthBeats = juce::jmax(kMinNoteLen, snapped);
+            }
         }
         else
         {
@@ -1146,6 +1164,7 @@ private:
     int   draggingIdx     = -1;
     int   draggingVelIdx  = -1;   // index of note being velocity-edited
     bool  resizingNote    = false;
+    bool  resizeFromLeft  = false;
     float dragStartBeat   = 0.0f;
     int   dragStartPitch  = 0;
     float dragStartLen    = 0.0f;
@@ -1301,6 +1320,7 @@ private:
         draggingIdx = -1;
         draggingVelIdx = -1;
         resizingNote = false;
+        resizeFromLeft = false;
         pendingEmptyGesture = false;
         pendingEmptyGestureAdditive = false;
         marqueeSelecting = false;
@@ -2022,6 +2042,7 @@ private:
 
             // Resize handle stripe
             g.setColour(noteFill.brighter(0.5f).withAlpha(0.6f));
+            g.fillRect(r.getX() + 1, r.getY() + 2, 2, r.getHeight() - 4);
             g.fillRect(r.getRight() - 3, r.getY() + 2, 2, r.getHeight() - 4);
 
             // Velocity value hint when dragging this note's velocity
