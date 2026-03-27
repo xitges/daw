@@ -858,7 +858,11 @@ public:
         {
             if (mods.isShiftDown())
             {
-                nudgeActiveNotesPitch(+1);
+                // Shift+Up: move keyboard mapping range up by 1 semitone
+                keyboardBasePitch = juce::jlimit(minPitch, maxPitch - (kKeyboardSpan - 1),
+                                                 keyboardBasePitch + 1);
+                if (onKeyboardRangeChanged) onKeyboardRangeChanged(keyboardBasePitch);
+                repaint();
                 return true;
             }
             cursorPitch = moveCursorByScaleStep(+1);
@@ -870,7 +874,11 @@ public:
         {
             if (mods.isShiftDown())
             {
-                nudgeActiveNotesPitch(-1);
+                // Shift+Down: move keyboard mapping range down by 1 semitone
+                keyboardBasePitch = juce::jlimit(minPitch, maxPitch - (kKeyboardSpan - 1),
+                                                 keyboardBasePitch - 1);
+                if (onKeyboardRangeChanged) onKeyboardRangeChanged(keyboardBasePitch);
+                repaint();
                 return true;
             }
             cursorPitch = moveCursorByScaleStep(-1);
