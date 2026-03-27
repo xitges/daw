@@ -460,6 +460,7 @@ void ChannelRackComponent::loadPattern(const Pattern& pat, int varIdx)
     // Sync step count
     stepCount = juce::jlimit(1, Pattern::kMaxSteps, pat.stepCount);
     stepCountSlider.setValue(stepCount, juce::dontSendNotification);
+    patternStartStep = juce::jlimit(0, stepCount - 1, patternStartStep);
 
     // Sync swing
     swingSlider.setValue((double)pat.swingAmount, juce::dontSendNotification);
@@ -579,6 +580,11 @@ void ChannelRackComponent::drawHeader(juce::Graphics& g)
     g.fillRect(0, 0, getWidth(), HEADER_HEIGHT);
 
     const float stepW = (getWidth() - LABEL_WIDTH) / (float)stepCount;
+    const int startX = LABEL_WIDTH + (int)(patternStartStep * stepW);
+    g.setColour(juce::Colour(0xff7dd3fc).withAlpha(0.18f));
+    g.fillRect(startX, 0, (int)stepW, HEADER_HEIGHT);
+    g.setColour(juce::Colour(0xff7dd3fc).withAlpha(0.85f));
+    g.drawLine((float)startX, 0.0f, (float)startX, (float)HEADER_HEIGHT, 1.2f);
 
     for (int i = 0; i < stepCount; ++i)
     {
@@ -740,6 +746,19 @@ void ChannelRackComponent::mouseDown(const juce::MouseEvent& e)
 
     const int x = e.getPosition().getX();
     const int y = e.getPosition().getY() - HEADER_HEIGHT;
+
+    if (e.mods.isLeftButtonDown() && e.getPosition().getY() >= 0 && e.getPosition().getY() < HEADER_HEIGHT && x >= stepAreaX)
+    {
+        const int s = juce::jlimit(0, stepCount - 1, (int)((x - stepAreaX) / stepW));
+        if (patternStartStep != s)
+        {
+            patternStartStep = s;
+            if (onPatternStartStepChanged)
+                onPatternStartStepChanged(s);
+            repaint();
+        }
+        return;
+    }
 
     if (y < 0) return;
 

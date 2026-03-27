@@ -152,6 +152,7 @@ MainComponent::MainComponent()
     addAndMakeVisible(toolbar);
 
     toolbar.updatePatternList(project.patterns, activePatternId);
+    channelRack.setPatternStartStep(patternStartStep);
 
     toolbar.onPlay = [this]
     {
@@ -161,7 +162,8 @@ MainComponent::MainComponent()
         project.bpm = toolbar.getBPM();
         audioEngine.setBPM(project.bpm);
         audioEngine.setPlayMode(toolbar.getPlayMode());
-        audioEngine.play();
+        project.patternStartStep = patternStartStep;
+        audioEngine.play(patternStartStep, project.songStartBar);
     };
 
     toolbar.onStop = [this]
@@ -274,6 +276,13 @@ MainComponent::MainComponent()
 
         project.playMode = mode;
         audioEngine.setPlayMode(mode);
+        markDirty();
+    };
+
+    channelRack.onPatternStartStepChanged = [this](int stepZeroBased)
+    {
+        patternStartStep = juce::jmax(0, stepZeroBased);
+        project.patternStartStep = patternStartStep;
         markDirty();
     };
 
@@ -615,9 +624,16 @@ MainComponent::MainComponent()
         if (auto* pat = findPattern(activePatternId))
         {
             pat->stepCount = newCount;
+            patternStartStep = juce::jlimit(0, pat->stepCount - 1, patternStartStep);
+            pianoRollStartStep = juce::jlimit(0, pat->stepCount - 1, pianoRollStartStep);
+            project.patternStartStep = patternStartStep;
+            channelRack.setPatternStartStep(patternStartStep);
             audioEngine.setPatternStepCount(newCount);
             if (pianoRollWindow != nullptr && pianoRollWindow->isVisible())
+            {
                 pianoRollWindow->content.pianoRoll.updateStepCount();
+                pianoRollWindow->content.setStartStep(pianoRollStartStep);
+            }
         }
         markDirty();
     };
@@ -1061,7 +1077,15 @@ MainComponent::MainComponent()
             channelRack.saveToPattern(*cur);
         activePatternId = patternId;
         if (auto* pat = findPattern(activePatternId))
+        {
             channelRack.loadPattern(*pat);
+            patternStartStep = juce::jlimit(0, pat->stepCount - 1, patternStartStep);
+            pianoRollStartStep = juce::jlimit(0, pat->stepCount - 1, pianoRollStartStep);
+            project.patternStartStep = patternStartStep;
+            channelRack.setPatternStartStep(patternStartStep);
+            if (pianoRollWindow != nullptr && pianoRollWindow->isVisible())
+                pianoRollWindow->content.setStartStep(pianoRollStartStep);
+        }
         toolbar.updatePatternList(project.patterns, activePatternId);
         if (auto* pat = findPattern(activePatternId))
             mixer.updateRoutingLabels(pat->channelMixerRouting);
@@ -1083,6 +1107,8 @@ MainComponent::MainComponent()
         if (auto* pat = findPattern(activePatternId))
         {
             pianoRollWindow->content.setPattern(pat, ch, project.bpm);
+            pianoRollStartStep = juce::jlimit(0, pat->stepCount - 1, pianoRollStartStep);
+            pianoRollWindow->content.setStartStep(pianoRollStartStep);
             pianoRollWindow->content.setKeySignature(project.keySignature);
             pianoRollWindow->content.pianoRoll.onNotesChanged = [this] { markDirty(); };
             pianoRollWindow->content.pianoRoll.onNoteDeleted  = [this, ch](int pitch)
@@ -1127,7 +1153,11 @@ MainComponent::MainComponent()
                     {
                         beginPianoRollPatternPlayback();
                         syncPatternToEngine();
-                        audioEngine.play();
+                        const int startStep = (pianoRollWindow != nullptr)
+                            ? pianoRollWindow->content.pianoRoll.getStartStep()
+                            : pianoRollStartStep;
+                        pianoRollStartStep = juce::jmax(0, startStep);
+                        audioEngine.play(pianoRollStartStep, project.songStartBar);
                     }
                 }
             };
@@ -1137,7 +1167,16 @@ MainComponent::MainComponent()
             {
                 beginPianoRollPatternPlayback();
                 syncPatternToEngine();
-                audioEngine.play();
+                const int startStep = (pianoRollWindow != nullptr)
+                    ? pianoRollWindow->content.pianoRoll.getStartStep()
+                    : pianoRollStartStep;
+                pianoRollStartStep = juce::jmax(0, startStep);
+                audioEngine.play(pianoRollStartStep, project.songStartBar);
+            };
+            pianoRollWindow->content.pianoRoll.onStartStepSelected = [this](int stepZeroBased)
+            {
+                pianoRollStartStep = juce::jmax(0, stepZeroBased);
+                markDirty();
             };
 
             // Punch-in detection: piano roll checks if engine is already running
@@ -1196,6 +1235,8 @@ MainComponent::MainComponent()
             {
                 pianoRollWindow->content.pianoRoll.variationIdx = newIdx;
                 pianoRollWindow->content.setPattern(pat, pianoRollChannel, project.bpm);
+                pianoRollStartStep = juce::jlimit(0, pat->stepCount - 1, pianoRollStartStep);
+                pianoRollWindow->content.setStartStep(pianoRollStartStep);
             }
         }
     };
@@ -2063,6 +2104,12 @@ void MainComponent::selectPattern(int id)
 
         // Sync step pattern to engine so it plays correctly immediately
         audioEngine.setPatternStepCount(newPat->stepCount);
+        patternStartStep = juce::jlimit(0, newPat->stepCount - 1, patternStartStep);
+        pianoRollStartStep = juce::jlimit(0, newPat->stepCount - 1, pianoRollStartStep);
+        project.patternStartStep = patternStartStep;
+        channelRack.setPatternStartStep(patternStartStep);
+        if (pianoRollWindow != nullptr && pianoRollWindow->isVisible())
+            pianoRollWindow->content.setStartStep(pianoRollStartStep);
         {
             const int vi = channelRack.activeVariation;
             for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
@@ -2080,6 +2127,8 @@ void MainComponent::selectPattern(int id)
         if (auto* pat = findPattern(activePatternId))
         {
             pianoRollWindow->content.setPattern(pat, pianoRollChannel, project.bpm);
+            pianoRollStartStep = juce::jlimit(0, pat->stepCount - 1, pianoRollStartStep);
+            pianoRollWindow->content.setStartStep(pianoRollStartStep);
             pianoRollWindow->content.setKeySignature(project.keySignature);
         }
 }
@@ -2097,6 +2146,8 @@ void MainComponent::syncPatternToEngine()
     if (toolbar.getPlayMode() == PlayMode::Pattern)
     {
         audioEngine.setPatternStepCount(pat->stepCount);
+        patternStartStep = juce::jlimit(0, pat->stepCount - 1, patternStartStep);
+        project.patternStartStep = patternStartStep;
         const int vi = channelRack.activeVariation;
         for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
             for (int s = 0; s < pat->stepCount; ++s)
@@ -2302,7 +2353,11 @@ void MainComponent::importCurrentPianoRollFromMidi()
                 channelRack.loadPattern(*importPat);
 
             if (pianoRollWindow != nullptr)
+            {
                 pianoRollWindow->content.setPattern(importPat, importChannel, project.bpm);
+                pianoRollStartStep = juce::jlimit(0, importPat->stepCount - 1, pianoRollStartStep);
+                pianoRollWindow->content.setStartStep(pianoRollStartStep);
+            }
 
             markDirty();
         });
@@ -2340,6 +2395,8 @@ void MainComponent::reloadProjectIntoUI()
 
     // Restore active pattern if valid, otherwise fall back to the first pattern
     activePatternId = project.activePatternId;
+    patternStartStep = juce::jmax(0, project.patternStartStep);
+    pianoRollStartStep = patternStartStep;
     if (findPattern(activePatternId) == nullptr)
         activePatternId = project.patterns.empty() ? 1 : project.patterns.front().id;
     project.activePatternId = activePatternId;
@@ -2380,6 +2437,10 @@ void MainComponent::reloadProjectIntoUI()
         }
 
         channelRack.loadPattern(*activePat);
+        patternStartStep = juce::jlimit(0, activePat->stepCount - 1, patternStartStep);
+        pianoRollStartStep = juce::jlimit(0, activePat->stepCount - 1, pianoRollStartStep);
+        project.patternStartStep = patternStartStep;
+        channelRack.setPatternStartStep(patternStartStep);
         for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
         {
             if (activePat->samplePaths[ch].isNotEmpty())
@@ -2485,6 +2546,8 @@ void MainComponent::reloadProjectIntoUI()
         if (auto* pat = findPattern(activePatternId))
         {
             pianoRollWindow->content.setPattern(pat, pianoRollChannel, project.bpm);
+            pianoRollStartStep = juce::jlimit(0, pat->stepCount - 1, pianoRollStartStep);
+            pianoRollWindow->content.setStartStep(pianoRollStartStep);
             pianoRollWindow->content.setKeySignature(project.keySignature);
         }
     }
@@ -2677,6 +2740,8 @@ void MainComponent::focusPianoRollChannel(int channelIndex)
     if (auto* pat = findPattern(activePatternId))
     {
         pianoRollWindow->content.setPattern(pat, channelIndex, project.bpm);
+        pianoRollStartStep = juce::jlimit(0, pat->stepCount - 1, pianoRollStartStep);
+        pianoRollWindow->content.setStartStep(pianoRollStartStep);
         pianoRollWindow->content.setKeySignature(project.keySignature);
     }
 }
@@ -2926,7 +2991,11 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
             else
             {
                 syncPatternToEngine();
-                audioEngine.play();
+                const int startStep = (pianoRollWindow != nullptr)
+                    ? pianoRollWindow->content.pianoRoll.getStartStep()
+                    : pianoRollStartStep;
+                pianoRollStartStep = juce::jmax(0, startStep);
+                audioEngine.play(pianoRollStartStep, project.songStartBar);
                 // Note: piano roll path is pattern-mode only, no lastSpaceResumeTime needed
             }
         }
@@ -2934,7 +3003,8 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
         {
             // RESUME from paused/seeked position
             syncPatternToEngine();
-            audioEngine.play();
+            project.patternStartStep = patternStartStep;
+            audioEngine.play(patternStartStep, project.songStartBar);
 
             // Song mode: seek to paused/clicked position (play() resets to 0, override it)
             if (project.playMode == PlayMode::Song && pausedBarSong > 0.0)

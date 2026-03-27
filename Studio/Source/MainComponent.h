@@ -88,6 +88,8 @@ private:
 
     // Pause/resume — saved bar position when Space-paused in Song mode (< 0 = no pause state)
     double pausedBarSong = -1.0;
+    int patternStartStep = 0;
+    int pianoRollStartStep = 0;
 
     // Double-Space detection: timestamp when Space last resumed playback
     juce::int64 lastSpaceResumeTime = 0;

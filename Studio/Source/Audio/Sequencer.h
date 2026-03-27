@@ -21,7 +21,7 @@ public:
     explicit Sequencer(TriggerCallback cb);
 
     void prepare(double sampleRate, int bufferSize);
-    void start();
+    void start(int startStep = 0);
     void stop();
     void setBPM(double bpm);
     void setStep(int channel, int step, bool active);

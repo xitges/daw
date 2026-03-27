@@ -60,7 +60,7 @@ public:
     void shutdown();
 
     // Playback control
-    void play();
+    void play(int patternStartStep = 0, double songStartBar = 0.0);
     void stop();
     void setBPM(double bpm);
     bool isPlaying() const;

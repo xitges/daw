@@ -847,6 +847,8 @@ struct Project
     double bpm = 140.0;
     PlayMode playMode = PlayMode::Pattern;
     int activePatternId = 1;
+    int patternStartStep = 0;   // Pattern mode playback start step (0-based)
+    double songStartBar = 0.0;  // Song mode playback start position in bars
     KeySignature keySignature;
 
     // channel rack state (global: only count is global; names/types live in Pattern)

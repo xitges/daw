@@ -76,6 +76,7 @@ public:
     std::function<void(int ch)>               onOpenSynthEditor;    // M13
     std::function<void(int ch)>               onDeleteChannel;      // delete channel
     std::function<void(const juce::String&)>  onAddChannel;         // add new channel
+    std::function<void(int stepZeroBased)>    onPatternStartStepChanged;
     std::function<int()>                      getCurrentStep;
 
     // M8 — VST/AU plugin actions
@@ -129,6 +130,12 @@ public:
     }
 
     int getStepCount() const { return stepCount; }
+    void setPatternStartStep(int stepZeroBased)
+    {
+        patternStartStep = juce::jlimit(0, juce::jmax(0, stepCount - 1), stepZeroBased);
+        repaint();
+    }
+    int getPatternStartStep() const { return patternStartStep; }
 
     void setPlaybackStep(int step)
     {
@@ -224,6 +231,7 @@ private:
     int dragHoverChannel = -1;
     int currentPlayStep  = -1;
     int stepCount        = 16;
+    int patternStartStep = 0;
 
     // Drag-to-paint state — reset in mouseUp
     int  dragPaintChannel_ = -1;   // channel row locked at mouseDown; -1 = not painting

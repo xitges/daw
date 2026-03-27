@@ -244,8 +244,6 @@ void ToolbarComponent::updatePatternList(const std::vector<Pattern>& patterns, i
     patternBox.setSelectedId(selectedId, juce::dontSendNotification);
 }
 
-// ---------------------------------------------------------------------------
-
 void ToolbarComponent::paint(juce::Graphics& g)
 {
     // macOS toolbar: dark surface

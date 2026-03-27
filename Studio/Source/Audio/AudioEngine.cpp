@@ -183,12 +183,14 @@ void AudioEngine::shutdown()
     deviceManager.closeAudioDevice();
 }
 
-void AudioEngine::play()
+void AudioEngine::play(int patternStartStep, double songStartBar)
 {
     if (playMode == PlayMode::Pattern)
     {
-        patternBeatPos = 0.0;   // M3
-        sequencer.start();
+        const int stepCount = juce::jmax(1, sequencer.getStepCount());
+        const int safeStartStep = juce::jlimit(0, stepCount - 1, patternStartStep);
+        patternBeatPos = (double)safeStartStep * 0.25;   // M3
+        sequencer.start(safeStartStep);
     }
     else
     {
@@ -206,8 +208,10 @@ void AudioEngine::play()
             }
         }
 
-        songSamplePosition.store(0, std::memory_order_relaxed);
-        songBeatPosition_.store(0.0, std::memory_order_relaxed);
+        const double safeSongStartBar = juce::jmax(0.0, songStartBar);
+        songBeatPosition_.store(safeSongStartBar * 4.0, std::memory_order_relaxed);
+        const double samplesPerBar = (sampleRate * 60.0 / bpm.load(std::memory_order_relaxed)) * 4.0;
+        songSamplePosition.store((long)(safeSongStartBar * samplesPerBar), std::memory_order_relaxed);
         std::fill_n(songPlayerClipId, 16, -1);
 
         cacheLoader_ = std::make_unique<CacheLoader>(*this);
@@ -2415,7 +2419,7 @@ bool AudioEngine::renderToFile(const juce::File& outputFile, PlayMode mode, int 
     if (mode == PlayMode::Pattern)
     {
         patternBeatPos = 0.0;   // must reset before offline render
-        sequencer.start();
+        sequencer.start(0);
     }
     else
     {

@@ -21,9 +21,10 @@ void Sequencer::prepare(double sr, int)
     recalcSamplesPerStep();
 }
 
-void Sequencer::start()
+void Sequencer::start(int startStep)
 {
-    currentStep   = 0;
+    const int safeStartStep = (stepCount > 0) ? juce::jlimit(0, stepCount - 1, startStep) : 0;
+    currentStep   = safeStartStep;
     sampleCounter = 0.0;
     playing       = true;
     fireStepZeroOnNextBlock = true;

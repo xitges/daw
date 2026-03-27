@@ -31,12 +31,14 @@ public:
         clearSelection(false);
         resetInteractionState();
         cursorPitch = MusicTheory::snapPitchToScale(cursorPitch, keySignature);
+        selectedStartBeat = (float)clampStartStep((int)std::floor(selectedStartBeat / 0.25f)) * 0.25f;
         updateSizeForZoom();
         repaint();
     }
 
     void updateStepCount()
     {
+        selectedStartBeat = (float)clampStartStep((int)std::floor(selectedStartBeat / 0.25f)) * 0.25f;
         updateSizeForZoom();
         repaint();
     }
@@ -47,6 +49,13 @@ public:
     }
 
     void setSnapBeats(float s) { snapBeats = s; repaint(); }
+    void setStartStep(int stepZeroBased)
+    {
+        const int safeStep = clampStartStep(stepZeroBased);
+        selectedStartBeat = (float)safeStep * 0.25f;
+        repaint();
+    }
+    int getStartStep() const { return clampStartStep((int)std::floor(selectedStartBeat / 0.25f)); }
     void setSelectToolEnabled(bool enabled)
     {
         if (selectToolEnabled == enabled)
@@ -172,6 +181,7 @@ public:
 
     // Fired when Space is pressed — wire to MainComponent play/stop toggle
     std::function<void()> onPlayStopToggle;
+    std::function<void(int stepZeroBased)> onStartStepSelected;
 
     std::function<void()> onSelectionChanged;
     std::function<void(bool selectMode)> onToolModeChanged;
@@ -414,6 +424,19 @@ public:
         if (pattern == nullptr) return;
         const auto pos = e.getPosition();
         resetInteractionState();
+
+        // Ruler click selects pattern playback start step.
+        if (pos.x >= keyWidth && pos.y >= 0 && pos.y < headerH)
+        {
+            const float beat = juce::jmax(0.0f, beatFromX(pos.x));
+            const int step = clampStartStep((int)std::floor(beat / 0.25f));
+            selectedStartBeat = (float)step * 0.25f;
+            hoverStepBeat = selectedStartBeat;
+            if (onStartStepSelected)
+                onStartStepSelected(step);
+            repaint();
+            return;
+        }
 
         // Velocity lane — click to start velocity edit
         if (pos.x >= keyWidth && pos.y >= velLaneY())
@@ -1117,6 +1140,7 @@ private:
 
     int   hoverPitch      = -1;
     float hoverStepBeat   = -1.0f;   // beat position of hovered 1/16 column (-1 = none)
+    float selectedStartBeat = 0.0f;
     KeySignature keySignature {};
     juce::Array<int> selectedNoteIndices;
     int   draggingIdx     = -1;
@@ -1172,6 +1196,11 @@ private:
     float beatFromX(int x)       const { return (float)(x - keyWidth) / pixelsPerBeat; }
     float snapBeat(float b)      const { return std::round(b / snapBeats) * snapBeats; }
     int   velLaneY()             const { return headerH + (maxPitch - minPitch + 1) * noteH + velLaneSep; }
+    int   clampStartStep(int step) const
+    {
+        const int maxStep = pattern != nullptr ? juce::jmax(1, pattern->stepCount) : 1;
+        return juce::jlimit(0, maxStep - 1, step);
+    }
     bool  isBlackKey(int pitch)  const
     {
         const int m = pitch % 12;
@@ -1900,6 +1929,13 @@ private:
             g.setColour(juce::Colour(0xffffffff).withAlpha(0.08f));
             g.fillRect(hx, 0, hw, headerH);
         }
+
+        const int startX = xFromBeat(selectedStartBeat);
+        const int startW = (int)(0.25f * pixelsPerBeat);
+        g.setColour(juce::Colour(0xff7dd3fc).withAlpha(0.18f));
+        g.fillRect(startX, 0, startW, headerH);
+        g.setColour(juce::Colour(0xff7dd3fc).withAlpha(0.85f));
+        g.drawLine((float)startX, 0.0f, (float)startX, (float)headerH, 1.2f);
 
         // State indicator (ARM or REC)
         if (currentRecState == RecState::Armed)
@@ -2749,6 +2785,11 @@ class PianoRollWindow : public juce::DocumentWindow
             pianoRoll.setPattern(pat, ch, bpmValue);
             refreshProgressionOptions();
             refreshBassTargetOptions();
+        }
+
+        void setStartStep(int stepZeroBased)
+        {
+            pianoRoll.setStartStep(stepZeroBased);
         }
 
         void resized() override
