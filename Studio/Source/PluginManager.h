@@ -42,6 +42,10 @@ public:
     void saveList();
     void loadList();
 
+    // Check if plugin directories changed since last scan; rescan if needed.
+    // Returns true if a background rescan was started.
+    bool autoRescanIfNeeded(std::function<void()> completeCb = nullptr);
+
 private:
     PluginManager();
     ~PluginManager();
@@ -49,6 +53,11 @@ private:
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList          knownPlugins;
     std::atomic<bool>              scanning { false };
+
+    // Helpers for auto-rescan
+    juce::int64 computeDirectoryFingerprint() const;
+    void        saveFingerprint(juce::int64 fp);
+    juce::int64 loadFingerprint() const;
 
     struct ScanThread : public juce::Thread
     {

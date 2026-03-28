@@ -383,7 +383,7 @@ public:
 
         g.saveState();
         g.reduceClipRegion(0, headerH, keyWidth, overlayHeight - headerH);
-        g.addTransform(juce::AffineTransform::translation(0.0f, (float)-(viewY + headerH)));
+        g.addTransform(juce::AffineTransform::translation(0.0f, (float)(headerH - viewY)));
         drawPianoKeys(g);
         drawVelocityKeyStub(g);
         g.restoreState();

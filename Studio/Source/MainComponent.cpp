@@ -1487,6 +1487,14 @@ MainComponent::MainComponent()
                     return;
                 }
 
+                // Save to current pattern's plugin slots
+                if (auto* pat = findPattern(activePatternId))
+                {
+                    pat->pluginSlots[(size_t)targetCh].pluginId =
+                        desc.createIdentifierString();
+                    pat->pluginSlots[(size_t)targetCh].enabled = true;
+                }
+                // Also update project-level for serialization backward compat
                 project.channelInstrumentPlugins[(size_t)targetCh].pluginId =
                     desc.createIdentifierString();
                 project.channelInstrumentPlugins[(size_t)targetCh].enabled = true;
@@ -2094,9 +2102,12 @@ int MainComponent::nextPatternId() const
 
 void MainComponent::selectPattern(int id)
 {
-    // Save current channel rack steps into the currently active pattern
+    // Save current channel rack steps + plugin states into the currently active pattern
     if (auto* cur = findPattern(activePatternId))
+    {
         channelRack.saveToPattern(*cur);
+        audioEngine.savePluginStatesToSlots(cur->pluginSlots);
+    }
 
     activePatternId = id;
     project.activePatternId = id;
@@ -2110,6 +2121,11 @@ void MainComponent::selectPattern(int id)
         project.channelCount = patChCount;
         channelRack.resetToChannelCount(patChCount, newPat->channelNames);
         channelRack.loadPattern(*newPat);
+
+        // Restore per-pattern plugins
+        audioEngine.restorePluginsFromSlots(newPat->pluginSlots);
+        for (int ch = 0; ch < patChCount; ++ch)
+            channelRack.setChannelHasPlugin(ch, audioEngine.hasPlugin(ch));
 
         for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
         {
@@ -2532,37 +2548,12 @@ void MainComponent::reloadProjectIntoUI()
         channelRack.setChannelHasPlugin(ch, false);
     }
 
-    for (int ch = 0; ch < 16; ++ch)
+    // Restore plugins from the active pattern's per-pattern slots
+    if (auto* activePat = findPattern(activePatternId))
     {
-        const auto& slot = project.channelInstrumentPlugins[(size_t)ch];
-        if (slot.pluginId.isEmpty() || !slot.enabled) continue;
-
-        // Find the PluginDescription in the known list by identifier string
-        const auto types = PluginManager::getInstance().getKnownPlugins().getTypes();
-        for (const auto& desc : types)
-        {
-            if (desc.createIdentifierString() == slot.pluginId)
-            {
-                juce::String err;
-                audioEngine.loadPlugin(ch, desc, err);
-
-                if (err.isEmpty())
-                {
-                    channelRack.setChannelHasPlugin(ch, true);
-
-                    // Restore plugin state
-                    if (slot.pluginStateBase64.isNotEmpty())
-                    {
-                        juce::MemoryBlock stateData;
-                        stateData.fromBase64Encoding(slot.pluginStateBase64);
-                        if (auto* plugin = audioEngine.getPlugin(ch))
-                            plugin->setStateInformation(stateData.getData(),
-                                                        (int)stateData.getSize());
-                    }
-                }
-                break;
-            }
-        }
+        audioEngine.restorePluginsFromSlots(activePat->pluginSlots);
+        for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
+            channelRack.setChannelHasPlugin(ch, audioEngine.hasPlugin(ch));
     }
 
     if (pianoRollWindow != nullptr && pianoRollWindow->isVisible() && pianoRollChannel >= 0)

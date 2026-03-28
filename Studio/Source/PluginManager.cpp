@@ -83,11 +83,77 @@ void PluginManager::loadList()
 }
 
 // ---------------------------------------------------------------------------
+// Directory fingerprint — sum of modification times of all plugin files
+
+juce::int64 PluginManager::computeDirectoryFingerprint() const
+{
+    juce::int64 fp = 0;
+    for (auto* format : formatManager.getFormats())
+    {
+        const juce::FileSearchPath searchPath = format->getDefaultLocationsToSearch();
+        for (int i = 0; i < searchPath.getNumPaths(); ++i)
+        {
+            const auto dir = searchPath[i];
+            if (!dir.isDirectory()) continue;
+            for (const auto& f : dir.findChildFiles(juce::File::findFilesAndDirectories, false))
+            {
+                const auto ext = f.getFileExtension().toLowerCase();
+                if (ext == ".vst3" || ext == ".component" || ext == ".vst")
+                    fp += f.getLastModificationTime().toMilliseconds();
+            }
+        }
+    }
+    return fp;
+}
+
+void PluginManager::saveFingerprint(juce::int64 fp)
+{
+    juce::ApplicationProperties props;
+    props.setStorageParameters(getPropsOptions());
+    if (auto* pf = props.getUserSettings())
+    {
+        pf->setValue("pluginDirFingerprint", juce::String(fp));
+        pf->saveIfNeeded();
+    }
+}
+
+juce::int64 PluginManager::loadFingerprint() const
+{
+    juce::ApplicationProperties props;
+    props.setStorageParameters(getPropsOptions());
+    if (auto* pf = props.getUserSettings())
+        return pf->getValue("pluginDirFingerprint", "0").getLargeIntValue();
+    return 0;
+}
+
+bool PluginManager::autoRescanIfNeeded(std::function<void()> completeCb)
+{
+    const juce::int64 currentFP = computeDirectoryFingerprint();
+    const juce::int64 savedFP   = loadFingerprint();
+
+    if (currentFP != savedFP)
+    {
+        DBG("Plugin directory changed — auto-rescanning...");
+        knownPlugins.clear();
+        scanPlugins(
+            nullptr,
+            [this, currentFP, completeCb]()
+            {
+                saveFingerprint(currentFP);
+                if (completeCb) completeCb();
+            });
+        return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
 // Initialise
 
 void PluginManager::initialise()
 {
     loadList();
+    autoRescanIfNeeded();
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +207,7 @@ void PluginManager::ScanThread::run()
     }
 
     owner.saveList();
+    owner.saveFingerprint(owner.computeDirectoryFingerprint());
     owner.scanning = false;
 
     if (onComplete)

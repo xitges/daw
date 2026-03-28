@@ -304,6 +304,11 @@ public:
     // Save plugin state into a MemoryBlock (for project serialisation).
     bool getPluginState(int ch, juce::MemoryBlock& stateOut) const;
 
+    // Save all channel plugin states into PluginSlot array (for pattern switch)
+    void savePluginStatesToSlots(std::array<PluginSlot, 16>& slots);
+    // Restore plugins from PluginSlot array (unloads mismatched, loads missing)
+    void restorePluginsFromSlots(const std::array<PluginSlot, 16>& slots);
+
     // Snapshot current project state into the runtime double-buffer so the
     // audio thread sees it lock-free.  Light-weight (no sample cache rebuild).
     void rebuildRuntimeStateFromProject();

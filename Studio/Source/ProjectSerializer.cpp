@@ -146,6 +146,14 @@ bool ProjectSerializer::save(const Project& project, const juce::File& file)
                     nEl->setAttribute("vel",   (double)note.velocity);
                 }
             }
+
+            // Per-pattern plugin slot for this channel
+            const auto& pslot = pat.pluginSlots[(size_t)ch];
+            if (pslot.enabled && pslot.pluginId.isNotEmpty())
+            {
+                chEl->setAttribute("pluginId",    pslot.pluginId);
+                chEl->setAttribute("pluginState", pslot.pluginStateBase64);
+            }
         }
     }
 
@@ -521,6 +529,15 @@ bool ProjectSerializer::load(juce::File& file, Project& projectOut)
                         note.velocity    = (float)nEl->getDoubleAttribute("vel",   0.8);
                         pat.variations[vi].notes[ch].push_back(note);
                     }
+                }
+
+                // Per-pattern plugin slot
+                if (chEl->hasAttribute("pluginId"))
+                {
+                    auto& pslot = pat.pluginSlots[(size_t)ch];
+                    pslot.pluginId          = chEl->getStringAttribute("pluginId");
+                    pslot.pluginStateBase64 = chEl->getStringAttribute("pluginState");
+                    pslot.enabled           = pslot.pluginId.isNotEmpty();
                 }
             }
 
