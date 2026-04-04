@@ -114,7 +114,7 @@ AudioEngine::AudioEngine()
                           ? snap.channelPan[(size_t)ch]
                           : sampleChannelPan_[(size_t)ch].load(std::memory_order_relaxed);
 
-        // ── polySynth Sampler path (ChannelSourceType::Sampler) ───────────────
+        // -- polySynth Sampler path (ChannelSourceType::Sampler) ---------------
         if (srcType == ChannelSourceType::Sampler)
         {
             auto samplerBuf = getSamplerSourceBuffer(ch);
@@ -134,7 +134,7 @@ AudioEngine::AudioEngine()
             }
         }
 
-        // ── Synth path ────────────────────────────────────────────────────────
+        // -- Synth path --------------------------------------------------------
         if (hasSynth)
         {
             const int timbreLen = juce::jmax(1,
@@ -146,7 +146,7 @@ AudioEngine::AudioEngine()
             return;
         }
 
-        // ── Channel source buffer path (drag-dropped samples, old-style) ─────
+        // -- Channel source buffer path (drag-dropped samples, old-style) -----
         {
             auto sourceBuffer = getChannelSourceBufferShared(ch);
             if (sourceBuffer != nullptr)
@@ -160,7 +160,7 @@ AudioEngine::AudioEngine()
             }
         }
 
-        // ── Ultimate fallback: basic saw so the loop is never silent ──────────
+        // -- Ultimate fallback: basic saw so the loop is never silent ----------
         {
             SynthParams fbSp{};
             fbSp.enabled  = true;
@@ -357,7 +357,7 @@ void AudioEngine::stop()
             cacheLoader_->signalThreadShouldExit();
     }
     resetAudioClipTriggers();
-    // Note: liveLoopEngine_ is NOT reset on transport stop — loops are independent of transport.
+    // Note: liveLoopEngine_ is NOT reset on transport stop -- loops are independent of transport.
 }
 
 // --- Recording ----------------------------------------------------------
@@ -485,7 +485,7 @@ void AudioEngine::loadAudioClip(int clipId, const juce::File& file, float clipLe
 
 void AudioEngine::reprocessAudioClipPitch(int clipId, AudioClipMode mode, float pitchSemitone)
 {
-    // Resample mode or no pitch shift: clear any pitched buffer — play from original
+    // Resample mode or no pitch shift: clear any pitched buffer -- play from original
     if (mode == AudioClipMode::Resample || pitchSemitone == 0.0f)
     {
         const juce::SpinLock::ScopedLockType lock(audioClipLock_);
@@ -547,7 +547,7 @@ void AudioEngine::reprocessAudioClipPitch(int clipId, AudioClipMode mode, float 
         stretcher.retrieve(outPtrs.data(), (size_t)outLen);
     }
 
-    // Push result to instance (lock required — audio thread may be running)
+    // Push result to instance (lock required -- audio thread may be running)
     const juce::SpinLock::ScopedLockType lock(audioClipLock_);
     for (auto& inst : audioClipInstances_)
         if (inst.clipId == clipId)
@@ -638,7 +638,7 @@ void AudioEngine::setChannelPan(int ch, float pan)
         sampleChannelPan_[(size_t)ch].store(juce::jlimit(-1.0f, 1.0f, pan), std::memory_order_relaxed);
 }
 
-// ── CC Real-Time Parameter Control ──────────────────────────────────────────
+// -- CC Real-Time Parameter Control ------------------------------------------
 
 void AudioEngine::setCcChannelVolume(int ch, float normalised01)
 {
@@ -686,7 +686,7 @@ void AudioEngine::setChannelRelease(int ch, float ms)
         sampleChannelReleaseMs_[(size_t)ch].store(juce::jmax(2.0f, ms), std::memory_order_relaxed);
 }
 
-// ---- M3 — Active pattern / pitch ----------------------------------------
+// ---- M3 -- Active pattern / pitch ----------------------------------------
 
 void AudioEngine::setActivePattern(int patternId)
 {
@@ -851,9 +851,9 @@ void AudioEngine::allSynthNotesOff()
     for (auto& at : autoTuneProcessors_)
         at.reset();
 
-    // M8 — send all-notes-off to loaded plugins via pendingMidiAllOff flag
+    // M8 -- send all-notes-off to loaded plugins via pendingMidiAllOff flag
     // (writing directly to instrumentMidiBuffers from the message thread is
-    // unreliable — they are cleared at the start of each audio callback)
+    // unreliable -- they are cleared at the start of each audio callback)
     for (int ch = 0; ch < 16; ++ch)
     {
         activePluginNotes[ch].clear();
@@ -916,7 +916,7 @@ void AudioEngine::dispatchVoiceNote(int ch, int midiPitch, float velocity,
                                                  outputGain, outputPan, mixerTrack);
             return;
         }
-        // No sampler buffer loaded — only fall through to raw synth if explicitly enabled
+        // No sampler buffer loaded -- only fall through to raw synth if explicitly enabled
         if (!sp.enabled) return;
     }
 
@@ -943,7 +943,7 @@ void AudioEngine::previewNote(int ch, int midiPitch)
                                                        : sampleChannelVolume_[(size_t)ch].load(std::memory_order_relaxed);
     const float  pan             = snap.patternId >= 0 ? snap.channelPan[(size_t)ch]
                                                        : sampleChannelPan_[(size_t)ch].load(std::memory_order_relaxed);
-    // M8 — route to plugin if loaded AND enabled for this pattern (via midiCollector for thread safety)
+    // M8 -- route to plugin if loaded AND enabled for this pattern (via midiCollector for thread safety)
     if (snap.pluginSlotEnabled[ch] && instrumentPlugins[(size_t)ch] != nullptr)
     {
         const int safePitch = juce::jlimit(0, 127, midiPitch);
@@ -982,7 +982,7 @@ void AudioEngine::previewNote(int ch, int midiPitch)
         }
         else
         {
-            // No sample loaded — fall back to built-in synth so clicking piano keys always produces sound
+            // No sample loaded -- fall back to built-in synth so clicking piano keys always produces sound
             SynthParams sp;
             sp.enabled = true;
             dispatchVoiceNote(ch, midiPitch, 0.8f, noteLenSamples, volume, pan, mixerTrack,
@@ -1036,7 +1036,7 @@ void AudioEngine::previewSynthNote(int ch, int midiPitch, const SynthParams& p)
             polySynths[(size_t)ch].markLastVoiceAsPreview();
             return;
         }
-        // No buffer loaded — fall through to synth only if synth is also enabled.
+        // No buffer loaded -- fall through to synth only if synth is also enabled.
         if (!p.enabled) return;
     }
 
@@ -1057,7 +1057,7 @@ bool AudioEngine::isEditorPreviewActive(int ch) const
     return polySynths[(size_t)ch].hasActivePreviewVoice();
 }
 
-// ---- M5 — Mixer track controls ------------------------------------------
+// ---- M5 -- Mixer track controls ------------------------------------------
 
 void AudioEngine::setMixerTrackVolume(int track, float vol)
 {
@@ -1266,7 +1266,7 @@ void AudioEngine::triggerChannel(int channelIndex, int step, int offsetInBuffer)
     const bool validStep = (step >= 0 && step < trigSnap.stepCount);
     const StepParams& sp = validStep ? trigSnap.stepParams[channelIndex][step] : StepParams{};
 
-    // Probability gate — skip this trigger based on random chance
+    // Probability gate -- skip this trigger based on random chance
     if (sp.probability < 1.0f && stepParamRng_.nextFloat() > sp.probability)
         return;
 
@@ -1275,7 +1275,7 @@ void AudioEngine::triggerChannel(int channelIndex, int step, int offsetInBuffer)
     const int   baseLen  = juce::jmax(1, (int)(0.25 * sampleRate * 60.0 / bpm.load(std::memory_order_relaxed)));
     const int   noteLen  = juce::jmax(1, (int)(baseLen * sp.gate));
 
-    // M8 — route to VST/AU plugin if one is loaded AND enabled for this pattern
+    // M8 -- route to VST/AU plugin if one is loaded AND enabled for this pattern
     {
         const PlaybackSnapshot& trigSnap = snapshots_[activeSnapshotIdx_.load(std::memory_order_acquire)];
         const bool trigPluginActive = trigSnap.pluginSlotEnabled[channelIndex]
@@ -1300,7 +1300,7 @@ void AudioEngine::triggerChannel(int channelIndex, int step, int offsetInBuffer)
     // If a synth is enabled on this channel, trigger a synth voice at the
     // pitch-slider note (channelBasePitch semitone offset from C4=60).
     // This lets Drum-mode channels use the synth engine with the step grid.
-    // Melodic channels are driven exclusively by NoteEvents (piano roll) — skip step trigger.
+    // Melodic channels are driven exclusively by NoteEvents (piano roll) -- skip step trigger.
     if (trigSnap.patternId >= 0 && trigSnap.synthParams[(size_t)channelIndex].enabled
         && trigSnap.channelTypes[(size_t)channelIndex] != ChannelType::Melodic)
     {
@@ -1308,7 +1308,7 @@ void AudioEngine::triggerChannel(int channelIndex, int step, int offsetInBuffer)
                                     60 + (int)std::round(channelBasePitch[(size_t)channelIndex].load(std::memory_order_relaxed))
                                        + sp.pitchOffset);
 
-        // Phase 2 — apply per-step cutoff modulation to a local SynthParams copy
+        // Phase 2 -- apply per-step cutoff modulation to a local SynthParams copy
         SynthParams modSP = trigSnap.synthParams[(size_t)channelIndex];
         if (sp.cutoffMod != 0.0f)
             modSP.cutoff = juce::jlimit(40.0f, 20000.0f,
@@ -1322,7 +1322,7 @@ void AudioEngine::triggerChannel(int channelIndex, int step, int offsetInBuffer)
             auto buf = getSamplerSourceBuffer(channelIndex);
             if (buf)
             {
-                // Phase 2 — apply per-step sample start offset
+                // Phase 2 -- apply per-step sample start offset
                 SamplerParams samplerP = trigSnap.samplerParams[(size_t)channelIndex];
                 if (sp.startOffsetFrac > 0.0f && buf->getNumSamples() > 0)
                     samplerP.startOffsetSamples = (int)(sp.startOffsetFrac * (float)buf->getNumSamples());
@@ -1333,7 +1333,7 @@ void AudioEngine::triggerChannel(int channelIndex, int step, int offsetInBuffer)
                     std::move(buf), noteLen, 1.0f, 0.0f, mixerTrack);
                 return;
             }
-            // No sampler buffer loaded — fall through to raw sample trigger
+            // No sampler buffer loaded -- fall through to raw sample trigger
         }
         else
         {
@@ -1358,7 +1358,7 @@ void AudioEngine::triggerChannel(int channelIndex, int step, int offsetInBuffer)
     const int mixerTrack = (trigSnap.patternId >= 0) ? juce::jlimit(0, 7, trigSnap.channelMixerRouting[(size_t)channelIndex]) : 0;
     auto sourceBuffer = getChannelSourceBufferShared(channelIndex);
 
-    // Phase 2 — per-step sample start offset for raw sample triggers
+    // Phase 2 -- per-step sample start offset for raw sample triggers
     double rawStartOffSamples = 0.0;
     if (sp.startOffsetFrac > 0.0f && sourceBuffer && sourceBuffer->getNumSamples() > 0)
         rawStartOffSamples = sp.startOffsetFrac * (double)sourceBuffer->getNumSamples();
@@ -1468,7 +1468,7 @@ void AudioEngine::setStepPattern(int channelIndex, int stepIndex, bool active)
     sequencer.setStep(channelIndex, stepIndex, active);
 }
 
-// ---- M12 — MIDI input -------------------------------------------------------
+// ---- M12 -- MIDI input -------------------------------------------------------
 
 juce::Array<juce::MidiDeviceInfo> AudioEngine::getMidiInputDevices() const
 {
@@ -1601,7 +1601,7 @@ void AudioEngine::commitNote(int ch, int pitch, double startBeat, float lengthBe
 {
     int s1, bs1, s2, bs2;
     commitFifo_.prepareToWrite(1, s1, bs1, s2, bs2);
-    if (bs1 == 0) return;   // queue full — drop rather than block
+    if (bs1 == 0) return;   // queue full -- drop rather than block
     auto& slot            = commitQueue_[(size_t)s1];
     slot.channel          = ch;
     slot.variation        = activeVariationIdx_.load(std::memory_order_relaxed);
@@ -1672,27 +1672,37 @@ void AudioEngine::commitHangingNotes()
     juce::MessageManager::callAsync([this] { if (onLoopWrap) onLoopWrap(); });
 }
 
-// ── Live Performance Loop Recording ─────────────────────────────────────────
+// -- Live Performance Loop Recording -----------------------------------------
 
-// ── Live Loop Engine — public API wrappers ────────────────────────────────────
-void AudioEngine::liveLoopArm(int ch) noexcept         { liveLoopEngine_.arm(ch); }
+// -- Live Loop Engine -- public API wrappers ------------------------------------
+void AudioEngine::liveLoopArm(int ch, double loopBeats) noexcept { liveLoopEngine_.arm(ch, loopBeats); }
 void AudioEngine::liveLoopStop(int ch) noexcept        { liveLoopEngine_.stop(ch); }
 void AudioEngine::liveLoopResetAll() noexcept          { liveLoopEngine_.resetAll(); }
-void AudioEngine::liveLoopSetLength(double b) noexcept { liveLoopEngine_.setLoopLengthBeats(b); }
+void AudioEngine::liveLoopOverdub(int ch) noexcept     { liveLoopEngine_.overdub(ch); }
+void AudioEngine::liveLoopUndo(int ch) noexcept        { liveLoopEngine_.undo(ch); }
 void AudioEngine::liveLoopSetQuantize(double s) noexcept { liveLoopEngine_.setQuantize(s); }
+void AudioEngine::liveLoopSetMute(int ch, bool m) noexcept    { liveLoopEngine_.setMute(ch, m); }
+bool AudioEngine::liveLoopGetMute(int ch) const noexcept      { return liveLoopEngine_.getMute(ch); }
+void AudioEngine::liveLoopSetVolume(int ch, float v) noexcept  { liveLoopEngine_.setVolume(ch, v); }
+float AudioEngine::liveLoopGetVolume(int ch) const noexcept    { return liveLoopEngine_.getVolume(ch); }
 LiveLoopEngine::State AudioEngine::liveLoopGetState(int ch) const noexcept { return liveLoopEngine_.getState(ch); }
-double AudioEngine::liveLoopGetLength() const noexcept { return liveLoopEngine_.getLoopLengthBeats(); }
+double AudioEngine::liveLoopGetChannelLength(int ch) const noexcept { return liveLoopEngine_.getChannelLoopLength(ch); }
+double AudioEngine::liveLoopGetBeatsTillRecord(int ch) const noexcept { return liveLoopEngine_.getBeatsTillRecord(ch); }
 int    AudioEngine::liveLoopGetNotesForDisplay(int ch, LiveLoopEngine::NoteDisplayItem* out, int max) const noexcept
        { return liveLoopEngine_.getNotesForDisplay(ch, out, max); }
 double AudioEngine::liveLoopGetPhase(int ch) const noexcept         { return liveLoopEngine_.getLoopPhase(ch); }
-double AudioEngine::liveLoopGetChannelLength(int ch) const noexcept { return liveLoopEngine_.getChannelLoopLength(ch); }
+
+// -- Metronome -----------------------------------------------------------------
+void AudioEngine::setMetronomeEnabled(bool on) noexcept { metronomeEnabled_.store(on); }
+void AudioEngine::setMetronomeVolume(float v) noexcept  { metronomeGain_.store(juce::jlimit(0.0f, 1.0f, v)); }
+bool AudioEngine::getMetronomeEnabled() const noexcept  { return metronomeEnabled_.load(); }
 
 void AudioEngine::handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& msg)
 {
     DBG("MIDI IN raw: ch=" << msg.getChannel() << " note=" << msg.getNoteNumber()
         << " on=" << (msg.isNoteOn() ? 1 : 0) << " off=" << (msg.isNoteOff() ? 1 : 0));
 
-    // Called on the MIDI thread — push into thread-safe collector.
+    // Called on the MIDI thread -- push into thread-safe collector.
     // Normalize external hardware input to MIDI channel 1 so live keyboards
     // always follow midiTargetChannel. Internal engine-generated MIDI events
     // still use explicit channel routing (ch+1) when queued directly.
@@ -1723,7 +1733,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         recorder_.writeBlock(inputChannelData, numInputChannels, numSamples);
 
     // --- Input monitoring: mix input directly to output ---
-    // Mono input → both channels; stereo input → L to L, R to R
+    // Mono input -> both channels; stereo input -> L to L, R to R
     if (inputMonitoring_.load(std::memory_order_relaxed)
         && inputChannelData != nullptr && numInputChannels > 0)
     {
@@ -1731,7 +1741,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         if (numInputChannels >= 2 && numOutputChannels >= 2)
             buffer.addFrom(1, 0, inputChannelData[1], numSamples);
         else if (numOutputChannels >= 2)
-            buffer.addFrom(1, 0, inputChannelData[0], numSamples);  // mono → both
+            buffer.addFrom(1, 0, inputChannelData[0], numSamples);  // mono -> both
     }
 
     // --- Input level metering (peak detection for UI) ---
@@ -1759,7 +1769,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         inputLevelR_.store(peakR, std::memory_order_relaxed);
     }
 
-    // M8 — clear per-channel plugin MIDI buffers at the start of each block
+    // M8 -- clear per-channel plugin MIDI buffers at the start of each block
     for (auto& mb : instrumentMidiBuffers)
         mb.clear();
 
@@ -1780,7 +1790,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         }
     }
 
-    // M12 — process incoming MIDI messages
+    // M12 -- process incoming MIDI messages
     {
         incomingMidiBuffer_.clear();
         midiCollector.removeNextBlockOfMessages(incomingMidiBuffer_, numSamples);
@@ -1811,7 +1821,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         {
             const auto msg = meta.getMessage();
 
-            // ── MIDI channel routing ─────────────────────────────────────────
+            // -- MIDI channel routing -----------------------------------------
             // Messages on MIDI channels 2-16 are engine-generated (previewNote,
             // per-channel playback). They bypass MidiRouter and use the explicit
             // channel number directly.
@@ -1820,7 +1830,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             const int midiChan = msg.getChannel();  // 1-based
             const bool isExternalMidi = (midiChan == 1);
 
-            // ── CC handling (external MIDI only) ────────────────────────────
+            // -- CC handling (external MIDI only) ----------------------------
             if (isExternalMidi && msg.isController())
             {
                 CcEvent cc;
@@ -1831,13 +1841,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 continue;   // CC does not go to instrument or loop recorder
             }
 
-            // ── Determine target DAW channel + routing type ──────────────────
+            // -- Determine target DAW channel + routing type ------------------
             int ch = defaultCh;
             bool isClipTrigger = false;
 
             if (!isExternalMidi)
             {
-                // Engine-generated: explicit channel (MIDI ch 2 → DAW ch 1, etc.)
+                // Engine-generated: explicit channel (MIDI ch 2 -> DAW ch 1, etc.)
                 ch = juce::jlimit(0, 15, midiChan - 1);
             }
             else if (msg.isNoteOn() || msg.isNoteOff())
@@ -1861,7 +1871,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 
             if (msg.isNoteOn())
             {
-                // ClipTrigger notes don't play instruments — already queued above
+                // ClipTrigger notes don't play instruments -- already queued above
                 if (isClipTrigger) continue;
 
                 const int   pitch = msg.getNoteNumber();
@@ -1869,7 +1879,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 midiHeldNotes_[(size_t)ch][(size_t)juce::jlimit(0, 127, pitch)].store(
                     (uint8_t)juce::jlimit(1, 127, (int)msg.getVelocity()), std::memory_order_relaxed);
 
-                // M8 — route to VST/AU plugin if one is loaded AND enabled for current pattern
+                // M8 -- route to VST/AU plugin if one is loaded AND enabled for current pattern
                 const PlaybackSnapshot& midiSnap = snapshots_[activeSnapshotIdx_.load(std::memory_order_acquire)];
                 const bool midiPluginActive = midiSnap.pluginSlotEnabled[ch]
                                            && instrumentPlugins[(size_t)ch] != nullptr;
@@ -1909,7 +1919,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         }
                         else
                         {
-                            // No sample loaded — fall back to built-in synth for MIDI input feedback
+                            // No sample loaded -- fall back to built-in synth for MIDI input feedback
                             SynthParams sp;
                             sp.enabled = true;
                             dispatchVoiceNote(ch, pitch, vel, 0, midiVol, midiPan, midiMixer,
@@ -1926,7 +1936,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 const int pitch = juce::jlimit(0, 127, msg.getNoteNumber());
                 midiHeldNotes_[(size_t)ch][(size_t)pitch].store(0, std::memory_order_relaxed);
 
-                // M8 — route note-off to plugin if loaded AND enabled for current pattern
+                // M8 -- route note-off to plugin if loaded AND enabled for current pattern
                 const PlaybackSnapshot& offSnap = snapshots_[activeSnapshotIdx_.load(std::memory_order_acquire)];
                 const bool offPluginActive = offSnap.pluginSlotEnabled[ch]
                                           && instrumentPlugins[(size_t)ch] != nullptr;
@@ -1978,7 +1988,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     // (can happen if the driver delivers a different block size than configured).
     const int stagingSafe = juce::jmin(numSamples, stagingBuf.getNumSamples());
 
-    // Launchpad one-shot players — render directly into output (bypass mixer)
+    // Launchpad one-shot players -- render directly into output (bypass mixer)
     const auto& runtime = getRuntimeState();
     const float mv = runtime.masterVolume;
     for (auto& lp : launchpadPlayers)
@@ -1995,7 +2005,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         }
     }
 
-    // M15 — browser preview player (bypass mixer, always audible)
+    // M15 -- browser preview player (bypass mixer, always audible)
     if (browserPreviewPlayer.isLoaded())
     {
         stagingBuf.clear();
@@ -2020,10 +2030,10 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     for (auto& pool : sampleVoicePools)
         pool.prepare(sampleRate, bufferSize);
 
-    // M12 — reset MIDI collector to current sample rate
+    // M12 -- reset MIDI collector to current sample rate
     midiCollector.reset(sampleRate);
 
-    // M13/M14 — prepare synths and FX chains
+    // M13/M14 -- prepare synths and FX chains
     for (auto& s : polySynths) s.prepare(sampleRate, bufferSize);
     for (auto& fx : fxChains)  fx.prepare(sampleRate, bufferSize);
     for (auto& at : autoTuneProcessors_) at.prepare(sampleRate, bufferSize);
@@ -2031,24 +2041,24 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     // Launchpad players
     for (auto& lp : launchpadPlayers) lp.prepare(sampleRate, bufferSize);
 
-    // M15 — browser preview player
+    // M15 -- browser preview player
     browserPreviewPlayer.prepare(sampleRate, bufferSize);
 
     incomingMidiBuffer_.ensureSize(2048);
     for (auto& mb : instrumentMidiBuffers)
         mb.ensureSize(2048);
 
-    // M5 — allocate mixer staging buffers
+    // M5 -- allocate mixer staging buffers
     stagingBuf.setSize(2, bufferSize);
     for (auto& tb : mixerTrackBufs)
         tb.setSize(2, bufferSize);
 
-    // Dynamic EQ — prepare all processors
+    // Dynamic EQ -- prepare all processors
     for (auto& deq : trackDynEQs_) deq.prepare(sampleRate, bufferSize);
     masterDynEQ_.prepare(sampleRate, bufferSize);
     resetMixProcessingState();
 
-    // M8 — re-prepare any already-loaded instrument plugins
+    // M8 -- re-prepare any already-loaded instrument plugins
     {
         juce::ScopedLock sl(pluginLock);
         for (auto& plugin : instrumentPlugins)
@@ -2083,14 +2093,14 @@ void AudioEngine::audioDeviceStopped()
             plugin->releaseResources();
 }
 
-// ---- M8 — VST/AU Instrument Plugin management --------------------------
+// ---- M8 -- VST/AU Instrument Plugin management --------------------------
 
 void AudioEngine::loadPlugin(int ch, const juce::PluginDescription& desc,
                               juce::String& errorMsg)
 {
     if (ch < 0 || ch >= 16) return;
 
-    // Create the instance on the message thread (may take a moment — that's OK)
+    // Create the instance on the message thread (may take a moment -- that's OK)
     auto instance = PluginManager::getInstance().createPlugin(desc, sampleRate,
                                                                bufferSize, errorMsg);
     if (instance == nullptr) return;
@@ -2173,7 +2183,7 @@ void AudioEngine::restorePluginsFromSlots(const std::array<PluginSlot, 16>& slot
 
         if (!slot.enabled || slot.pluginId.isEmpty())
         {
-            // New pattern has no plugin on this channel — unload if present
+            // New pattern has no plugin on this channel -- unload if present
             if (currentHasPlugin)
                 unloadPlugin(ch);
             continue;
@@ -2186,7 +2196,7 @@ void AudioEngine::restorePluginsFromSlots(const std::array<PluginSlot, 16>& slot
                                        .createIdentifierString();
             if (currentId == slot.pluginId)
             {
-                // Same plugin — just restore state
+                // Same plugin -- just restore state
                 if (slot.pluginStateBase64.isNotEmpty())
                 {
                     juce::MemoryBlock stateData;
@@ -2196,7 +2206,7 @@ void AudioEngine::restorePluginsFromSlots(const std::array<PluginSlot, 16>& slot
                 }
                 continue;
             }
-            // Different plugin — unload first
+            // Different plugin -- unload first
             unloadPlugin(ch);
         }
 
@@ -2267,7 +2277,7 @@ void AudioEngine::processPatternMode(juce::AudioBuffer<float>& buffer,
 {
     sequencer.processBlock(numSamples);
 
-    // M3 — trigger NoteEvents for Melodic channels (only while sequencer is playing)
+    // M3 -- trigger NoteEvents for Melodic channels (only while sequencer is playing)
     // Use double-buffered snapshot for lock-free pattern data access on audio thread.
     const PlaybackSnapshot& snap = snapshots_[activeSnapshotIdx_.load(std::memory_order_acquire)];
 
@@ -2309,7 +2319,7 @@ void AudioEngine::processPatternMode(juce::AudioBuffer<float>& buffer,
                     return loopBeat - loopStart;
                 };
 
-                // M8 — flush pending note-offs for plugin channels
+                // M8 -- flush pending note-offs for plugin channels
                 // Only process plugin path if the CURRENT pattern has plugin enabled
                 const bool patPluginActive = snap.pluginSlotEnabled[ch]
                                           && instrumentPlugins[(size_t)ch] != nullptr;
@@ -2342,7 +2352,7 @@ void AudioEngine::processPatternMode(juce::AudioBuffer<float>& buffer,
                                        : (ns >= loopStart && ns < loopEnd);
                     if (fires)
                     {
-                        // M8 — VST/AU plugin path
+                        // M8 -- VST/AU plugin path
                         const int tp = juce::jlimit(0, 127,
                             note.pitch + (int)std::round(channelBasePitch[(size_t)ch].load(std::memory_order_relaxed)));
                         if (patPluginActive)
@@ -2374,7 +2384,7 @@ void AudioEngine::processPatternMode(juce::AudioBuffer<float>& buffer,
                             }
                             else
                             {
-                                // Raw sample fallback — no synth/sampler, play via sample trigger
+                                // Raw sample fallback -- no synth/sampler, play via sample trigger
                                 auto sourceBuffer = getChannelSourceBufferShared(ch);
                                 scheduleSampleTrigger(ch, 0, mixerTrack,
                                                       sourceBuffer.get(), sourceBuffer,
@@ -2426,7 +2436,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
     std::array<float, 8> automatedMixerVolMul;
     automatedMixerVolMul.fill(1.0f); // 1.0 = no automation (pass-through)
 
-    // Read beat-based position first — this survives BPM changes correctly
+    // Read beat-based position first -- this survives BPM changes correctly
     const double startBeat = songBeatPosition_.load(std::memory_order_relaxed);
 
     if (!runtime.automationLanes.empty())
@@ -2478,7 +2488,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
         }
     }
 
-    // --- Audio clip playback (Stage 1 — playhead-based loop mode) ----------
+    // --- Audio clip playback (Stage 1 -- playhead-based loop mode) ----------
     // For each instance, compute the file sample position from the current
     // playhead beat.  No trigger state: recalculated fresh every block.
     // If file is shorter than the clip it loops (% fileTotalSamples).
@@ -2536,7 +2546,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                     ? 1.0
                     : std::pow(2.0, (double)clip->pitchSemitone / 12.0);
 
-                // File position = (clip-local output samples) × pitchRatio + slip offset, looped
+                // File position = (clip-local output samples) x pitchRatio + slip offset, looped
                 const double localSample = localBeat * samplesPerBeat * pitchRatio
                                          + (double)clip->sourceOffsetSamples;
 
@@ -2566,7 +2576,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
         }
     }
 
-    // Pattern/NoteEvent step-trigger loop (unchanged) — skip if no patterns loaded
+    // Pattern/NoteEvent step-trigger loop (unchanged) -- skip if no patterns loaded
     if (!runtime.patterns.empty())
     {
     const auto& songSampleCache = getSongSampleCache();
@@ -2620,7 +2630,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                 if (!pattern->variations[clip.variationIdx].steps[ch][localStep]) continue;
 
                 // Melodic channels are driven exclusively by NoteEvents (piano roll).
-                // Skip step trigger to prevent double-triggering → robotic envelope retrigger.
+                // Skip step trigger to prevent double-triggering -> robotic envelope retrigger.
                 if (pattern->channelTypes[(size_t)ch] == ChannelType::Melodic) continue;
 
                 // --- Per-step params ---
@@ -2641,7 +2651,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                     const int baseLen       = juce::jmax(1, (int)(0.25 * samplesPerBeat));
                     const int noteLenSamples = juce::jmax(1, (int)(baseLen * songSP.gate));
 
-                    // Phase 2 — per-step cutoff modulation on top of channel cutoff
+                    // Phase 2 -- per-step cutoff modulation on top of channel cutoff
                     SynthParams songModSP = pattern->synthParams[(size_t)ch];
                     if (songSP.cutoffMod != 0.0f)
                         songModSP.cutoff = juce::jlimit(40.0f, 20000.0f,
@@ -2661,7 +2671,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                         if (!samplerBuf) samplerBuf = getSamplerSourceBuffer(ch);  // fallback
                         if (samplerBuf)
                         {
-                            // Phase 2 — per-step sample start offset
+                            // Phase 2 -- per-step sample start offset
                             SamplerParams songSamplerP = pattern->samplerParams[(size_t)ch];
                             if (songSP.startOffsetFrac > 0.0f && samplerBuf->getNumSamples() > 0)
                                 songSamplerP.startOffsetSamples = (int)(songSP.startOffsetFrac * (float)samplerBuf->getNumSamples());
@@ -2686,7 +2696,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                     std::shared_ptr<const juce::AudioBuffer<float>> songBuffer =
                         (cit != songSampleCache.end()) ? cit->second[(size_t)ch] : nullptr;
 
-                    // Phase 2 — per-step sample start offset for raw song samples
+                    // Phase 2 -- per-step sample start offset for raw song samples
                     double songRawStartOff = 0.0;
                     if (songSP.startOffsetFrac > 0.0f && songBuffer && songBuffer->getNumSamples() > 0)
                         songRawStartOff = songSP.startOffsetFrac * (double)songBuffer->getNumSamples();
@@ -2706,7 +2716,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
         const double startBeatSong = startBeat;
         const double endBeatSong   = endBeat;
 
-        // Flush pending plugin note-offs (song mode) — must happen before note-ons
+        // Flush pending plugin note-offs (song mode) -- must happen before note-ons
         // Use endBeat < endBeatSong (not >= startBeatSong) so past-due note-offs
         // that were missed in a previous block are still sent immediately.
         for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
@@ -2776,7 +2786,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                         const int noteOnOffset = juce::jlimit(0, juce::jmax(0, numSamples - 1),
                                                                (int)((fireBeat - startBeatSong) * samplesPerBeat));
 
-                        // M8 — VST/AU plugin path (song mode)
+                        // M8 -- VST/AU plugin path (song mode)
                         if (instrumentPlugins[(size_t)ch] != nullptr)
                         {
                             instrumentMidiBuffers[ch].addEvent(
@@ -2805,7 +2815,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                         }
                         else
                         {
-                            // Raw sample fallback — no synth/sampler, play via sample trigger
+                            // Raw sample fallback -- no synth/sampler, play via sample trigger
                             auto cit = songSampleCache.find(clip.patternId);
                             std::shared_ptr<const juce::AudioBuffer<float>> songBuffer =
                                 (cit != songSampleCache.end()) ? cit->second[(size_t)ch] : nullptr;
@@ -2830,13 +2840,13 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
     overrides.masterPan = runtime.masterPan;
     mixToOutput(buffer, numSamples, &overrides);
 
-    // Advance beat position (BPM-aware — survives tempo automation correctly)
+    // Advance beat position (BPM-aware -- survives tempo automation correctly)
     songBeatPosition_.store(endBeat, std::memory_order_relaxed);
     // Keep sample position in sync for UI playhead display
     songSamplePosition.store((long)(endBeat * samplesPerBeat), std::memory_order_relaxed);
 }
 
-// M5 — route channels through mixer tracks and sum to output
+// M5 -- route channels through mixer tracks and sum to output
 void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
                               const MixRuntimeOverrides* overrides)
 {
@@ -2844,9 +2854,9 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
     // audioDeviceAboutToStart. If the driver delivers a smaller block, clamp.
     const int safe = juce::jmin(numSamples, stagingBuf.getNumSamples());
 
-    // ── CC Real-Time Parameter Smoothing ─────────────────────────────────────
+    // -- CC Real-Time Parameter Smoothing -------------------------------------
     // One exponential step per block toward the target set by the message thread.
-    // tau ≈ 20 ms gives smooth transitions without audible lag at knob speed.
+    // tau ~= 20 ms gives smooth transitions without audible lag at knob speed.
     {
         const float tau     = 0.020f;  // 20 ms smoothing time constant
         const float coeff   = (sampleRate > 0.0)
@@ -2858,7 +2868,7 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
             ccPan_[ch].tick(coeff);
         }
     }
-    // ─────────────────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------
 
     // Clear mixer track buses
     for (auto& tb : mixerTrackBufs)
@@ -2866,7 +2876,7 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
 
     const auto& runtime = getRuntimeState();
 
-    // Use snapshot for routing and synth params — lock-free audio thread access
+    // Use snapshot for routing and synth params -- lock-free audio thread access
     const PlaybackSnapshot& mixSnap = snapshots_[activeSnapshotIdx_.load(std::memory_order_acquire)];
     std::array<int, 8> routedSourcesPerTrack {};
 
@@ -2882,7 +2892,7 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
         // Song mode synth voices are rendered exclusively via renderNextBlockRouted()
         // below, which uses per-voice mixer track routing.  Calling renderNextBlock()
         // here in Song mode would render the same voice objects a second time in the
-        // same audio callback — the first call advances voice state (ADSR, oscillator
+        // same audio callback -- the first call advances voice state (ADSR, oscillator
         // phase), so the second call produces a broken, phasey, robotic signal.
         // Pattern mode still uses this staging path (renderNextBlockRouted is skipped).
         const bool useSynth = (playMode != PlayMode::Song)
@@ -2903,7 +2913,7 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
                 instrumentPlugins[(size_t)ch]->processBlock(plugBuf,
                                                              instrumentMidiBuffers[ch]);
 
-                // If the plugin is mono, duplicate L → R
+                // If the plugin is mono, duplicate L -> R
                 const int plugOuts = instrumentPlugins[(size_t)ch]->getTotalNumOutputChannels();
                 if (plugOuts == 1 && stagingBuf.getNumChannels() > 1)
                     stagingBuf.copyFrom(1, 0, stagingBuf, 0, 0, safe);
@@ -2926,10 +2936,10 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
                                    ? songChannelPan_[(size_t)ch]
                                    : ((mixSnap.patternId >= 0) ? mixSnap.channelPan[(size_t)ch] : 0.0f);
 
-            // CC real-time multipliers (smoothed this block, range [0,1] and [0,1]→[-1,+1])
+            // CC real-time multipliers (smoothed this block, range [0,1] and [0,1]->[-1,+1])
             const float ccVol      = ccVol_[(size_t)ch].get();
-            const float ccPanNorm  = ccPan_[(size_t)ch].get();          // 0.0–1.0
-            const float ccPanBip   = (ccPanNorm * 2.0f) - 1.0f;       // normalise → [-1, +1]
+            const float ccPanNorm  = ccPan_[(size_t)ch].get();          // 0.0-1.0
+            const float ccPanBip   = (ccPanNorm * 2.0f) - 1.0f;       // normalise -> [-1, +1]
 
             const float channelVolume = baseVolume * ccVol;
             const float channelPan    = juce::jlimit(-1.0f, 1.0f, basePan + ccPanBip * 0.5f);
@@ -2966,7 +2976,7 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
         for (auto& synth : polySynths)
             synth.renderNextBlockRouted(mixerTrackBufs, safe, sampleRate);
 
-    // --- Audio clip rendering (Stage 1 — playhead-based loop mode) ------
+    // --- Audio clip rendering (Stage 1 -- playhead-based loop mode) ------
     // inst.active / fileReadStart / fileTotalSamples are set each block
     // by processSongMode.  Uses try-lock: skip silently if lock unavailable.
     // Must run BEFORE per-track AT/FX so auto-tune can process audio clips.
@@ -3034,7 +3044,7 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
         }
     }
 
-    // M14 — apply FX chains per mixer track bus
+    // M14 -- apply FX chains per mixer track bus
     // (now runs AFTER all audio sources are mixed into track buses)
     for (int t = 0; t < 8; ++t)
     {
@@ -3168,10 +3178,56 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
             right[s] = dryR + (shapedR - dryR) * wet;
         }
     }
+
+    // -- Metronome click (mixed directly after limiter so it's always audible) --
+    if (metronomeEnabled_.load(std::memory_order_relaxed) && sampleRate > 0.0 && output.getNumChannels() >= 1)
+    {
+        const double bpmVal  = bpm.load(std::memory_order_relaxed);
+        const float  gain    = metronomeGain_.load(std::memory_order_relaxed);
+        const double globalB = liveLoopEngine_.getGlobalBeat();
+
+        float* left  = output.getWritePointer(0);
+        float* right = (output.getNumChannels() > 1) ? output.getWritePointer(1) : left;
+
+        for (int s = 0; s < safe; ++s)
+        {
+            // Compute exact beat position for this sample
+            const double beatHere = globalB - (double)(safe - s) * (bpmVal / (60.0 * sampleRate));
+
+            // Detect integer beat crossing
+            const double prevB = metronomePrevBeat_;
+            metronomePrevBeat_ = beatHere;
+            if (beatHere < 0.0) continue;
+
+            const double curFloor  = std::floor(beatHere);
+            const double prevFloor = std::floor(prevB);
+            if (curFloor > prevFloor && prevFloor >= 0.0)
+            {
+                // Beat boundary: kick off a click
+                const long beatIdx = (long)curFloor;
+                const bool isBeat1 = (beatIdx % 4 == 0);
+                clickFreq_       = isBeat1 ? 1050.0f : 700.0f;
+                clickPhase_      = 0.0f;
+                clickEnv_        = 1.0f;
+                clickSamplesLeft_ = (int)(sampleRate * 0.022);  // 22 ms click
+            }
+
+            if (clickSamplesLeft_ > 0)
+            {
+                const float decayRate = 1.0f - 1.0f / (float)(sampleRate * 0.018f);
+                clickEnv_ *= decayRate;
+                const float click = std::sin(clickPhase_) * clickEnv_ * gain;
+                clickPhase_ += juce::MathConstants<float>::twoPi * clickFreq_ / (float)sampleRate;
+                left[s]  += click;
+                right[s] += click;
+                --clickSamplesLeft_;
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
-// M10 — Offline render
+// M10 -- Offline render
 // ---------------------------------------------------------------------------
 
 bool AudioEngine::renderToFile(const juce::File& outputFile, PlayMode mode, int numBars)
@@ -3264,7 +3320,7 @@ bool AudioEngine::renderToFile(const juce::File& outputFile, PlayMode mode, int 
 }
 
 // ---------------------------------------------------------------------------
-// Stem Export — renders each mixer track to a separate WAV in the given folder
+// Stem Export -- renders each mixer track to a separate WAV in the given folder
 // ---------------------------------------------------------------------------
 
 int AudioEngine::renderStemsToFolder(const juce::File& folder, PlayMode mode, int numBars)

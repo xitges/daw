@@ -158,7 +158,7 @@ public:
                 const char* tag = (s == LiveLoopEngine::State::Recording) ? "REC"
                                 : (s == LiveLoopEngine::State::Looping)   ? "LOOP"
                                                                            : "ARM";
-                const double len = engine_.liveLoopGetLength();
+                const double len = engine_.liveLoopGetChannelLength(ch);
                 drawRow("Ch" + juce::String(ch) + " " + tag,
                         juce::String(len, 0) + " beats (" + juce::String((int)(len/4)) + " bars)",
                         juce::Colour(0xffff6666));

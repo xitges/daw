@@ -1,7 +1,7 @@
 #include "MainComponent.h"
 
 // ---------------------------------------------------------------------------
-// M6 — generic lambda-based undo action
+// M6 -- generic lambda-based undo action
 // ---------------------------------------------------------------------------
 namespace {
 struct LambdaAction : public juce::UndoableAction
@@ -89,23 +89,23 @@ public:
 
 MainComponent::MainComponent()
 {
-    // M11 — apply custom dark LookAndFeel globally
+    // M11 -- apply custom dark LookAndFeel globally
     juce::LookAndFeel::setDefaultLookAndFeel(&lookAndFeel);
 
     // ---- Seed project with initial data
     project.bpm          = 70.0;
     project.channelCount = 3;
 
-    // M5 — default 8 mixer tracks
+    // M5 -- default 8 mixer tracks
     for (int t = 0; t < 8; ++t)
     {
         MixerTrack mt;
         mt.name = "Track " + juce::String(t + 1);
         project.mixerTracks.push_back(mt);
     }
-    // M5 — default routing now lives in Pattern constructor (channelMixerRouting[i] = i % 8)
+    // M5 -- default routing now lives in Pattern constructor (channelMixerRouting[i] = i % 8)
 
-    // M11 — default 8 playlist tracks
+    // M11 -- default 8 playlist tracks
     for (int t = 0; t < 8; ++t)
     {
         PlaylistTrack pt;
@@ -198,7 +198,7 @@ MainComponent::MainComponent()
             const int ch = audioEngine.getMidiTargetChannel();
             if (audioEngine.liveLoopGetState(ch) == LiveLoopEngine::State::Idle)
             {
-                audioEngine.liveLoopArm(ch);
+                audioEngine.liveLoopArm(ch, 16.0);  // default 16 beats; user changes via UI
                 toolbar.setRecordingActive(true);
             }
             recordTransitioning_ = false;
@@ -310,7 +310,7 @@ MainComponent::MainComponent()
         markDirty();
     };
 
-    // M2.1 — Pattern selector
+    // M2.1 -- Pattern selector
     toolbar.onPatternSelected = [this](int id)
     {
         selectPattern(id);
@@ -530,7 +530,7 @@ MainComponent::MainComponent()
 
     playlistViewport.setViewedComponent(&playlist, false);
 
-    // M15 — sample browser
+    // M15 -- sample browser
     sampleBrowser.onPreviewFile = [this](const juce::File& f)
     {
         audioEngine.previewBrowserFile(f);
@@ -551,7 +551,7 @@ MainComponent::MainComponent()
         resized();
     };
 
-    // Reopen tab — shown only when browser is closed, at the left edge
+    // Reopen tab -- shown only when browser is closed, at the left edge
     browserCollapseBtn.setButtonText(">");
     browserCollapseBtn.setColour(juce::TextButton::buttonColourId,  juce::Colour(0xff2a2a3a));
     browserCollapseBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffb0b0c8));
@@ -565,7 +565,7 @@ MainComponent::MainComponent()
     playlistViewport.setScrollBarThickness(8);
     addAndMakeVisible(playlistViewport);
 
-    // Snap box — floats outside the viewport so it never scrolls away
+    // Snap box -- floats outside the viewport so it never scrolls away
     playlistSnapBox.addItem("1 Bar",    1);
     playlistSnapBox.addItem("1/2 Bar",  2);
     playlistSnapBox.addItem("1/4 Bar",  4);
@@ -580,7 +580,7 @@ MainComponent::MainComponent()
     };
     addAndMakeVisible(playlistSnapBox);
 
-    // M11 — zoom buttons (anchored alongside snap box)
+    // M11 -- zoom buttons (anchored alongside snap box)
     playlistZoomInBtn.setTooltip("Zoom in");
     playlistZoomOutBtn.setTooltip("Zoom out");
     playlistZoomInBtn.onClick = [this]
@@ -731,7 +731,7 @@ MainComponent::MainComponent()
         }
     };
 
-    // ---- Per-step params: inspector edits → pattern model → engine snapshot
+    // ---- Per-step params: inspector edits -> pattern model -> engine snapshot
     channelRack.onStepParamsChanged = [this](int ch, int step, const StepParams& p)
     {
         if (auto* pat = findPattern(activePatternId))
@@ -743,7 +743,7 @@ MainComponent::MainComponent()
         }
     };
 
-    // ---- Audio clip drop → load into AudioEngine
+    // ---- Audio clip drop -> load into AudioEngine
     playlist.onAudioClipDropped = [this](int clipId, juce::String path)
     {
         // Find the clip to get its calculated lengthBars
@@ -762,12 +762,12 @@ MainComponent::MainComponent()
     };
 
     // ---- M6: Playlist clip undo
-    // M11 — track management callbacks
+    // M11 -- track management callbacks
     playlist.onTrackAdded   = [this]()      { markDirty(); resized(); };
     playlist.onTrackRenamed = [this](int)   { markDirty(); };
     playlist.onTrackDeleted = [this](int)   { markDirty(); resized(); };
 
-    // Pattern copy — duplicate the assigned pattern and reassign this clip to the copy
+    // Pattern copy -- duplicate the assigned pattern and reassign this clip to the copy
     playlist.onClipDetach = [this](int clipId)
     {
         // Find the clip
@@ -937,7 +937,7 @@ MainComponent::MainComponent()
         audioEngine.refreshSongCacheAsync();
     };
 
-    // Phase 4 — undoable clip rename
+    // Phase 4 -- undoable clip rename
     playlist.onClipRenamed = [this](int clipId, juce::String oldName, juce::String newName)
     {
         undoManager.perform(new LambdaAction(
@@ -965,7 +965,7 @@ MainComponent::MainComponent()
         markDirty();
     };
 
-    // Audio clip mode changed — rebuild pitched buffer, push runtime
+    // Audio clip mode changed -- rebuild pitched buffer, push runtime
     playlist.onClipModeChanged = [this](int clipId, AudioClipMode /*old*/, AudioClipMode newMode)
     {
         float pitch = 0.0f;
@@ -976,7 +976,7 @@ MainComponent::MainComponent()
         markDirty();
     };
 
-    // Clip fade changed — update model and push runtime
+    // Clip fade changed -- update model and push runtime
     playlist.onClipFadeChanged = [this](int clipId, float fadeInBars, float fadeOutBars)
     {
         for (auto& c : project.playlistClips)
@@ -992,7 +992,7 @@ MainComponent::MainComponent()
         markDirty();
     };
 
-    // Pattern slip edit — update patternStartOffsetBars and push runtime
+    // Pattern slip edit -- update patternStartOffsetBars and push runtime
     playlist.onPatternSlipEdited = [this](int clipId, float /*oldOffset*/, float newOffset)
     {
         for (auto& c : project.playlistClips)
@@ -1007,7 +1007,7 @@ MainComponent::MainComponent()
         markDirty();
     };
 
-    // Audio slip edit — update sourceOffsetSamples and push runtime
+    // Audio slip edit -- update sourceOffsetSamples and push runtime
     playlist.onClipSlipEdited = [this](int clipId, float /*oldOffset*/, float newOffset)
     {
         for (auto& c : project.playlistClips)
@@ -1098,7 +1098,7 @@ MainComponent::MainComponent()
         resized();
     };
 
-    // Phase 4 — double-click clip → navigate to its pattern
+    // Phase 4 -- double-click clip -> navigate to its pattern
     playlist.onNavigateToPattern = [this](int patternId)
     {
         if (findPattern(patternId) == nullptr) return;
@@ -1171,13 +1171,13 @@ MainComponent::MainComponent()
                     auto& pr = pianoRollWindow->content.pianoRoll;
                     if (pr.getRecState() == PianoRollComponent::RecState::Armed)
                     {
-                        // Space again while Armed → cancel → Idle
+                        // Space again while Armed -> cancel -> Idle
                         pr.setRecording(false);
                     }
                     else if (pr.isTriggerEnabled() &&
                              pianoRollWindow->content.recBtn.getToggleState())
                     {
-                        // Trigger ON + REC active → enter Armed (engine stays stopped)
+                        // Trigger ON + REC active -> enter Armed (engine stays stopped)
                         pr.setRecording(true);
                     }
                     else
@@ -1303,7 +1303,7 @@ MainComponent::MainComponent()
         markDirty();
     };
 
-    // Pattern Variation (A/B/C/D) — save current variation, switch, reload
+    // Pattern Variation (A/B/C/D) -- save current variation, switch, reload
     channelRack.onVariationChanged = [this](int prevIdx, int newIdx)
     {
         // Save current step edits to the OLD variation before switching
@@ -1612,7 +1612,7 @@ MainComponent::MainComponent()
         markDirty();
     };
 
-    // Phase 3 — channel mixer routing
+    // Phase 3 -- channel mixer routing
     channelRack.onChannelRoutingChanged = [this](int ch, int newTrack)
     {
         auto* pat = findPattern(activePatternId);
@@ -1863,7 +1863,7 @@ MainComponent::MainComponent()
     mixer.onMasterVolumeChanged = [this](float v)        { audioEngine.setMasterVolume(v);         markDirty(); };
     mixer.onMasterPanChanged    = [this](float p)        { audioEngine.setMasterPan(p);            markDirty(); };
 
-    // M14 — FX editor per mixer track
+    // M14 -- FX editor per mixer track
     mixer.onFXButtonClicked = [this](int t)
     {
         fxEditorTrack = t;
@@ -1932,7 +1932,7 @@ MainComponent::MainComponent()
 
     toolbar.onToggleMixer = [this] { showMixer = !showMixer; resized(); };
 
-    // Launchpad — inline panel callbacks (wired once at construction)
+    // Launchpad -- inline panel callbacks (wired once at construction)
     launchpadPanel.setProject(&project);
     addChildComponent(launchpadPanel);   // hidden initially
 
@@ -2047,14 +2047,14 @@ MainComponent::MainComponent()
 
     launchpadPanel.getBPM = [this]() { return project.bpm; };
 
-    // Launchpad toggle — show/hide inline panel
+    // Launchpad toggle -- show/hide inline panel
     toolbar.onToggleLaunchpad = [this]
     {
         showLaunchpad = !showLaunchpad;
         resized();
     };
 
-    // M12 — MIDI device selection popup
+    // M12 -- MIDI device selection popup
     toolbar.onAudioButton = [this]
     {
         if (audioDeviceWindow == nullptr)
@@ -2105,7 +2105,7 @@ MainComponent::MainComponent()
             });
     };
 
-    // Trackpad multitouch → launchpad pads 0-15
+    // Trackpad multitouch -> launchpad pads 0-15
     toolbar.onToggleTrackpad = [this]
     {
         if (trackpadController.isRunning())
@@ -2137,10 +2137,10 @@ MainComponent::MainComponent()
     audioEngine.setActivePattern(activePatternId);
     audioEngine.updatePatternSnapshot();
 
-    // ── Live Performance: ClipLauncher wiring ────────────────────────────────
+    // -- Live Performance: ClipLauncher wiring --------------------------------
     clipLauncher_.setQuantizeBeats(4.0);  // 1 bar quantize by default
 
-    // Default pad→channel mapping: pad N → channel N (first 16 pads)
+    // Default pad->channel mapping: pad N -> channel N (first 16 pads)
     if (!project.patterns.empty())
     {
         const int firstPatId = project.patterns.front().id;
@@ -2167,14 +2167,14 @@ MainComponent::MainComponent()
     {
         audioEngine.setMidiTargetChannel(channel);
         if (audioEngine.liveLoopGetState(channel) == LiveLoopEngine::State::Idle)
-            audioEngine.liveLoopArm(channel);
+            audioEngine.liveLoopArm(channel, 16.0);
     };
 
-    // Pads are NOT intercepted as clip triggers — they play drum sounds normally.
+    // Pads are NOT intercepted as clip triggers -- they play drum sounds normally.
     // (setPadRange disabled: no pad range set, so all notes go to instrument routing)
-    // ─────────────────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------
 
-    // ── Live Loop Window setup ───────────────────────────────────────────────
+    // -- Live Loop Window setup -----------------------------------------------
     liveLoopWindow_ = std::make_unique<LiveLoopWindow>(audioEngine);
     auto& lw = liveLoopWindow_->content;
 
@@ -2201,10 +2201,10 @@ MainComponent::MainComponent()
         channelRack.setSelectedMidiChannel(ch);
     };
 
-    lw.onArmChannel = [this](int ch)
+    lw.onArmChannel = [this](int /*ch*/, double loopBeats)
     {
-        audioEngine.liveLoopSetLength(16.0);  // default; updated by lenBtns
-        audioEngine.liveLoopArm(ch);
+        const int ch = audioEngine.getMidiTargetChannel();
+        audioEngine.liveLoopArm(ch, loopBeats);
     };
 
     lw.onStopChannel = [this](int ch)
@@ -2212,9 +2212,24 @@ MainComponent::MainComponent()
         audioEngine.liveLoopStop(ch);
     };
 
-    lw.onSetLoopLength = [this](int /*ch*/, double beats)
+    lw.onOverdubChannel = [this](int ch)
     {
-        audioEngine.liveLoopSetLength(beats);
+        audioEngine.liveLoopOverdub(ch);
+    };
+
+    lw.onUndoChannel = [this](int ch)
+    {
+        audioEngine.liveLoopUndo(ch);
+    };
+
+    lw.onMuteChannel = [this](int ch, bool muted)
+    {
+        audioEngine.liveLoopSetMute(ch, muted);
+    };
+
+    lw.onVolumeChanged = [this](int ch, float v)
+    {
+        audioEngine.liveLoopSetVolume(ch, v);
     };
 
     lw.onStopAll = [this]
@@ -2232,20 +2247,20 @@ MainComponent::MainComponent()
         audioEngine.liveLoopSetQuantize(stepBeats);
     };
 
+    lw.onMetronomeToggle = [this](bool on)
+    {
+        audioEngine.setMetronomeEnabled(on);
+    };
+
+    lw.onTapTempo = [this]
+    {
+        // Tap tempo is handled internally in LiveLoopComponent
+    };
+
     // Apply the default 1/16 quantize to the engine immediately
     audioEngine.liveLoopSetQuantize(0.25);
 
-    lw.onEditInstrument = [this](int ch)
-    {
-        // Open the existing synth editor for this channel
-        audioEngine.setMidiTargetChannel(ch);
-        channelRack.setSelectedMidiChannel(ch);
-        // Fire channel-select to trigger the existing piano roll / synth edit flow
-        if (channelRack.onChannelSelected)
-            channelRack.onChannelSelected(ch);
-    };
-
-    // ── Live Performance Mode toggle (wired to toolbar LIVE button) ─────────
+    // -- Live Performance Mode toggle (wired to toolbar LIVE button) ---------
     toolbar.onToggleLiveMode = [this]
     {
         liveMode_ = !liveMode_;
@@ -2262,7 +2277,7 @@ MainComponent::MainComponent()
             audioEngine.liveLoopResetAll();
         }
     };
-    // ─────────────────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------
 
     startTimerHz(30);
     setSize(1600, 900);
@@ -2402,7 +2417,7 @@ void MainComponent::syncPatternToEngine()
     auto* pat = findPattern(activePatternId);
     if (pat == nullptr) return;
 
-    // Flush channel rack UI → pattern model
+    // Flush channel rack UI -> pattern model
     channelRack.saveToPattern(*pat);
 
     audioEngine.setActivePattern(activePatternId);   // ensure NoteEvent loop uses current pattern
@@ -2422,7 +2437,7 @@ void MainComponent::syncPatternToEngine()
 }
 
 // ---------------------------------------------------------------------------
-// M4 — File operations
+// M4 -- File operations
 // ---------------------------------------------------------------------------
 
 void MainComponent::markDirty()
@@ -2631,7 +2646,7 @@ void MainComponent::reloadProjectIntoUI()
 {
     undoManager.clearUndoHistory();   // M6: stale actions reference old project data
 
-    // Stop the audio engine before touching shared project data —
+    // Stop the audio engine before touching shared project data --
     // processSongMode reads project->patterns on the audio thread.
     audioEngine.stop();
     audioEngine.allSynthNotesOff();
@@ -2736,7 +2751,7 @@ void MainComponent::reloadProjectIntoUI()
     // Refresh playlist
     playlist.setProject(&project);
 
-    // M5 — ensure mixer tracks exist, then sync UI
+    // M5 -- ensure mixer tracks exist, then sync UI
     if (project.mixerTracks.empty())
     {
         for (int t = 0; t < 8; ++t)
@@ -2753,7 +2768,7 @@ void MainComponent::reloadProjectIntoUI()
 
     refreshSynthEditorPresetList();
 
-    // M11 — ensure playlist tracks exist
+    // M11 -- ensure playlist tracks exist
     if (project.playlistTracks.empty())
         for (int t = 0; t < 8; ++t)
         {
@@ -2762,9 +2777,9 @@ void MainComponent::reloadProjectIntoUI()
             project.playlistTracks.push_back(pt);
         }
 
-    // M3 — channel types are now per-pattern; loadPattern (above) already applied them
+    // M3 -- channel types are now per-pattern; loadPattern (above) already applied them
 
-    // M8 — unload any previously active plugins, then reload from project
+    // M8 -- unload any previously active plugins, then reload from project
     for (int ch = 0; ch < 16; ++ch)
     {
         if (pluginEditorWindows[(size_t)ch] != nullptr)
@@ -2993,7 +3008,7 @@ void MainComponent::switchToPatternModeForEditing()
     if (toolbar.getPlayMode() == PlayMode::Pattern)
         return;
 
-    // Always stop and kill voices when switching from Song → Pattern mode,
+    // Always stop and kill voices when switching from Song -> Pattern mode,
     // regardless of whether playback is currently active.  If the engine was
     // paused mid-song, polySynth voices triggered by the song sequencer may
     // still be in ADSR decay and would become audible the moment playMode
@@ -3037,12 +3052,12 @@ void MainComponent::saveProject()
 {
     if (currentFile.existsAsFile())
     {
-        // Flush current channel rack → active pattern before saving
+        // Flush current channel rack -> active pattern before saving
         if (auto* pat = findPattern(activePatternId))
             channelRack.saveToPattern(*pat);
         syncChannelRackToProject();
 
-        // M8 — collect plugin state from audio engine before serialising
+        // M8 -- collect plugin state from audio engine before serialising
         for (int ch = 0; ch < 16; ++ch)
         {
             juce::MemoryBlock state;
@@ -3076,7 +3091,7 @@ void MainComponent::saveProjectAs()
         channelRack.saveToPattern(*pat);
     syncChannelRackToProject();
 
-    // M8 — collect plugin state
+    // M8 -- collect plugin state
     for (int ch = 0; ch < 16; ++ch)
     {
         juce::MemoryBlock state;
@@ -3120,7 +3135,7 @@ void MainComponent::saveProjectAs()
 }
 
 // ---------------------------------------------------------------------------
-// M6 — Keyboard shortcuts
+// M6 -- Keyboard shortcuts
 // ---------------------------------------------------------------------------
 
 bool MainComponent::keyPressed(const juce::KeyPress& key)
@@ -3143,7 +3158,7 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
         undoManager.redo();
         return true;
     }
-    // Tab — toggle Song / Pattern mode
+    // Tab -- toggle Song / Pattern mode
     if (key == juce::KeyPress(juce::KeyPress::tabKey))
     {
         toolbar.togglePlayMode();
@@ -3151,26 +3166,26 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
         return true;
     }
 
-    // Cmd+C — copy selected playlist clip
+    // Cmd+C -- copy selected playlist clip
     if (key == juce::KeyPress('c', cmd, 0))
     {
         playlist.copySelectedClip();
         return true;
     }
 
-    // Cmd+V — paste clipboard clip
+    // Cmd+V -- paste clipboard clip
     if (key == juce::KeyPress('v', cmd, 0))
     {
         playlist.pasteClipboard();
         return true;
     }
 
-    // Space — pause / resume (song mode keeps position; pattern mode restarts)
+    // Space -- pause / resume (song mode keeps position; pattern mode restarts)
     if (key == juce::KeyPress(juce::KeyPress::spaceKey))
     {
         if (audioEngine.isPlaying())
         {
-            // PAUSE — check for double-Space (Space resume → Space again within 800ms = restart)
+            // PAUSE -- check for double-Space (Space resume -> Space again within 800ms = restart)
             const juce::int64 now = juce::Time::currentTimeMillis();
             const bool doubleSpace = lastSpaceResumeTime > 0 &&
                                      (now - lastSpaceResumeTime) < 600;
@@ -3200,7 +3215,7 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
             }
             else if (project.playMode == PlayMode::Song)
             {
-                // Normal pause — save position, keep playhead visible
+                // Normal pause -- save position, keep playhead visible
                 pausedBarSong = audioEngine.getSongBeatPosition() / 4.0;
                 audioEngine.stop();
                 audioEngine.allSynthNotesOff();
@@ -3222,12 +3237,12 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
 
             if (pr.getRecState() == PianoRollComponent::RecState::Armed)
             {
-                // Space again while Armed → cancel; back to Idle
+                // Space again while Armed -> cancel; back to Idle
                 pr.setRecording(false);
             }
             else if (pr.isTriggerEnabled() && pianoRollWindow->content.recBtn.getToggleState())
             {
-                // Trigger ON + REC active → enter Armed (do NOT start engine yet)
+                // Trigger ON + REC active -> enter Armed (do NOT start engine yet)
                 pr.setRecording(true);
             }
             else
@@ -3275,7 +3290,7 @@ void MainComponent::resized()
     // Toolbar is now 80px (two rows)
     toolbar.setBounds(area.removeFromTop(80));
 
-    // Launchpad — right panel, toolbar 바로 아래 풀 높이
+    // Launchpad -- right panel, toolbar 바로 아래 풀 높이
     launchpadPanel.setVisible(showLaunchpad);
     if (showLaunchpad)
     {
@@ -3283,12 +3298,12 @@ void MainComponent::resized()
         launchpadPanel.setBounds(area.removeFromRight(padW));
     }
 
-    // M5 — Mixer panel anchored at bottom, visible only when toggled
+    // M5 -- Mixer panel anchored at bottom, visible only when toggled
     mixer.setVisible(showMixer);
     if (showMixer)
         mixer.setBounds(area.removeFromBottom(160));
 
-    // M15 — sample browser: left panel, collapsible
+    // M15 -- sample browser: left panel, collapsible
     constexpr int kBrowserW  = 220;
     constexpr int kReopenW   = 22;
     constexpr int kReopenH   = 32;
@@ -3296,7 +3311,7 @@ void MainComponent::resized()
     browserViewport.setVisible(isBrowserOpen);
     if (isBrowserOpen)
     {
-        // Collapse button is INSIDE the browser header — hide the external tab
+        // Collapse button is INSIDE the browser header -- hide the external tab
         browserCollapseBtn.setVisible(false);
 
         auto browserArea = area.removeFromLeft(kBrowserW);
@@ -3335,7 +3350,7 @@ void MainComponent::resized()
 
 void MainComponent::timerCallback()
 {
-    // ── Live Performance: drain pad triggers → ClipLauncher ──────────────────
+    // -- Live Performance: drain pad triggers -> ClipLauncher ------------------
     {
         ClipTriggerEvent ev;
         while (audioEngine.drainClipTrigger(ev))
@@ -3345,36 +3360,35 @@ void MainComponent::timerCallback()
         if (beatPos >= 0.0)
             clipLauncher_.processQuantizedLaunch(beatPos);
     }
-    // ─────────────────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------
 
-    // ── MIDI CC → Real-Time Parameter Control ─────────────────────────────────
+    // -- MIDI CC -> Real-Time Parameter Control ---------------------------------
     // Drain CC events captured on the audio thread and apply the default mapping.
     //
-    // Default mapping (MPK Mini / standard layout — all adjustable later):
-    //   CC 70–77 → channel 0–7 volume  (normalised 0-127 → 0.0–1.0)
-    //   CC 10    → global pan (unused for now)
+    // Default mapping (MPK Mini / standard layout -- all adjustable later):
+    //   CC 70-77 -> channel 0-7 volume  (normalised 0-127 -> 0.0-1.0)
+    //   CC 10    -> global pan (unused for now)
     //   Any unmapped CC is discarded silently.
     {
         CcEvent cc;
         while (audioEngine.drainCcEvent(cc))
         {
-            const float norm = cc.value / 127.0f;   // 0.0–1.0
+            const float norm = cc.value / 127.0f;   // 0.0-1.0
 
-            // Volume mapping: CC 70-77 → channel 0-7
+            // Volume mapping: CC 70-77 -> channel 0-7
             if (cc.ccNumber >= 70 && cc.ccNumber <= 77)
             {
                 const int ch = cc.ccNumber - 70;
                 audioEngine.setCcChannelVolume(ch, norm);
             }
-            // Loop length: CC 1 (mod wheel) → 1/2/4/8 bars
-            // 0-31 → 1 bar (4 beats), 32-63 → 2 bars (8), 64-95 → 4 bars (16), 96-127 → 8 bars (32)
+            // Loop length: CC 1 (mod wheel) -> 1/2/4/8 bars
+            // 0-31 -> 1 bar (4 beats), 32-63 -> 2 bars (8), 64-95 -> 4 bars (16), 96-127 -> 8 bars (32)
             else if (cc.ccNumber == 1)
             {
-                const double lengths[] = { 4.0, 8.0, 16.0, 32.0 };
-                const int idx = juce::jlimit(0, 3, cc.value * 4 / 128);
-                audioEngine.liveLoopSetLength(lengths[idx]);
+                // Mod wheel -> loop length (stored in UI, not engine directly)
+                // This is a read-only hint; actual length set when arming via UI
             }
-            // Pan mapping: CC 10 → channel determined by dawChannel field
+            // Pan mapping: CC 10 -> channel determined by dawChannel field
             else if (cc.ccNumber == 10)
             {
                 const int ch = (cc.dawChannel >= 0 && cc.dawChannel < 16)
@@ -3384,7 +3398,7 @@ void MainComponent::timerCallback()
             // Extend mappings here as needed (MIDI learn, user map, etc.)
         }
     }
-    // ─────────────────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------
 
     if (pianoRollWindow != nullptr && pianoRollWindow->isVisible() && pianoRollChannel >= 0 && pianoRollChannel < 16)
     {
@@ -3392,7 +3406,7 @@ void MainComponent::timerCallback()
         audioEngine.getMidiHeldNotesForChannel(pianoRollChannel, held);
         pianoRollWindow->content.pianoRoll.setExternalHeldPitches(held);
 
-        // External MIDI trigger: if Armed and any note is held, fire Armed→Recording
+        // External MIDI trigger: if Armed and any note is held, fire Armed->Recording
         auto& pr = pianoRollWindow->content.pianoRoll;
         if (pr.getRecState() == PianoRollComponent::RecState::Armed)
         {
@@ -3407,7 +3421,7 @@ void MainComponent::timerCallback()
         }
     }
 
-    // ── MIDI activity indicator: update ChannelRack dots ─────────────────────
+    // -- MIDI activity indicator: update ChannelRack dots ---------------------
     {
         uint16_t mask = 0;
         for (int ch = 0; ch < 16; ++ch)
@@ -3422,15 +3436,15 @@ void MainComponent::timerCallback()
         channelRack.setMidiActivityMask(mask);
     }
 
-    // ── Drain all committed notes (PianoRoll loop recording + Live Performance overdub) ──
+    // -- Drain all committed notes (PianoRoll loop recording + Live Performance overdub) --
     {
         AudioEngine::CommittedNote cn;
         bool anyPianoRoll = false;
         bool anyLivePerf  = false;
         while (audioEngine.drainCommittedNote(cn))
         {
-            // patternId == -1 → PianoRoll path (write to activePatternId)
-            // patternId >= 0  → Live Performance path (write to specific pattern)
+            // patternId == -1 -> PianoRoll path (write to activePatternId)
+            // patternId >= 0  -> Live Performance path (write to specific pattern)
             const int targetPatId = (cn.patternId >= 0) ? cn.patternId : activePatternId;
             if (auto* pat = findPattern(targetPatId))
             {
@@ -3487,7 +3501,7 @@ void MainComponent::timerCallback()
         followPlaylistPlayhead();
     }
 
-    // M3 — update piano roll playhead (wrap to pattern length)
+    // M3 -- update piano roll playhead (wrap to pattern length)
     if (pianoRollWindow != nullptr && pianoRollWindow->isVisible())
     {
         double beatPos = audioEngine.getPatternBeatPos();

@@ -11,7 +11,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "../ProjectModel.h"
-// RubberBand is included only in AudioEngine.cpp — not needed in the header
+// RubberBand is included only in AudioEngine.cpp -- not needed in the header
 #include "AudioRecorder.h"
 #include "SamplePlayer.h"
 #include "Sequencer.h"
@@ -51,7 +51,7 @@ struct PlaybackSnapshot
     int               channelMixerRouting[kCh]= {};
     bool              pluginSlotEnabled  [kCh]= {};  // per-pattern plugin flag
 
-    // ── Live Performance: per-channel pattern override ─────────────────────
+    // -- Live Performance: per-channel pattern override ---------------------
     // When channelPatternId[ch] >= 0, that channel plays its own pattern/variation
     // instead of the global patternId.  -1 = use global (default behaviour).
     int channelPatternId   [kCh] = {};  // initialised to -1 below
@@ -93,7 +93,7 @@ public:
     void unloadSample      (int channelIndex);   // clear player so channel plays nothing
     void triggerChannel    (int channelIndex, int step, int offsetInBuffer = 0);
 
-    // Sampler Synth — load the oscillator-source buffer for a Sampler channel.
+    // Sampler Synth -- load the oscillator-source buffer for a Sampler channel.
     // Call from the message thread when the user assigns a sample to a Sampler channel.
     void loadSamplerSource (int channelIndex, const juce::File& file);
 
@@ -129,7 +129,7 @@ public:
     void loadAudioClip  (int clipId, const juce::File& file, float clipLengthBars = 0.0f);
     void unloadAudioClip(int clipId);
     void unloadAllAudioClips();
-    void resetAudioClipTriggers();   // mark all instances inactive — call on stop/seek
+    void resetAudioClipTriggers();   // mark all instances inactive -- call on stop/seek
 
     // Rebuild the pitch-shifted buffer for a Stretch/Elastique clip.
     // Call from the message thread after changing mode or pitchSemitone.
@@ -153,38 +153,38 @@ public:
 
     Sequencer& getSequencer() { return sequencer; }
 
-    // M1.1 — Mute / Solo / Volume / Pan
+    // M1.1 -- Mute / Solo / Volume / Pan
     void setChannelMuted  (int ch, bool muted);
     void setChannelSolo   (int ch, bool soloed);
     void setChannelVolume (int ch, float volume);
     void setChannelPan    (int ch, float pan);
 
-    // ── CC Real-Time Parameter Control ─────────────────────────────────────
+    // -- CC Real-Time Parameter Control -------------------------------------
     // Call from message thread (e.g. after draining CcEvent).
-    // Audio thread smooths toward target — no zipper noise.
-    void setCcChannelVolume(int ch, float normalised01);   // 0.0–1.0 multiplier (1.0 = full)
-    void setCcChannelPan   (int ch, float normalised01);   // 0.0–1.0 maps to [-1, +1]
+    // Audio thread smooths toward target -- no zipper noise.
+    void setCcChannelVolume(int ch, float normalised01);   // 0.0-1.0 multiplier (1.0 = full)
+    void setCcChannelPan   (int ch, float normalised01);   // 0.0-1.0 maps to [-1, +1]
     float getCcChannelVolume(int ch) const noexcept;
     float getCcChannelPan  (int ch) const noexcept;
 
-    // M1.2 — Pitch
+    // M1.2 -- Pitch
     void setChannelPitch  (int ch, float semitones);
 
-    // M1.3 — Envelope
+    // M1.3 -- Envelope
     void setChannelAttack (int ch, float ms);
     void setChannelRelease(int ch, float ms);
 
-    // M3 — set active pattern for NoteEvent playback in pattern mode
+    // M3 -- set active pattern for NoteEvent playback in pattern mode
     void setActivePattern(int patternId);
 
-    // Pattern variation (A/B/C/D) — selects which VariationData to read in pattern mode
+    // Pattern variation (A/B/C/D) -- selects which VariationData to read in pattern mode
     void setActiveVariation(int idx);
 
     // Live Performance: set an independent pattern/variation for a single channel.
     // Other channels are unaffected.  Pass patternId = -1 to revert to the global pattern.
     void setChannelPattern(int channel, int patternId, int variationIdx);
 
-    // M3 — preview a note from the piano roll keyboard (does not alter channelBasePitch)
+    // M3 -- preview a note from the piano roll keyboard (does not alter channelBasePitch)
     void previewNote(int ch, int midiPitch);
 
     // Silence all synth voices immediately (called on Stop)
@@ -203,17 +203,17 @@ public:
         return (ch >= 0 && ch < 16) ? channelBasePitch[(size_t)ch].load(std::memory_order_relaxed) : 0.0f;
     }
 
-    // M13 — trigger a synth note directly (used by piano key preview for melodic synth channels)
+    // M13 -- trigger a synth note directly (used by piano key preview for melodic synth channels)
     void previewSynthNote(int ch, int midiPitch, const SynthParams& p);
 
     // Stop editor preview voices immediately on channel ch.
-    // Only kills voices tagged as preview — transport playback is unaffected.
+    // Only kills voices tagged as preview -- transport playback is unaffected.
     void stopEditorPreview(int ch);
 
     // True if any preview-tagged voice on ch is still rendering (including release tails).
     bool isEditorPreviewActive(int ch) const;
 
-    // Snapshot — rebuild the PlaybackSnapshot from the active pattern.
+    // Snapshot -- rebuild the PlaybackSnapshot from the active pattern.
     // Call on the message thread whenever pattern data changes.
     void updatePatternSnapshot();
 
@@ -246,7 +246,7 @@ public:
         cacheLoader_->startThread();
     }
 
-    // M5 — mixer track controls
+    // M5 -- mixer track controls
     void setMixerTrackVolume(int track, float vol);
     void setMixerTrackPan   (int track, float pan);
     void setMixerTrackMuted (int track, bool muted);
@@ -254,7 +254,7 @@ public:
     void setMasterVolume    (float vol);
     void setMasterPan       (float pan);
 
-    // M12 — MIDI input
+    // M12 -- MIDI input
     juce::Array<juce::MidiDeviceInfo> getMidiInputDevices() const;
     void openMidiDevice (const juce::String& deviceId);
     void closeMidiDevice();
@@ -280,8 +280,8 @@ public:
     // Loop MIDI Recording -----------------------------------------------
     struct LoopMarkers  { double startBeat = 0.0, endBeat = 4.0; };
 
-    // CommittedNote: patternId == -1 → write to activePatternId (PianoRoll path).
-    //                patternId >= 0 → write to that specific pattern (Live Perf path).
+    // CommittedNote: patternId == -1 -> write to activePatternId (PianoRoll path).
+    //                patternId >= 0 -> write to that specific pattern (Live Perf path).
     struct CommittedNote { NoteEvent note; int channel = 0; int variation = 0; int patternId = -1; };
 
     void setLoopMarkers(double startBeat, double endBeat);
@@ -293,35 +293,45 @@ public:
 
     std::function<void()> onLoopWrap;   // fired async on message thread at each loop boundary
 
-    // ── Live Loop Engine (Live Performance) ───────────────────────────────────
+    // -- Live Loop Engine (Live Performance) -----------------------------------
     // Completely independent from step-sequencer. Per-channel MIDI loop recorder.
-    void liveLoopArm (int ch) noexcept;       // arm channel for recording
-    void liveLoopStop(int ch) noexcept;       // stop channel (clear loop)
-    void liveLoopResetAll() noexcept;         // stop all channels
-    void liveLoopSetLength(double beats) noexcept;  // set loop length for next arm
-    void liveLoopSetQuantize(double stepBeats) noexcept;  // 0=free, 0.25=1/16, 0.5=1/8, 1.0=1/4
+    void liveLoopArm (int ch, double loopBeats) noexcept;  // arm with explicit length
+    void liveLoopStop(int ch) noexcept;
+    void liveLoopResetAll() noexcept;
+    void liveLoopOverdub(int ch) noexcept;      // add layer to existing loop
+    void liveLoopUndo(int ch) noexcept;         // rollback last overdub layer
+    void liveLoopSetQuantize(double stepBeats) noexcept;
+    void liveLoopSetMute(int ch, bool muted) noexcept;
+    bool liveLoopGetMute(int ch) const noexcept;
+    void liveLoopSetVolume(int ch, float v) noexcept;
+    float liveLoopGetVolume(int ch) const noexcept;
     LiveLoopEngine::State liveLoopGetState(int ch) const noexcept;
-    double liveLoopGetLength() const noexcept;
+    double liveLoopGetChannelLength(int ch) const noexcept;
+    double liveLoopGetBeatsTillRecord(int ch) const noexcept;
     // Note display (UI-thread safe, minor race accepted)
     int    liveLoopGetNotesForDisplay(int ch, LiveLoopEngine::NoteDisplayItem* out, int maxItems) const noexcept;
     double liveLoopGetPhase(int ch) const noexcept;
-    double liveLoopGetChannelLength(int ch) const noexcept;
 
-    // MidiInputCallback (called on MIDI thread — posts into collector)
+    // -- Metronome -------------------------------------------------------------
+    void setMetronomeEnabled(bool on) noexcept;
+    void setMetronomeVolume(float v) noexcept;
+    bool getMetronomeEnabled() const noexcept;
+
+    // MidiInputCallback (called on MIDI thread -- posts into collector)
     void handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& msg) override;
 
-    // Launchpad — trigger/stop pads; load sample file
+    // Launchpad -- trigger/stop pads; load sample file
     void triggerLaunchpadPad    (int padIdx);
     void stopLaunchpadPad       (int padIdx);
     void stopAllLaunchpadPads   ();
     void loadLaunchpadSample    (int padIdx, const juce::File& file);
     void unloadLaunchpadSample  (int padIdx);
 
-    // M15 — preview a file from the sample browser (dedicated player, no channel affected)
+    // M15 -- preview a file from the sample browser (dedicated player, no channel affected)
     void previewBrowserFile(const juce::File& f);
     void stopBrowserPreview();   // immediately stops the browser preview player
 
-    // M10 — Offline render to WAV file
+    // M10 -- Offline render to WAV file
     // Temporarily removes the real-time audio callback to avoid thread conflicts.
     // mode: Pattern = loops the sequencer, Song = renders the full timeline.
     // numBars: total bars to write (Pattern mode uses this directly;
@@ -329,8 +339,8 @@ public:
     // Returns true on success.
     bool renderToFile(const juce::File& outputFile, PlayMode mode, int numBars);
 
-    // Stem export — renders each mixer track to a separate WAV file.
-    // Returns number of successfully exported stems (0–9: 8 tracks + master).
+    // Stem export -- renders each mixer track to a separate WAV file.
+    // Returns number of successfully exported stems (0-9: 8 tracks + master).
     int renderStemsToFolder(const juce::File& folder, PlayMode mode, int numBars);
 
     // --- Recording -----------------------------------------------------------
@@ -355,7 +365,7 @@ public:
     /** Fired on message thread when recording stops (carries the recorded file). */
     std::function<void(const juce::File& recordedFile, double startBar, double lengthBars)> onRecordingFinished;
 
-    /** Input level (peak) for metering — updated on audio thread, read on message thread. */
+    /** Input level (peak) for metering -- updated on audio thread, read on message thread. */
     float getInputLevelL() const { return inputLevelL_.load(std::memory_order_relaxed); }
     float getInputLevelR() const { return inputLevelR_.load(std::memory_order_relaxed); }
 
@@ -367,13 +377,13 @@ public:
     const AutoTuneProcessor& getAutoTuneProcessor(int t) const
     { return autoTuneProcessors_[(size_t)juce::jlimit(0, 7, t)]; }
 
-    // M8 — VST/AU instrument plugins
+    // M8 -- VST/AU instrument plugins
     // loadPlugin: creates + prepares the plugin instance (call on message thread).
     // getPlugin:  returns the raw pointer for editor creation (message thread only).
     void loadPlugin  (int ch, const juce::PluginDescription& desc, juce::String& errorMsg);
     void unloadPlugin(int ch);
     bool hasPlugin   (int ch) const;
-    juce::AudioPluginInstance* getPlugin(int ch);   // message thread only — do not hold
+    juce::AudioPluginInstance* getPlugin(int ch);   // message thread only -- do not hold
 
     // Save plugin state into a MemoryBlock (for project serialisation).
     bool getPluginState(int ch, juce::MemoryBlock& stateOut) const;
@@ -429,7 +439,7 @@ private:
         bool  hasMasterOverride = false;
         float masterVolume = 1.0f;
         float masterPan    = 0.0f;
-        // Per-mixer-track volume multiplier (automation: "mixVol0"–"mixVol7").
+        // Per-mixer-track volume multiplier (automation: "mixVol0"-"mixVol7").
         // Default 1.0 = no override.  Applied on top of runtime mixer track volume.
         std::array<float, 8> mixerVolMul {{ 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }};
     };
@@ -542,7 +552,7 @@ private:
         int    fileTotalSamples   = 0;      // = pitchedBuffer (if set) or buffer size
         double pitchRatio         = 1.0;    // 1.0 for Stretch/Elastique (tempo-preserving)
 
-        // Fade envelope parameters — set each block
+        // Fade envelope parameters -- set each block
         double localBeatAtBlockStart = 0.0; // clip-local beat at startOffsetInBlock
         double beatsPerSample        = 0.0; // = 1.0 / samplesPerBeat
         float  fadeInBeats           = 0.0f;
@@ -569,14 +579,14 @@ private:
     std::array<FXChain, 8>      fxChains;         // M14
     std::array<AutoTuneProcessor, 8> autoTuneProcessors_; // Auto-Tune per track
     std::array<SamplePlayer, 64> launchpadPlayers; // Launchpad one-shot players
-    SamplePlayer browserPreviewPlayer;              // M15 — dedicated browser preview
+    SamplePlayer browserPreviewPlayer;              // M15 -- dedicated browser preview
 
-    // M12 — MIDI
+    // M12 -- MIDI
     juce::MidiMessageCollector  midiCollector;
     juce::String                openMidiDeviceId_;
     bool                        midiInputCallbackRegistered_ = false;
     std::array<std::array<std::atomic<uint8_t>, 128>, 16> midiHeldNotes_ {};
-    int  midiTargetChannel = 0;   // DAW channel index (0-based) — mirrors midiRouter_ default
+    int  midiTargetChannel = 0;   // DAW channel index (0-based) -- mirrors midiRouter_ default
     MidiRouter midiRouter_;
     Sequencer sequencer;
 
@@ -593,7 +603,7 @@ private:
     std::atomic<double> songBeatPosition_ { 0.0 };   // beat-accurate song position (BPM-aware)
     std::atomic<double> bpm { 140.0 };
 
-    // M3 — beat tracking for NoteEvent playback
+    // M3 -- beat tracking for NoteEvent playback
     double patternBeatPos  = 0.0;
     int    activePatternId = 0;
     std::atomic<int> activeVariationIdx_ { 0 };
@@ -605,9 +615,9 @@ private:
     std::array<std::atomic<bool>, 16>  channelMuted {};       // user mute state (independent of solo)
     std::array<std::atomic<bool>, 16>  channelSoloed {};      // user solo state
 
-    // ── CC Real-Time Parameter Control ──────────────────────────────────────
+    // -- CC Real-Time Parameter Control --------------------------------------
     // LiveParam: message thread sets target (atomic); audio thread smooths toward it.
-    // No locks required — one writer, one reader, relaxed atomics are sufficient.
+    // No locks required -- one writer, one reader, relaxed atomics are sufficient.
     struct LiveParam
     {
         std::atomic<float> target { 1.0f };  ///< written by message thread
@@ -629,7 +639,7 @@ private:
     };
 
     LiveParam ccVol_[16];   ///< CC-driven volume multiplier  [0, 1],  default 1.0
-    LiveParam ccPan_[16];   ///< CC-driven pan normalised [0, 1] → [-1, +1], default 0.5
+    LiveParam ccPan_[16];   ///< CC-driven pan normalised [0, 1] -> [-1, +1], default 0.5
 
     void applyChannelMuteLogic();      // recompute SamplePlayer mute from muted[]+soloed[]
     const RuntimePlaybackState& getRuntimeState() const;
@@ -639,7 +649,7 @@ private:
     const SongSampleCacheMap& getSongSampleCache() const;
     void resetSongChannelMixState();
 
-    // M5 — mixer intermediate buffers
+    // M5 -- mixer intermediate buffers
     juce::AudioBuffer<float> stagingBuf;                         // temp per-channel render
     std::array<juce::AudioBuffer<float>, 8> mixerTrackBufs;     // 8 insert tracks
 
@@ -679,7 +689,7 @@ private:
     SongSampleCacheMap songSampleCaches_[2];
     std::atomic<int> activeSongCacheIdx_{0};
 
-    // Sampler Synth — per-channel oscillator-source buffers (pattern mode + fallback)
+    // Sampler Synth -- per-channel oscillator-source buffers (pattern mode + fallback)
     mutable juce::SpinLock samplerBufLock_;
     std::array<std::shared_ptr<juce::AudioBuffer<float>>, 16> samplerSourceBuffers_ {};
     // Per-pattern sampler source cache for song mode (same structure as songSampleCaches_)
@@ -698,7 +708,7 @@ private:
     std::atomic<int> activeRuntimeStateIdx_{0};
     ScheduledSampleTriggerQueue scheduledSampleTriggers_;
 
-    // Background cache loader — avoids UI freeze on Play in Song mode
+    // Background cache loader -- avoids UI freeze on Play in Song mode
     struct CacheLoader : public juce::Thread
     {
         AudioEngine& engine;
@@ -719,9 +729,9 @@ private:
     // Sampler Synth helpers
     const SongSampleCacheMap& getSongSamplerCache() const;
 
-    // Unified voice dispatch — routes to noteOnSampler or noteOn based on source type.
+    // Unified voice dispatch -- routes to noteOnSampler or noteOn based on source type.
     // Sampler channels play regardless of synthParams.enabled; Synth channels require it.
-    // noteLenSamples == 0 → use 1/16th note at current BPM.
+    // noteLenSamples == 0 -> use 1/16th note at current BPM.
     // samplerBuf must be non-null when srcType == Sampler; pass nullptr for synth channels.
     void dispatchVoiceNote(int ch, int midiPitch, float velocity, int noteLenSamples,
                            float outputGain, float outputPan, int mixerTrack,
@@ -732,7 +742,7 @@ private:
     double sampleRate = 44100.0;
     int    bufferSize = 512;
 
-    // Dynamic EQ — one per mixer track bus + one for master
+    // Dynamic EQ -- one per mixer track bus + one for master
     std::array<DynamicEQProcessor, 8> trackDynEQs_;
     DynamicEQProcessor                masterDynEQ_;
     std::array<float, 8>             trackInputTrim_ {};
@@ -748,13 +758,13 @@ private:
     std::atomic<float> inputLevelL_ { 0.0f };
     std::atomic<float> inputLevelR_ { 0.0f };
 
-    // M8 — VST/AU instrument plugin hosting
+    // M8 -- VST/AU instrument plugin hosting
     // Lock held by message thread (ScopedLock) on load/unload,
     // and by audio thread (ScopedTryLock) in mixToOutput.
     juce::CriticalSection pluginLock;
     std::array<std::unique_ptr<juce::AudioPluginInstance>, 16> instrumentPlugins;
 
-    // Per-channel MIDI buffers — cleared at audio callback start,
+    // Per-channel MIDI buffers -- cleared at audio callback start,
     // populated by NoteEvent / live-MIDI sections, consumed in mixToOutput.
     juce::MidiBuffer instrumentMidiBuffers[16];
     juce::MidiBuffer incomingMidiBuffer_;
@@ -789,7 +799,7 @@ private:
     std::array<ActivePluginNoteQueue, 16> activePluginNotes;
     std::array<std::atomic<bool>, 16>    pendingPluginAllNotesOff_ {};
 
-    // Loop Recording — audio-thread state (all accessed only on audio thread)
+    // Loop Recording -- audio-thread state (all accessed only on audio thread)
     LoopMarkers loopMarkers_;
     bool        loopRecordEnabled_ = false;
     struct LiveNote { bool active = false; double startBeat = 0.0; float velocity = 0.8f; };
@@ -811,8 +821,18 @@ private:
     void commitHangingNotes();
     void commitNote(int ch, int pitch, double startBeat, float lengthBeats, float velocity);
 
-    // ── Live Performance: independent loop engine ─────────────────────────────
+    // -- Live Performance: independent loop engine -----------------------------
     LiveLoopEngine liveLoopEngine_;
+
+    // -- Metronome (audio-thread state -- no locks needed) ---------------------
+    std::atomic<bool>  metronomeEnabled_ { false };
+    std::atomic<float> metronomeGain_    { 0.65f };
+    // Audio-thread only (no atomic needed):
+    double metronomePrevBeat_ = 0.0;
+    float  clickPhase_        = 0.0f;
+    float  clickFreq_         = 1000.0f;
+    int    clickSamplesLeft_  = 0;
+    float  clickEnv_          = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioEngine)
 };
