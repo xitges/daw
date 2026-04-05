@@ -104,7 +104,9 @@ AudioEngine::AudioEngine()
 
         const ChannelSourceType srcType = snap.channelSourceTypes[(size_t)ch];
         SynthParams sp = snap.synthParams[(size_t)ch];
-        const bool hasSynth = sp.enabled;
+        // Only treat as synth if a pattern is active AND synth is explicitly enabled.
+        // Without this guard the fallback saw fires during loop playback in live mode.
+        const bool hasSynth = snap.patternId >= 0 && sp.enabled;
         const int  mixer    = juce::jlimit(0, 7,
             snap.patternId >= 0 ? snap.channelMixerRouting[(size_t)ch] : 0);
         const float vol = snap.patternId >= 0
@@ -1240,6 +1242,8 @@ void AudioEngine::loadSamplerSource(int channelIndex, const juce::File& file)
     {
         juce::SpinLock::ScopedLockType lock(samplerBufLock_);
         samplerSourceBuffers_[(size_t)channelIndex] = std::move(newBuf);
+        samplerSourceFilenames_[(size_t)channelIndex] =
+            file.existsAsFile() ? file.getFileNameWithoutExtension() : juce::String();
     }
 }
 
@@ -1676,10 +1680,14 @@ void AudioEngine::commitHangingNotes()
 
 // -- Live Loop Engine -- public API wrappers ------------------------------------
 void AudioEngine::liveLoopArm(int ch, double loopBeats) noexcept { liveLoopEngine_.arm(ch, loopBeats); }
+void AudioEngine::liveLoopArmFree(int ch) noexcept              { liveLoopEngine_.armFree(ch); }
 void AudioEngine::liveLoopStop(int ch) noexcept        { liveLoopEngine_.stop(ch); }
 void AudioEngine::liveLoopResetAll() noexcept          { liveLoopEngine_.resetAll(); }
 void AudioEngine::liveLoopOverdub(int ch) noexcept     { liveLoopEngine_.overdub(ch); }
 void AudioEngine::liveLoopUndo(int ch) noexcept        { liveLoopEngine_.undo(ch); }
+void AudioEngine::liveLoopHalfLoop(int ch) noexcept    { liveLoopEngine_.halfLoop(ch); }
+void AudioEngine::liveLoopDoubleLoop(int ch) noexcept  { liveLoopEngine_.doubleLoop(ch); }
+void AudioEngine::liveLoopLaunchAll(double b) noexcept { liveLoopEngine_.launchAll(b); }
 void AudioEngine::liveLoopSetQuantize(double s) noexcept { liveLoopEngine_.setQuantize(s); }
 void AudioEngine::liveLoopSetMute(int ch, bool m) noexcept    { liveLoopEngine_.setMute(ch, m); }
 bool AudioEngine::liveLoopGetMute(int ch) const noexcept      { return liveLoopEngine_.getMute(ch); }
@@ -1688,9 +1696,49 @@ float AudioEngine::liveLoopGetVolume(int ch) const noexcept    { return liveLoop
 LiveLoopEngine::State AudioEngine::liveLoopGetState(int ch) const noexcept { return liveLoopEngine_.getState(ch); }
 double AudioEngine::liveLoopGetChannelLength(int ch) const noexcept { return liveLoopEngine_.getChannelLoopLength(ch); }
 double AudioEngine::liveLoopGetBeatsTillRecord(int ch) const noexcept { return liveLoopEngine_.getBeatsTillRecord(ch); }
+double AudioEngine::liveLoopGetGlobalBeat() const noexcept            { return liveLoopEngine_.getGlobalBeat(); }
+void   AudioEngine::liveLoopSetCountInBars(int bars) noexcept         { liveLoopEngine_.setCountInBars(bars); }
+int    AudioEngine::liveLoopGetCountInBars() const noexcept           { return liveLoopEngine_.getCountInBars(); }
+void   AudioEngine::liveLoopSetSnapForward(bool fwd) noexcept         { liveLoopEngine_.setSnapForward(fwd); }
+bool   AudioEngine::liveLoopGetSnapForward() const noexcept           { return liveLoopEngine_.getSnapForward(); }
 int    AudioEngine::liveLoopGetNotesForDisplay(int ch, LiveLoopEngine::NoteDisplayItem* out, int max) const noexcept
        { return liveLoopEngine_.getNotesForDisplay(ch, out, max); }
 double AudioEngine::liveLoopGetPhase(int ch) const noexcept         { return liveLoopEngine_.getLoopPhase(ch); }
+
+juce::String AudioEngine::getLiveChannelInstrumentName(int ch) const
+{
+    if (ch < 0 || ch >= 16) return {};
+
+    // Plugin?
+    const PlaybackSnapshot& snap = snapshots_[activeSnapshotIdx_.load(std::memory_order_acquire)];
+    if (snap.pluginSlotEnabled[(size_t)ch] && instrumentPlugins[(size_t)ch] != nullptr)
+    {
+        const auto desc = instrumentPlugins[(size_t)ch]->getPluginDescription();
+        return desc.name.isEmpty() ? "Plugin" : desc.name;
+    }
+
+    // Sampler source with stored filename?
+    {
+        juce::SpinLock::ScopedLockType lock(samplerBufLock_);
+        if (samplerSourceBuffers_[(size_t)ch] != nullptr)
+            return samplerSourceFilenames_[(size_t)ch].isEmpty()
+                   ? "Sample" : samplerSourceFilenames_[(size_t)ch];
+    }
+
+    // Snapshot sampler?
+    if (snap.patternId >= 0 && snap.channelSourceTypes[(size_t)ch] == ChannelSourceType::Sampler)
+        return "Sampler";
+
+    // Synth?
+    if (snap.patternId >= 0 && snap.synthParams[(size_t)ch].enabled)
+        return "Synth";
+
+    // Channel source buffer (legacy drag-drop samples)?
+    if (getChannelSourceBufferShared(ch) != nullptr)
+        return "Sample";
+
+    return {};  // nothing assigned
+}
 
 // -- Metronome -----------------------------------------------------------------
 void AudioEngine::setMetronomeEnabled(bool on) noexcept { metronomeEnabled_.store(on); }

@@ -296,11 +296,19 @@ public:
     // -- Live Loop Engine (Live Performance) -----------------------------------
     // Completely independent from step-sequencer. Per-channel MIDI loop recorder.
     void liveLoopArm (int ch, double loopBeats) noexcept;  // arm with explicit length
+    void liveLoopArmFree(int ch) noexcept;                 // free record (length TBD at stop)
     void liveLoopStop(int ch) noexcept;
     void liveLoopResetAll() noexcept;
-    void liveLoopOverdub(int ch) noexcept;      // add layer to existing loop
-    void liveLoopUndo(int ch) noexcept;         // rollback last overdub layer
+    void liveLoopOverdub(int ch) noexcept;
+    void liveLoopUndo(int ch) noexcept;
+    void liveLoopHalfLoop(int ch) noexcept;
+    void liveLoopDoubleLoop(int ch) noexcept;
+    void liveLoopLaunchAll(double loopBeats) noexcept;
     void liveLoopSetQuantize(double stepBeats) noexcept;
+    void liveLoopSetCountInBars(int bars) noexcept;
+    int  liveLoopGetCountInBars() const noexcept;
+    void liveLoopSetSnapForward(bool fwd) noexcept;
+    bool liveLoopGetSnapForward() const noexcept;
     void liveLoopSetMute(int ch, bool muted) noexcept;
     bool liveLoopGetMute(int ch) const noexcept;
     void liveLoopSetVolume(int ch, float v) noexcept;
@@ -308,9 +316,18 @@ public:
     LiveLoopEngine::State liveLoopGetState(int ch) const noexcept;
     double liveLoopGetChannelLength(int ch) const noexcept;
     double liveLoopGetBeatsTillRecord(int ch) const noexcept;
+    double liveLoopGetGlobalBeat() const noexcept;  // beat counter independent of transport
     // Note display (UI-thread safe, minor race accepted)
     int    liveLoopGetNotesForDisplay(int ch, LiveLoopEngine::NoteDisplayItem* out, int maxItems) const noexcept;
     double liveLoopGetPhase(int ch) const noexcept;
+    /** Returns a human-readable instrument label for a live-loop track channel. */
+    juce::String getLiveChannelInstrumentName(int ch) const;
+
+    // Scene save/recall
+    void liveLoopSaveScene(int sceneIdx)   { liveLoopEngine_.saveScene(sceneIdx); }
+    void liveLoopRecallScene(int sceneIdx) { liveLoopEngine_.scheduleRecallScene(sceneIdx); }
+    bool liveLoopIsSceneOccupied(int idx) const noexcept { return liveLoopEngine_.isSceneOccupied(idx); }
+    double liveLoopGetRecallCountdown() const noexcept { return liveLoopEngine_.getRecallCountdown(); }
 
     // -- Metronome -------------------------------------------------------------
     void setMetronomeEnabled(bool on) noexcept;
@@ -692,6 +709,7 @@ private:
     // Sampler Synth -- per-channel oscillator-source buffers (pattern mode + fallback)
     mutable juce::SpinLock samplerBufLock_;
     std::array<std::shared_ptr<juce::AudioBuffer<float>>, 16> samplerSourceBuffers_ {};
+    std::array<juce::String, 16> samplerSourceFilenames_ {};  // display name only
     // Per-pattern sampler source cache for song mode (same structure as songSampleCaches_)
     SongSampleCacheMap songSamplerCaches_[2];
     std::atomic<int>   activeSongSamplerCacheIdx_ {0};

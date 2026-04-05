@@ -50,21 +50,29 @@ public:
 
 // --- LiveLoopComponent --------------------------------------------------------
 class LiveLoopComponent : public juce::Component,
-                          public juce::Timer
+                          public juce::Timer,
+                          public juce::FileDragAndDropTarget
 {
 public:
     // -- Callbacks (set by MainComponent) -------------------------------------
     std::function<void(int, double)>  onArmChannel;    // ch, loopBeats
+    std::function<void(int)>          onArmFreeChannel; // ch — free record
     std::function<void(int)>          onStopChannel;
     std::function<void(int)>          onOverdubChannel;
     std::function<void(int)>          onUndoChannel;
     std::function<void()>             onStopAll;
-    std::function<void(int, bool)>    onMuteChannel;   // ch, muted
-    std::function<void(int, float)>   onVolumeChanged; // ch, 0-1
+    std::function<void(int, bool)>    onMuteChannel;      // ch, muted
+    std::function<void(int, float)>   onVolumeChanged;    // ch, 0-1
+    std::function<void(int)>          onHalfLoop;         // halve selected channel loop
+    std::function<void(int)>          onDoubleLoop;       // double selected channel loop
+    std::function<void(double)>       onLaunchAll;        // arm all idle channels
     std::function<void(double)>       onBpmChanged;
     std::function<void(double)>       onQuantizeChanged;
     std::function<void(bool)>         onMetronomeToggle;
     std::function<void()>             onTapTempo;
+    std::function<void(int)>          onCountInChanged;   // 0/1/2/4 bars
+    std::function<void(bool)>         onSnapForwardChanged;
+    std::function<void(int, juce::File)> onSampleDropped; // ch, file
 
     // -- Data providers --------------------------------------------------------
     std::function<void(int)>           onChannelSelected;
@@ -80,6 +88,7 @@ public:
     {
         setSize(kWinW, kHeaderH + kNumCh * kRowH + kGridH + kFooterH);
         setLookAndFeel(&laf_);
+        setWantsKeyboardFocus(true);
 
         // -- REC button -------------------------------------------------------
         styleBtn(recBtn_, kRed);
@@ -90,7 +99,10 @@ public:
             const auto st = engine_.liveLoopGetState(ch);
             if (st == LiveLoopEngine::State::Idle)
             {
-                if (onArmChannel) onArmChannel(ch, loopLen_[ch]);
+                if (freeRecMode_)
+                { if (onArmFreeChannel) onArmFreeChannel(ch); }
+                else
+                { if (onArmChannel) onArmChannel(ch, loopLen_[ch]); }
             }
             else if (st == LiveLoopEngine::State::Looping)
             {
@@ -102,6 +114,18 @@ public:
             }
         };
         addAndMakeVisible(recBtn_);
+
+        // -- FREE toggle button -----------------------------------------------
+        styleBtn(freeBtn_, juce::Colour(0xff1e2830));
+        freeBtn_.setButtonText("FREE");
+        freeBtn_.setClickingTogglesState(true);
+        freeBtn_.onClick = [this]
+        {
+            freeRecMode_ = freeBtn_.getToggleState();
+            freeBtn_.setColour(juce::TextButton::buttonColourId,
+                               freeRecMode_ ? kOrange.darker(0.3f) : juce::Colour(0xff1e2830));
+        };
+        addAndMakeVisible(freeBtn_);
 
         // -- STOP / STOP ALL / UNDO buttons -----------------------------------
         styleBtn(stopBtn_, juce::Colour(0xff2a2a2a));
@@ -118,6 +142,37 @@ public:
         stopAllBtn_.setButtonText("STOP ALL");
         stopAllBtn_.onClick = [this] { if (onStopAll) onStopAll(); };
         addAndMakeVisible(stopAllBtn_);
+
+        // -- ARM ALL (scene launch) button ------------------------------------
+        styleBtn(armAllBtn_, juce::Colour(0xff1e3020));
+        armAllBtn_.setButtonText("ARM ALL");
+        armAllBtn_.onClick = [this]
+        {
+            // Use the selected channel's current loop length for all
+            const double len = loopLen_[sel()];
+            if (onLaunchAll) onLaunchAll(len);
+        };
+        addAndMakeVisible(armAllBtn_);
+
+        // -- Scene A/B/C/D buttons (Cmd/Ctrl+click = save; click = recall) ---
+        static const char* kSceneNames[4] = { "SCN A", "SCN B", "SCN C", "SCN D" };
+        for (int i = 0; i < LiveLoopEngine::kNumScenes; ++i)
+        {
+            styleBtn(sceneBtn_[i], juce::Colour(0xff1a2030));
+            sceneBtn_[i].setButtonText(kSceneNames[i]);
+            const int idx = i;
+            sceneBtn_[i].onClick = [this, idx]
+            {
+                const bool save = juce::ModifierKeys::getCurrentModifiers().isCommandDown()
+                               || juce::ModifierKeys::getCurrentModifiers().isCtrlDown();
+                if (save)
+                    engine_.liveLoopSaveScene(idx);
+                else if (engine_.liveLoopIsSceneOccupied(idx))
+                    engine_.liveLoopRecallScene(idx);
+                updateSceneBtns();
+            };
+            addAndMakeVisible(sceneBtn_[i]);
+        }
 
         // -- BPM buttons ------------------------------------------------------
         auto setupTiny = [this](juce::TextButton& b, const juce::String& txt,
@@ -185,6 +240,30 @@ public:
         };
         addAndMakeVisible(tapBtn_);
 
+        // -- Count-in button --------------------------------------------------
+        styleBtn(countInBtn_, juce::Colour(0xff336633).darker(0.1f));
+        updateCountInBtn();
+        countInBtn_.onClick = [this]
+        {
+            countInIdx_ = (countInIdx_ + 1) % 4;
+            updateCountInBtn();
+            if (onCountInChanged) onCountInChanged(kCountInBars[countInIdx_]);
+        };
+        addAndMakeVisible(countInBtn_);
+
+        // -- Snap-forward toggle button ----------------------------------------
+        styleBtn(snapFwdBtn_, juce::Colour(0xff1e1e2e));
+        snapFwdBtn_.setButtonText("Q:NEAR");
+        snapFwdBtn_.onClick = [this]
+        {
+            snapForward_ = !snapForward_;
+            snapFwdBtn_.setButtonText(snapForward_ ? "Q:FWD" : "Q:NEAR");
+            snapFwdBtn_.setColour(juce::TextButton::buttonColourId,
+                                  snapForward_ ? kAccent.darker(0.3f) : juce::Colour(0xff1e1e2e));
+            if (onSnapForwardChanged) onSnapForwardChanged(snapForward_);
+        };
+        addAndMakeVisible(snapFwdBtn_);
+
         // -- Per-channel rows -------------------------------------------------
         for (int c = 0; c < kNumCh; ++c)
         {
@@ -211,6 +290,20 @@ public:
             }
             loopLen_[c] = 16.0;
             refreshLenButtons(c);
+
+            // /2 button
+            row.halfBtn.setButtonText("/2");
+            row.halfBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1e2030));
+            row.halfBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff7788aa));
+            row.halfBtn.onClick = [this, c] { if (onHalfLoop) onHalfLoop(c); };
+            addAndMakeVisible(row.halfBtn);
+
+            // x2 button
+            row.dblBtn.setButtonText("x2");
+            row.dblBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1e2030));
+            row.dblBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff7788aa));
+            row.dblBtn.onClick = [this, c] { if (onDoubleLoop) onDoubleLoop(c); };
+            addAndMakeVisible(row.dblBtn);
 
             // Mute button
             row.muteBtn.setButtonText("M");
@@ -251,7 +344,122 @@ public:
         setLookAndFeel(nullptr);
     }
 
-    void timerCallback() override { repaint(); syncRecBtn(); }
+    void timerCallback() override { repaint(); syncRecBtn(); updateSceneBtns(); }
+
+    // -- Keyboard shortcuts ---------------------------------------------------
+    bool keyPressed(const juce::KeyPress& key) override
+    {
+        const int ch = sel();
+        const juce::juce_wchar c = key.getTextCharacter();
+
+        // R — arm/overdub: if idle, arm with current loop length; if looping, overdub
+        if (c == 'r' || c == 'R')
+        {
+            const auto st = engine_.liveLoopGetState(ch);
+            if (st == LiveLoopEngine::State::Idle)
+            {
+                if (onArmChannel) onArmChannel(ch, loopLen_[ch]);
+            }
+            else if (st == LiveLoopEngine::State::Looping)
+            {
+                if (onOverdubChannel) onOverdubChannel(ch);
+            }
+            return true;
+        }
+        // S — stop selected channel
+        if (c == 's' || c == 'S')
+        {
+            if (onStopChannel) onStopChannel(ch);
+            return true;
+        }
+        // M — mute toggle
+        if (c == 'm' || c == 'M')
+        {
+            const bool muted = engine_.liveLoopGetMute(ch);
+            if (onMuteChannel) onMuteChannel(ch, !muted);
+            rows_[ch].muteBtn.setColour(juce::TextButton::buttonColourId,
+                !muted ? kRed.darker(0.2f) : juce::Colour(0xff2a2a3a));
+            return true;
+        }
+        // U — undo
+        if (c == 'u' || c == 'U')
+        {
+            if (onUndoChannel) onUndoChannel(ch);
+            return true;
+        }
+        // Space — stop all
+        if (key.getKeyCode() == juce::KeyPress::spaceKey)
+        {
+            if (onStopAll) onStopAll();
+            return true;
+        }
+        // Up/Down — select track
+        if (key.getKeyCode() == juce::KeyPress::upKey)
+        {
+            if (onChannelSelected) onChannelSelected(std::max(0, ch - 1));
+            return true;
+        }
+        if (key.getKeyCode() == juce::KeyPress::downKey)
+        {
+            if (onChannelSelected) onChannelSelected(std::min(kNumCh - 1, ch + 1));
+            return true;
+        }
+        return false;
+    }
+
+    bool keyStateChanged(bool /*isDown*/) override { return false; }
+
+    // -- File drag-and-drop (sample onto track row) ---------------------------
+    bool isInterestedInFileDrag(const juce::StringArray& files) override
+    {
+        for (const auto& f : files)
+        {
+            const juce::String ext = juce::File(f).getFileExtension().toLowerCase();
+            if (ext == ".wav" || ext == ".aiff" || ext == ".aif" ||
+                ext == ".mp3" || ext == ".ogg"  || ext == ".flac")
+                return true;
+        }
+        return false;
+    }
+
+    void fileDragEnter(const juce::StringArray&, int /*x*/, int y) override
+    {
+        dragOverChannel_ = channelAtY(y);
+        repaint();
+    }
+
+    void fileDragMove(const juce::StringArray&, int /*x*/, int y) override
+    {
+        const int ch = channelAtY(y);
+        if (ch != dragOverChannel_) { dragOverChannel_ = ch; repaint(); }
+    }
+
+    void fileDragExit(const juce::StringArray&) override
+    {
+        dragOverChannel_ = -1;
+        repaint();
+    }
+
+    void filesDropped(const juce::StringArray& files, int /*x*/, int y) override
+    {
+        dragOverChannel_ = -1;
+        const int ch = channelAtY(y);
+        if (ch < 0 || ch >= kNumCh) { repaint(); return; }
+
+        for (const auto& path : files)
+        {
+            const juce::File f(path);
+            const juce::String ext = f.getFileExtension().toLowerCase();
+            if (ext == ".wav" || ext == ".aiff" || ext == ".aif" ||
+                ext == ".mp3" || ext == ".ogg"  || ext == ".flac")
+            {
+                if (onSampleDropped) onSampleDropped(ch, f);
+                if (onChannelSelected) onChannelSelected(ch);
+                break;
+            }
+        }
+        repaint();
+    }
 
     // -- Paint -----------------------------------------------------------------
     void paint(juce::Graphics& g) override
@@ -263,6 +471,19 @@ public:
         const int selCh = sel();
         for (int c = 0; c < kNumCh; ++c)
             paintRow(g, c, c == selCh);
+        // Drag highlight overlay
+        if (dragOverChannel_ >= 0 && dragOverChannel_ < kNumCh)
+        {
+            const int dy = rowY(dragOverChannel_);
+            g.setColour(kTrackColors[dragOverChannel_ % kNumTrackColors].withAlpha(0.25f));
+            g.fillRect(0, dy, getWidth(), kRowH);
+            g.setColour(kTrackColors[dragOverChannel_ % kNumTrackColors].withAlpha(0.9f));
+            g.drawRect(0, dy, getWidth(), kRowH, 2);
+            g.setColour(juce::Colours::white.withAlpha(0.8f));
+            g.setFont(juce::Font(13.0f, juce::Font::bold));
+            g.drawText("Drop sample here", 0, dy, getWidth(), kRowH,
+                       juce::Justification::centred);
+        }
         paintNoteGrid(g);
         g.setColour(kFooterBg);
         g.fillRect(0, footerY(), getWidth(), kFooterH);
@@ -272,47 +493,55 @@ public:
 
     void resized() override
     {
-        // Per-channel rows
+        const int btnH = 20;
+
+        // ---- Header buttons -----------------------------------------------
+        // Zone 1: BPM ± (painted text at x=8..66, buttons follow)
+        bpmMinusBtn_.setBounds(68, (kHeaderH - 18) / 2, 18, 18);
+        bpmPlusBtn_ .setBounds(88, (kHeaderH - 18) / 2, 18, 18);
+        // Zone 2: BAR/BEAT painted at x=112..200 (no buttons in this range)
+        // Zone 3: control buttons start at x=204
+        const int hby = (kHeaderH - btnH) / 2;
+        freeBtn_ .setBounds(204, hby, 42, btnH);
+        quantBtn_.setBounds(250, hby, 64, btnH);
+        clickBtn_  .setBounds(318, hby, 52, btnH);
+        tapBtn_    .setBounds(374, hby, 42, btnH);
+        countInBtn_.setBounds(420, hby, 52, btnH);
+        snapFwdBtn_.setBounds(476, hby, 58, btnH);
+
+        // ---- Per-channel rows (use shared column constants) ---------------
         for (int c = 0; c < kNumCh; ++c)
         {
-            const int ry = rowY(c);
-            rows_[c].sel.setBounds(0, ry, getWidth(), kRowH);
+            const int ry  = rowY(c);
+            const int midY = ry + (kRowH - btnH) / 2;
+            rows_[c].sel.setBounds(0, ry, kWinW, kRowH);
 
-            // Mute button: far right area
-            const int muteW = 24, muteH = 20;
-            const int muteX = getWidth() - muteW - 10;
-            rows_[c].muteBtn.setBounds(muteX, ry + (kRowH - muteH) / 2, muteW, muteH);
+            rows_[c].muteBtn.setBounds(kMuteX, midY, kMuteW,      btnH);
+            rows_[c].dblBtn .setBounds(kDblX,  midY, kHxW,        btnH);
+            rows_[c].halfBtn.setBounds(kHalfX, midY, kHxW,        btnH);
 
-            // Len buttons: left of mute
-            const int lenW = 26, lenGap = 3;
-            const int lenTotalW = kNumLen * lenW + (kNumLen - 1) * lenGap;
-            const int lenX = muteX - lenTotalW - 8;
             for (int i = 0; i < kNumLen; ++i)
-                rows_[c].len[i].setBounds(lenX + i * (lenW + lenGap),
-                                          ry + (kRowH - 20) / 2, lenW, 20);
+                rows_[c].len[i].setBounds(kLenX + i * (kLenW + kLenGap),
+                                           midY, kLenW, btnH);
 
-            // Volume slider: left of len buttons
-            const int volW = 68, volH = 20;
-            const int volX = lenX - volW - 10;
-            rows_[c].volSlider.setBounds(volX, ry + (kRowH - volH) / 2, volW, volH);
+            rows_[c].volSlider.setBounds(kVolX, midY, kVolW, btnH);
         }
 
-        // Header buttons
-        const int hmy = (kHeaderH - 18) / 2;
-        bpmMinusBtn_.setBounds(72,  hmy, 18, 18);
-        bpmPlusBtn_ .setBounds(92,  hmy, 18, 18);
-        quantBtn_   .setBounds(224, (kHeaderH - 20) / 2, 64, 20);
-        clickBtn_   .setBounds(296, (kHeaderH - 20) / 2, 52, 20);
-        tapBtn_     .setBounds(354, (kHeaderH - 20) / 2, 42, 20);
+        // ---- Footer: 5 main buttons + 4 scene buttons -----------------------
+        const int fy = footerY() + 6;
+        const int fh = (kFooterH - 12) / 2 - 2;
+        const int bw = (kWinW - 20) / 5;
+        recBtn_    .setBounds(10 + bw * 0, fy, bw - 4, fh);
+        stopBtn_   .setBounds(10 + bw * 1, fy, bw - 4, fh);
+        undoBtn_   .setBounds(10 + bw * 2, fy, bw - 4, fh);
+        armAllBtn_ .setBounds(10 + bw * 3, fy, bw - 4, fh);
+        stopAllBtn_.setBounds(10 + bw * 4, fy, bw - 4, fh);
 
-        // Footer buttons
-        const int fy = footerY() + 10;
-        const int fh = kFooterH - 20;
-        const int fw = getWidth();
-        recBtn_    .setBounds(12,           fy, fw / 4 - 16, fh);
-        stopBtn_   .setBounds(fw / 4 - 2,   fy, fw / 4 - 4,  fh);
-        undoBtn_   .setBounds(fw * 2 / 4 - 4, fy, fw / 4 - 4,  fh);
-        stopAllBtn_.setBounds(fw * 3 / 4 - 6, fy, fw / 4 - 6,  fh);
+        // Scene buttons on second footer row
+        const int sy  = fy + fh + 4;
+        const int sbw = (kWinW - 20) / LiveLoopEngine::kNumScenes;
+        for (int i = 0; i < LiveLoopEngine::kNumScenes; ++i)
+            sceneBtn_[i].setBounds(10 + sbw * i, sy, sbw - 4, fh);
     }
 
 private:
@@ -330,15 +559,46 @@ private:
     const juce::Colour kPurple    { 0xffaa33dd };
     const juce::Colour kOrange    { 0xffdd7722 };
 
+    // Per-track identity colours (8 tracks, distinct, accessible)
+    static constexpr int kNumTrackColors = 8;
+    const juce::Colour kTrackColors[kNumTrackColors] = {
+        juce::Colour(0xff4488ff),  // 1 – sky blue
+        juce::Colour(0xff55dd88),  // 2 – mint green
+        juce::Colour(0xffdd5566),  // 3 – coral
+        juce::Colour(0xffffbb33),  // 4 – amber
+        juce::Colour(0xffcc66ff),  // 5 – violet
+        juce::Colour(0xff55ccdd),  // 6 – teal
+        juce::Colour(0xffffaa55),  // 7 – peach
+        juce::Colour(0xffaaddaa),  // 8 – sage
+    };
+
     // --- layout --------------------------------------------------------------
     static constexpr int kNumCh   = 8;
     static constexpr int kNumLen  = 4;
     static constexpr int kNumQuant= 5;
-    static constexpr int kHeaderH = 52;
+    static constexpr int kHeaderH = 56;   // taller for breathing room
     static constexpr int kRowH    = 52;
     static constexpr int kGridH   = 110;
     static constexpr int kFooterH = 68;
-    static constexpr int kWinW    = 660;
+    static constexpr int kWinW    = 760;  // wider window
+
+    // ---- Row column positions (derived constants, computed from right) -------
+    // All expressed relative to kWinW so they stay consistent between
+    // resized() (widget placement) and paintTransport() (column header labels).
+    static constexpr int kRightMargin = 8;
+    static constexpr int kMuteW  = 24;
+    static constexpr int kHxW    = 22;   // /2 and x2 button width
+    static constexpr int kLenW   = 24;
+    static constexpr int kLenGap = 3;
+    static constexpr int kLenTotalW = kNumLen * kLenW + (kNumLen - 1) * kLenGap; // 105
+    static constexpr int kVolW   = 64;
+
+    // Right-to-left column start positions:
+    static constexpr int kMuteX  = kWinW - kRightMargin - kMuteW;          // 724
+    static constexpr int kDblX   = kMuteX - kHxW - 6;                      // 696
+    static constexpr int kHalfX  = kDblX  - kHxW - 3;                      // 671
+    static constexpr int kLenX   = kHalfX - kLenTotalW - 8;                // 558
+    static constexpr int kVolX   = kLenX  - kVolW   - 10;                  // 484
 
     static constexpr double kLenBeats[4]      = { 4.0,  8.0, 16.0, 32.0 };
     static constexpr const char* kLenLabels[4]= { "1",  "2",  "4",  "8"  };
@@ -350,21 +610,36 @@ private:
     int footerY()     const { return gridY() + kGridH; }
     int sel()         const { return getSelectedChannel ? getSelectedChannel() : 0; }
 
+    int channelAtY(int y) const
+    {
+        if (y < kHeaderH) return -1;
+        const int c = (y - kHeaderH) / kRowH;
+        return (c >= 0 && c < kNumCh) ? c : -1;
+    }
+
     // --- subcomponents -------------------------------------------------------
     struct Row
     {
-        juce::TextButton sel, len[4], muteBtn;
+        juce::TextButton sel, len[4], halfBtn, dblBtn, muteBtn;
         juce::Slider     volSlider;
     };
     Row              rows_[kNumCh];
-    juce::TextButton recBtn_, stopBtn_, undoBtn_, stopAllBtn_;
+    juce::TextButton recBtn_, freeBtn_, stopBtn_, undoBtn_, stopAllBtn_, armAllBtn_;
     juce::TextButton bpmMinusBtn_, bpmPlusBtn_;
-    juce::TextButton quantBtn_, clickBtn_, tapBtn_;
+    juce::TextButton quantBtn_, clickBtn_, tapBtn_, countInBtn_, snapFwdBtn_;
+    juce::TextButton sceneBtn_[LiveLoopEngine::kNumScenes];
     LiveLoopLAF      laf_;
 
     double           loopLen_[kNumCh] {};
-    int              quantIdx_ = 3;   // default: 1/16
+    bool             freeRecMode_  = false;
+    bool             snapForward_  = false;
+    int              quantIdx_   = 3;   // default: 1/16
+    int              countInIdx_ = 1;   // index into kCountInBars[]
+    int              dragOverChannel_ = -1;
     std::vector<double> tapTimes_;
+
+    static constexpr int kCountInBars[4] = { 0, 1, 2, 4 };
+    static constexpr const char* kCountInLabels[4] = { "0 bar", "1 bar", "2 bar", "4 bar" };
 
     // --- helpers -------------------------------------------------------------
     void styleBtn(juce::TextButton& b, juce::Colour bg)
@@ -379,6 +654,29 @@ private:
         quantBtn_.setButtonText(juce::String("Q:") + kQuantLabels[quantIdx_]);
         quantBtn_.setColour(juce::TextButton::buttonColourId,
                             active ? kAccent.darker(0.2f) : juce::Colour(0xff1e1e2e));
+    }
+
+    void updateCountInBtn()
+    {
+        const int bars = kCountInBars[countInIdx_];
+        const bool hasCountIn = (bars > 0);
+        countInBtn_.setButtonText(juce::String("CI:") + kCountInLabels[countInIdx_]);
+        countInBtn_.setColour(juce::TextButton::buttonColourId,
+                              hasCountIn ? juce::Colour(0xff336633).darker(0.1f)
+                                         : juce::Colour(0xff1e1e2e));
+    }
+
+    void updateSceneBtns()
+    {
+        static const char* kSceneNames[4] = { "SCN A", "SCN B", "SCN C", "SCN D" };
+        for (int i = 0; i < LiveLoopEngine::kNumScenes; ++i)
+        {
+            const bool occ = engine_.liveLoopIsSceneOccupied(i);
+            sceneBtn_[i].setColour(juce::TextButton::buttonColourId,
+                occ ? juce::Colour(0xff224444) : juce::Colour(0xff1a2030));
+            sceneBtn_[i].setButtonText(occ ? juce::String(kSceneNames[i]) + " *"
+                                           : juce::String(kSceneNames[i]));
+        }
     }
 
     void refreshLenButtons(int c)
@@ -421,66 +719,103 @@ private:
         const int    bar  = (int)(beat / 4.0) + 1;
         const double bib  = std::fmod(beat, 4.0) + 1.0;
 
-        // BPM
+        // Zone 1: BPM (x=8..107)
         g.setColour(juce::Colours::white.withAlpha(0.32f));
         g.setFont(juce::Font(9.5f));
-        g.drawText("BPM", 12, 8, 30, 13, juce::Justification::centredLeft);
+        g.drawText("BPM", 8, 8, 30, 13, juce::Justification::centredLeft);
         g.setColour(juce::Colours::white.withAlpha(0.88f));
         g.setFont(juce::Font(21.0f, juce::Font::bold));
-        g.drawText(juce::String((int)bpmV), 12, 20, 58, 22, juce::Justification::centredLeft);
-
+        g.drawText(juce::String((int)bpmV), 8, 22, 58, 24, juce::Justification::centredLeft);
+        // separator
         g.setColour(juce::Colours::white.withAlpha(0.08f));
-        g.drawVerticalLine(116, 8.0f, (float)kHeaderH - 8.0f);
+        g.drawVerticalLine(108, 8.0f, (float)kHeaderH - 8.0f);
 
-        // BAR / BEAT
+        // Zone 2: BAR / BEAT (x=112..200)
         g.setColour(juce::Colours::white.withAlpha(0.32f));
         g.setFont(juce::Font(9.5f));
-        g.drawText("BAR", 124, 8, 28, 13, juce::Justification::centredLeft);
+        g.drawText("BAR",  112, 8, 30, 13, juce::Justification::centredLeft);
         g.setColour(juce::Colours::white.withAlpha(0.88f));
         g.setFont(juce::Font(21.0f, juce::Font::bold));
-        g.drawText(juce::String(bar), 124, 20, 36, 22, juce::Justification::centredLeft);
+        g.drawText(juce::String(bar), 112, 22, 38, 24, juce::Justification::centredLeft);
 
         g.setColour(juce::Colours::white.withAlpha(0.32f));
         g.setFont(juce::Font(9.5f));
-        g.drawText("BEAT", 164, 8, 34, 13, juce::Justification::centredLeft);
+        g.drawText("BEAT", 154, 8, 34, 13, juce::Justification::centredLeft);
         g.setColour(kAccent.withAlpha(0.92f));
         g.setFont(juce::Font(21.0f, juce::Font::bold));
-        g.drawText(juce::String(bib, 1), 164, 20, 46, 22, juce::Justification::centredLeft);
-
+        g.drawText(juce::String(bib, 1), 154, 22, 44, 24, juce::Justification::centredLeft);
+        // separator
         g.setColour(juce::Colours::white.withAlpha(0.08f));
-        g.drawVerticalLine(218, 8.0f, (float)kHeaderH - 8.0f);
+        g.drawVerticalLine(200, 8.0f, (float)kHeaderH - 8.0f);
 
-        // Column headers (right)
-        g.setColour(juce::Colours::white.withAlpha(0.2f));
+        // Zone 3: button labels are on the buttons themselves — no painted text
+
+        // Column headers (right section, aligned with row buttons)
+        g.setColour(juce::Colours::white.withAlpha(0.22f));
         g.setFont(juce::Font(9.0f));
-        g.drawText("VOL", getWidth() - 155, 32, 60, 12, juce::Justification::centred);
-        g.drawText("BARS",getWidth() - 92, 32, 76, 12, juce::Justification::centred);
-        g.drawText("M",   getWidth() - 15, 32, 12, 12, juce::Justification::centred);
+        g.drawText("VOL",  kVolX,                     3, kVolW,        14, juce::Justification::centred);
+        g.drawText("BARS", kLenX,                     3, kLenTotalW,   14, juce::Justification::centred);
+        g.drawText("/2 x2",kHalfX,                    3, kDblX + kHxW - kHalfX, 14, juce::Justification::centred);
+        g.drawText("M",    kMuteX,                    3, kMuteW,       14, juce::Justification::centred);
 
-        // Count-in overlay: show big countdown when any channel is waiting
+        // Count-in overlay: big countdown when any channel is waiting
         bool anyWaiting = false;
-        int  countdownBeat = 0;
+        double tillBeats = 0.0;
+        int    waitingCh = -1;
         for (int c = 0; c < kNumCh; ++c)
         {
             if (engine_.liveLoopGetState(c) == LiveLoopEngine::State::WaitingForBar)
             {
                 anyWaiting = true;
-                const double till = engine_.liveLoopGetBeatsTillRecord(c);
-                countdownBeat = juce::jmax(1, (int)std::ceil(till));
+                tillBeats  = engine_.liveLoopGetBeatsTillRecord(c);
+                waitingCh  = c;
                 break;
             }
         }
         if (anyWaiting)
         {
-            g.setColour(kRed.withAlpha(0.85f));
-            g.setFont(juce::Font(28.0f, juce::Font::bold));
-            g.drawText(juce::String(countdownBeat),
-                       getWidth() / 2 - 40, 8, 80, kHeaderH - 8,
+            // Show beat-level countdown: 4…3…2…1  with sub-beat pulse
+            const int beatsLeft = juce::jmax(1, (int)std::ceil(tillBeats));
+            const double subBeat = tillBeats - std::floor(tillBeats);
+            const float pulse = 0.55f + 0.45f * (float)(1.0 - subBeat); // bright at beat top
+
+            // Full-header dim red wash
+            g.setColour(kRed.withAlpha(0.08f));
+            g.fillRect(0, 0, getWidth(), kHeaderH);
+
+            // Track colour accent strip
+            const juce::Colour tCol = kTrackColors[waitingCh % kNumTrackColors];
+            g.setColour(tCol.withAlpha(0.18f));
+            g.fillRect(0, 0, getWidth(), kHeaderH);
+
+            // Big countdown number centred
+            g.setColour(kRed.withAlpha(pulse));
+            g.setFont(juce::Font(36.0f, juce::Font::bold));
+            g.drawText(juce::String(beatsLeft),
+                       getWidth() / 2 - 50, 2, 100, kHeaderH - 4,
                        juce::Justification::centred);
-            g.setColour(kRed.withAlpha(0.4f));
-            g.setFont(juce::Font(10.0f));
-            g.drawText("COUNT IN", getWidth() / 2 - 40, 38, 80, 12,
+
+            // "COUNT IN" label below
+            g.setColour(juce::Colours::white.withAlpha(0.45f));
+            g.setFont(juce::Font(9.0f, juce::Font::bold));
+            g.drawText("COUNT IN", getWidth() / 2 - 40, kHeaderH - 14, 80, 11,
                        juce::Justification::centred);
+        }
+
+        // Scene recall countdown (if pending)
+        {
+            const double recallCountdown = engine_.liveLoopGetRecallCountdown();
+            if (recallCountdown >= 0.0)
+            {
+                const int bLeft = juce::jmax(1, (int)std::ceil(recallCountdown));
+                g.setColour(juce::Colour(0xff224444).withAlpha(0.18f));
+                g.fillRect(0, 0, getWidth(), kHeaderH);
+                g.setColour(juce::Colour(0xff55ccdd).withAlpha(0.9f));
+                g.setFont(juce::Font(11.0f, juce::Font::bold));
+                g.drawText("SCENE IN " + juce::String(bLeft),
+                           getWidth() - 90, kHeaderH - 16, 84, 12,
+                           juce::Justification::centredRight);
+            }
         }
     }
 
@@ -490,12 +825,26 @@ private:
         const int y   = rowY(c);
         const auto st = engine_.liveLoopGetState(c);
 
-        const juce::Colour rowBg = selected ? kRowSel
-                                 : (c % 2 == 0 ? kRowEven : kRowOdd);
+        // Per-track accent colour
+        const juce::Colour trackCol = kTrackColors[c % kNumTrackColors];
+
+        const juce::Colour rowBg = selected
+            ? trackCol.withAlpha(0.12f).overlaidWith(juce::Colour(0xff1a1a2a))
+            : (c % 2 == 0 ? kRowEven : kRowOdd);
         g.setColour(rowBg);
         g.fillRect(0, y, getWidth(), kRowH);
 
-        if (selected) { g.setColour(kAccent); g.fillRect(0, y, 3, kRowH); }
+        // Left accent stripe — thick and vivid when selected
+        if (selected)
+        {
+            g.setColour(trackCol.withAlpha(0.92f));
+            g.fillRect(0, y, 4, kRowH);
+        }
+        else
+        {
+            g.setColour(trackCol.withAlpha(0.25f));
+            g.fillRect(0, y, 2, kRowH);
+        }
 
         g.setColour(juce::Colour(0xff252528));
         g.drawHorizontalLine(y + kRowH - 1, 0.0f, (float)getWidth());
@@ -520,9 +869,9 @@ private:
         g.fillEllipse(cx - 5.0f, cy - 5.0f, 10.0f, 10.0f);
 
         // -- Channel number ----------------------------------------------------
-        g.setColour(selected ? juce::Colours::white.withAlpha(0.5f)
+        g.setColour(selected ? trackCol.withAlpha(0.9f)
                              : juce::Colours::white.withAlpha(0.26f));
-        g.setFont(juce::Font(9.5f));
+        g.setFont(juce::Font(9.5f, selected ? juce::Font::bold : 0));
         g.drawText(juce::String::formatted("%02d", c + 1), 30, y, 22, kRowH,
                    juce::Justification::centredLeft);
 
@@ -532,26 +881,109 @@ private:
         g.setColour(selected ? juce::Colours::white : juce::Colours::white.withAlpha(0.75f));
         g.setFont(juce::Font(12.5f, juce::Font::bold));
         g.drawText(name, 56, y + 6, 110, 17, juce::Justification::centredLeft);
-        g.setColour(juce::Colours::white.withAlpha(0.30f));
+        g.setColour(selected ? trackCol.withAlpha(0.7f) : juce::Colours::white.withAlpha(0.30f));
         g.setFont(juce::Font(10.0f));
         g.drawText(instr, 56, y + 25, 110, 14, juce::Justification::centredLeft);
 
         // -- State badge -------------------------------------------------------
         paintBadge(g, stateLabel, dotCol, 170, y + (kRowH - 18) / 2, 60, 18);
 
-        // -- Loop progress bar -------------------------------------------------
-        if (st == LiveLoopEngine::State::Recording  ||
-            st == LiveLoopEngine::State::Looping     ||
-            st == LiveLoopEngine::State::Overdubbing)
+        // -- Info + mini note strip area ---------------------------------------
         {
-            const double phase   = engine_.liveLoopGetPhase(c);
+            const int ix  = 240;
+            const int iw  = kVolX - ix - 8;
+            const int icy = y + kRowH / 2;
+
             const double loopLen = engine_.liveLoopGetChannelLength(c);
-            const double ratio   = (loopLen > 0.0) ? (phase / loopLen) : 0.0;
-            const int bx = 170, bw = 60, bh = 3, bby = y + kRowH - 7;
-            g.setColour(juce::Colour(0xff282830));
-            g.fillRoundedRectangle((float)bx, (float)bby, (float)bw, (float)bh, 1.5f);
-            g.setColour(dotCol.withAlpha(0.75f));
-            g.fillRoundedRectangle((float)bx, (float)bby, (float)(bw * ratio), (float)bh, 1.5f);
+
+            if (st != LiveLoopEngine::State::Idle && loopLen > 0.0)
+            {
+                // Loop length as bars
+                const int bars = (int)std::round(loopLen / 4.0);
+                const juce::String lenStr = (bars <= 0) ? juce::String(loopLen, 1) + "b"
+                                          : (bars == 1 ? "1 bar" : juce::String(bars) + " bars");
+                g.setColour(juce::Colours::white.withAlpha(0.50f));
+                g.setFont(juce::Font(10.5f, juce::Font::bold));
+                g.drawText(lenStr, ix, icy - 16, 70, 14, juce::Justification::centredLeft);
+
+                // Mini piano-roll strip
+                if (st == LiveLoopEngine::State::Looping || st == LiveLoopEngine::State::Overdubbing)
+                {
+                    LiveLoopEngine::NoteDisplayItem dispNotes[512];
+                    const int nc = engine_.liveLoopGetNotesForDisplay(c, dispNotes, 512);
+
+                    if (nc > 0)
+                    {
+                        // Find pitch range for this track
+                        int pitchMin = 127, pitchMax = 0;
+                        for (int i = 0; i < nc; ++i)
+                        {
+                            pitchMin = std::min(pitchMin, dispNotes[i].pitch);
+                            pitchMax = std::max(pitchMax, dispNotes[i].pitch);
+                        }
+                        const int pitchRange = std::max(pitchMax - pitchMin, 11); // at least one octave
+
+                        const int sx  = ix;
+                        const int sw  = iw;
+                        const int shy = y + 6;
+                        const int shh = kRowH - 16;
+
+                        // Strip background
+                        g.setColour(juce::Colour(0xff1a1a28));
+                        g.fillRoundedRectangle((float)sx, (float)shy, (float)sw, (float)shh, 2.0f);
+
+                        // Notes
+                        for (int i = 0; i < nc; ++i)
+                        {
+                            const auto& n = dispNotes[i];
+                            const float nx  = sx + (float)(n.startBeat / loopLen) * sw;
+                            double nlen = n.endBeat - n.startBeat;
+                            if (nlen <= 0.0) nlen += loopLen;
+                            const float nw  = std::fmax(1.5f, (float)(nlen / loopLen) * sw);
+                            const float ny  = shy + shh - 2 - (float)(n.pitch - pitchMin) / pitchRange * (shh - 4);
+                            const float nh  = std::fmax(2.0f, n.velocity * 4.0f);
+
+                            g.setColour(trackCol.withAlpha(0.75f));
+                            g.fillRoundedRectangle(nx, ny - nh * 0.5f, nw, nh, 1.0f);
+                        }
+
+                        // Playhead cursor
+                        const double phase  = engine_.liveLoopGetPhase(c);
+                        const float  curX   = sx + (float)(phase / loopLen) * sw;
+                        g.setColour(juce::Colours::white.withAlpha(0.7f));
+                        g.drawVerticalLine((int)curX, (float)shy, (float)(shy + shh));
+
+                        g.setColour(juce::Colours::white.withAlpha(0.22f));
+                        g.setFont(juce::Font(8.0f));
+                        g.drawText(juce::String(nc) + "n", sx + 2, shy + 1, 30, 10,
+                                   juce::Justification::centredLeft);
+                    }
+                }
+            }
+            else if (st == LiveLoopEngine::State::Idle)
+            {
+                const juce::String instrHint = getInstrumentName ? getInstrumentName(c) : "";
+                if (instrHint.isNotEmpty())
+                {
+                    g.setColour(trackCol.withAlpha(0.45f));
+                    g.setFont(juce::Font(9.5f));
+                    g.drawText(instrHint, ix, icy - 6, iw, 14, juce::Justification::centredLeft);
+                }
+            }
+
+            // Progress bar along bottom edge
+            if (st == LiveLoopEngine::State::Looping     ||
+                st == LiveLoopEngine::State::Recording   ||
+                st == LiveLoopEngine::State::Overdubbing)
+            {
+                const double phase = engine_.liveLoopGetPhase(c);
+                const double llen  = engine_.liveLoopGetChannelLength(c);
+                const double ratio = (llen > 0.0) ? juce::jlimit(0.0, 1.0, phase / llen) : 0.0;
+                g.setColour(juce::Colour(0xff202028));
+                g.fillRect(0, y + kRowH - 3, getWidth(), 3);
+                g.setColour(trackCol.withAlpha(0.6f));
+                g.fillRect(0, y + kRowH - 3, (int)(getWidth() * ratio), 3);
+            }
         }
     }
 

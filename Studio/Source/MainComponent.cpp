@@ -2187,12 +2187,10 @@ MainComponent::MainComponent()
 
     lw.getInstrumentName = [this](int ch) -> juce::String
     {
-        // Use CC volume as a proxy indicator
-        const float vol = audioEngine.getCcChannelVolume(ch);
-        return "vol: " + juce::String(vol, 2);
+        return audioEngine.getLiveChannelInstrumentName(ch);
     };
 
-    lw.getCurrentBeat = [this]() { return audioEngine.getPatternBeatPos(); };
+    lw.getCurrentBeat = [this]() { return audioEngine.liveLoopGetGlobalBeat(); };
     lw.getBpm         = [this]() { return audioEngine.getBPM(); };
 
     lw.onChannelSelected = [this](int ch)
@@ -2220,6 +2218,26 @@ MainComponent::MainComponent()
     lw.onUndoChannel = [this](int ch)
     {
         audioEngine.liveLoopUndo(ch);
+    };
+
+    lw.onHalfLoop = [this](int ch)
+    {
+        audioEngine.liveLoopHalfLoop(ch);
+    };
+
+    lw.onDoubleLoop = [this](int ch)
+    {
+        audioEngine.liveLoopDoubleLoop(ch);
+    };
+
+    lw.onLaunchAll = [this](double loopBeats)
+    {
+        audioEngine.liveLoopLaunchAll(loopBeats);
+    };
+
+    lw.onArmFreeChannel = [this](int ch)
+    {
+        audioEngine.liveLoopArmFree(ch);
     };
 
     lw.onMuteChannel = [this](int ch, bool muted)
@@ -2252,13 +2270,27 @@ MainComponent::MainComponent()
         audioEngine.setMetronomeEnabled(on);
     };
 
-    lw.onTapTempo = [this]
+    lw.onCountInChanged = [this](int bars)
     {
-        // Tap tempo is handled internally in LiveLoopComponent
+        audioEngine.liveLoopSetCountInBars(bars);
     };
 
-    // Apply the default 1/16 quantize to the engine immediately
+    lw.onSnapForwardChanged = [this](bool fwd)
+    {
+        audioEngine.liveLoopSetSnapForward(fwd);
+    };
+
+    lw.onSampleDropped = [this](int ch, const juce::File& file)
+    {
+        audioEngine.loadSamplerSource(ch, file);
+        // Also select this channel so MIDI targets it immediately
+        audioEngine.setMidiTargetChannel(ch);
+    };
+
+    // Apply defaults immediately
     audioEngine.liveLoopSetQuantize(0.25);
+    audioEngine.liveLoopSetCountInBars(1);
+    audioEngine.liveLoopSetSnapForward(false);  // default: nearest
 
     // -- Live Performance Mode toggle (wired to toolbar LIVE button) ---------
     toolbar.onToggleLiveMode = [this]
