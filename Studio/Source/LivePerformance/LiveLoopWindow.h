@@ -1142,7 +1142,13 @@ public:
         centreWithSize(content.getWidth(), content.getHeight());
     }
 
-    void closeButtonPressed() override { setVisible(false); }
+    std::function<void()> onClose;
+
+    void closeButtonPressed() override
+    {
+        setVisible(false);
+        if (onClose) onClose();
+    }
 
 private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LiveLoopWindow)

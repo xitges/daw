@@ -310,7 +310,7 @@ public:
 
     // -- Audio-thread API ------------------------------------------------------
     void processBlock(int numSamples, double bpm, double sampleRate) noexcept;
-    void processMidiEvent(const juce::MidiMessage& msg, int ch) noexcept;
+    void processMidiEvent(const juce::MidiMessage& msg, int ch, double eventBeat) noexcept;
     void resetGlobalBeat() noexcept { globalBeat_ = 0.0; }
     double getGlobalBeat() const noexcept { return globalBeat_; }
 
@@ -662,12 +662,12 @@ inline void LiveLoopEngine::processBlock(int numSamples, double bpm, double samp
     }
 }
 
-inline void LiveLoopEngine::processMidiEvent(const juce::MidiMessage& msg, int ch) noexcept
+inline void LiveLoopEngine::processMidiEvent(const juce::MidiMessage& msg, int ch,
+                                             double eventBeat) noexcept
 {
     if (ch < 0 || ch >= kMaxChannels) return;
     if (!msg.isNoteOn() && !msg.isNoteOff()) return;
 
-    const double globalBeat = globalBeat_;
     const int    pitch = juce::jlimit(0, 127, msg.getNoteNumber());
     const float  vel   = msg.getFloatVelocity();
     auto& cd  = ch_[ch];
@@ -684,14 +684,14 @@ inline void LiveLoopEngine::processMidiEvent(const juce::MidiMessage& msg, int c
         if (cd.loopLength <= 0.0)
         {
             // Free record: start immediately (no count-in)
-            cd.recordStartBeat = globalBeat;
+            cd.recordStartBeat = eventBeat;
             state_[ch].store((uint8_t)State::Recording, std::memory_order_release);
         }
         else
         {
             // Fixed length: wait for next bar boundary + count-in bars
             const int countInBars = countInBars_.load(std::memory_order_relaxed);
-            const double nextBarStart = (std::floor(globalBeat / 4.0) + 1.0) * 4.0;
+            const double nextBarStart = (std::floor(eventBeat / 4.0) + 1.0) * 4.0;
             cd.recordStartBeat = nextBarStart + countInBars * 4.0;
 
             if (countInBars == 0)
@@ -706,7 +706,7 @@ inline void LiveLoopEngine::processMidiEvent(const juce::MidiMessage& msg, int c
     }
 
     // -- WaitingForBar: if bar already passed, jump straight to Recording --
-    if (st == State::WaitingForBar && globalBeat >= cd.recordStartBeat)
+    if (st == State::WaitingForBar && eventBeat >= cd.recordStartBeat)
     {
         cd.loopPhase = 0.0;
         state_[ch].store((uint8_t)State::Recording, std::memory_order_release);
@@ -716,15 +716,22 @@ inline void LiveLoopEngine::processMidiEvent(const juce::MidiMessage& msg, int c
     const auto stNow = static_cast<State>(state_[ch].load(std::memory_order_relaxed));
     if (stNow != State::Recording && stNow != State::Overdubbing) return;
 
-    // -- Compute beat position relative to loop start ----------------------
-    double relBeat;
-    if (stNow == State::Recording)
-        relBeat = std::fmax(0.0, globalBeat - cd.recordStartBeat);
-    else
-        relBeat = cd.loopPhase;
+    // -- Compute beat position relative to loop start --------------------------
+    // Use eventBeat (per-event precise timestamp) rather than globalBeat_ (end-of-block).
+    // This prevents notes near the loop boundary from being recorded at the wrong phase
+    // because processBlock already advanced globalBeat_ past the wrap point.
+    double relBeat = std::fmax(0.0, eventBeat - cd.recordStartBeat);
 
-    relBeat = std::fmod(relBeat, cd.loopLength);
-    if (relBeat < 0.0) relBeat += cd.loopLength;
+    if (cd.loopLength > 0.0)
+    {
+        relBeat = std::fmod(relBeat, cd.loopLength);
+        if (relBeat < 0.0) relBeat += cd.loopLength;
+    }
+    else
+    {
+        // Free record: no loopLength yet, relBeat = elapsed time
+        // (no fmod; loopLength will be set on stop())
+    }
 
     if (msg.isNoteOn())
     {

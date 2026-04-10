@@ -2292,6 +2292,14 @@ MainComponent::MainComponent()
     audioEngine.liveLoopSetCountInBars(1);
     audioEngine.liveLoopSetSnapForward(false);  // default: nearest
 
+    // -- Window close: stop all live loops and sync toolbar state ------------
+    liveLoopWindow_->onClose = [this]
+    {
+        liveMode_ = false;
+        toolbar.setLiveModeActive(false);
+        audioEngine.liveLoopResetAll();
+    };
+
     // -- Live Performance Mode toggle (wired to toolbar LIVE button) ---------
     toolbar.onToggleLiveMode = [this]
     {
@@ -3190,11 +3198,14 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
         undoManager.redo();
         return true;
     }
-    // Tab -- toggle Song / Pattern mode
+    // Tab -- toggle Song / Pattern mode (skip when Live Loop window is open)
     if (key == juce::KeyPress(juce::KeyPress::tabKey))
     {
-        toolbar.togglePlayMode();
-        audioEngine.setPlayMode(toolbar.getPlayMode());
+        if (liveLoopWindow_ == nullptr || !liveLoopWindow_->isVisible())
+        {
+            toolbar.togglePlayMode();
+            audioEngine.setPlayMode(toolbar.getPlayMode());
+        }
         return true;
     }
 

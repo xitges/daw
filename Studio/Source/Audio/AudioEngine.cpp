@@ -1822,6 +1822,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         mb.clear();
 
     // LiveLoopEngine: always advance (transport-independent)
+    // Save block-start beat BEFORE processBlock advances globalBeat_, so we can
+    // compute a per-event accurate beat position for each incoming MIDI message.
+    const double liveBlockStartBeat = liveLoopEngine_.getGlobalBeat();
     {
         const double bpmVal = bpm.load(std::memory_order_relaxed);
         if (bpmVal > 0.0)
@@ -2021,9 +2024,17 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 processLoopRecordEvent(msg, ch, beatPos);
             }
 
-            // Live performance: route MIDI events to LiveLoopEngine
+            // Live performance: route MIDI events to LiveLoopEngine.
+            // Compute the precise beat position of this event using its sample offset
+            // within the buffer. This ensures notes near the loop boundary are recorded
+            // at the correct phase, not shifted to the post-wrap position.
             if (msg.isNoteOn() || msg.isNoteOff())
-                liveLoopEngine_.processMidiEvent(msg, ch);
+            {
+                const double bpmNow = bpm.load(std::memory_order_relaxed);
+                const double eventBeat = liveBlockStartBeat
+                    + meta.samplePosition * (bpmNow > 0.0 ? bpmNow / (60.0 * sampleRate) : 0.0);
+                liveLoopEngine_.processMidiEvent(msg, ch, eventBeat);
+            }
         }
     }
 
