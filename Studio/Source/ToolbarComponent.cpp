@@ -431,7 +431,13 @@ void ToolbarComponent::paint(juce::Graphics& g)
             const auto   posText = juce::String::formatted("%03d.%d.%03d", bar, beat, tick);
 
             g.setFont(LF::displayFont((float)dispH * 0.75f));
-            g.setColour(juce::Colour(LF::kDisplayFg).withAlpha(0.22f));   // glow
+            // Phosphor glow passes (simulate text-shadow: 0 0 6px rgba(185,255,102,0.6))
+            g.setColour(juce::Colour(LF::kDisplayFg).withAlpha(0.07f));
+            g.drawText(posText, dispX, dispY, dispW, dispH, juce::Justification::centred);
+            g.setColour(juce::Colour(LF::kDisplayFg).withAlpha(0.12f));
+            g.drawText(posText, dispX + 1, dispY, dispW - 2, dispH, juce::Justification::centred);
+            g.drawText(posText, dispX, dispY + 1, dispW, dispH - 2, juce::Justification::centred);
+            g.setColour(juce::Colour(LF::kDisplayFg).withAlpha(0.18f));
             g.drawText(posText, dispX + 1, dispY + 1, dispW - 2, dispH - 2,
                         juce::Justification::centred);
             g.setColour(juce::Colour(LF::kDisplayFg));
@@ -490,7 +496,7 @@ void ToolbarComponent::paint(juce::Graphics& g)
                 }
                 g.setColour(on ? juce::Colour(col) : juce::Colour(LF::kLedOff));
                 g.fillEllipse(cx - r, cy - r, r*2.0f, r*2.0f);
-                g.setColour(juce::Colour(0x40000000));
+                g.setColour(juce::Colour(0x80000000));
                 g.drawEllipse(cx - r, cy - r, r*2.0f, r*2.0f, 0.5f);
             };
 
@@ -531,7 +537,7 @@ void ToolbarComponent::paint(juce::Graphics& g)
                 const float barGap = 6.0f;
                 const float meterH = SEGS * segH + (SEGS - 1) * segGap;  // ≈ 45.8px
                 const float meterW = segW * 2 + barGap;                   // 22px
-                const float padX = 6.0f, padY = 6.0f;
+                const float padX = 8.0f, padY = 6.0f;
                 const float contW = meterW + padX * 2;                    // 34px
                 const float contH = meterH + padY * 2;                    // ≈58px (fits in 84px)
                 const float contX = (float)rightX + 130.0f;
@@ -628,25 +634,25 @@ void ToolbarComponent::resized()
         const int rightEnd = getWidth() - 260; // before right painted section + knob
         const int avail    = juce::jmax(0, rightEnd - leftEnd);
 
-        // REW(44)+PLAY(50)+STOP(44)+REC(44)+FF(44)+LOOP(44) + 5×gap(6) = 300
-        // + gap(14) + playMode(88) + gap(14) + bpmArea(72) = 488 total
-        const int ctrlW = 300 + 14 + 88 + 14 + 72;
+        // REW(28)+PLAY(38)+STOP(28)+REC(28)+FF(28)+LOOP(28) + 5×gap(5) = 203
+        // + gap(12) + playMode(88) + gap(12) + bpmArea(72) = 387 total
+        const int ctrlW = 203 + 12 + 88 + 12 + 72;
         const int xOff  = leftEnd + juce::jmax(0, (avail - ctrlW) / 2);
 
-        auto row1 = juce::Rectangle<int>(xOff, 0, ctrlW, row1H).reduced(0, 16);
+        auto row1 = juce::Rectangle<int>(xOff, 0, ctrlW, row1H).reduced(0, 18);
 
-        rewBtn_     .setBounds(row1.removeFromLeft(44).reduced(2, 2));
-        row1.removeFromLeft(6);
-        playButton  .setBounds(row1.removeFromLeft(50).reduced(2, 2));
-        row1.removeFromLeft(6);
-        stopButton  .setBounds(row1.removeFromLeft(44).reduced(2, 2));
-        row1.removeFromLeft(6);
-        recordButton.setBounds(row1.removeFromLeft(44).reduced(2, 2));
-        row1.removeFromLeft(6);
-        ffBtn_      .setBounds(row1.removeFromLeft(44).reduced(2, 2));
-        row1.removeFromLeft(6);
-        loopBtn_    .setBounds(row1.removeFromLeft(44).reduced(2, 2));
-        row1.removeFromLeft(14);
+        rewBtn_     .setBounds(row1.removeFromLeft(28).reduced(1, 1));
+        row1.removeFromLeft(5);
+        playButton  .setBounds(row1.removeFromLeft(38).reduced(1, 1));
+        row1.removeFromLeft(5);
+        stopButton  .setBounds(row1.removeFromLeft(28).reduced(1, 1));
+        row1.removeFromLeft(5);
+        recordButton.setBounds(row1.removeFromLeft(28).reduced(1, 1));
+        row1.removeFromLeft(5);
+        ffBtn_      .setBounds(row1.removeFromLeft(28).reduced(1, 1));
+        row1.removeFromLeft(5);
+        loopBtn_    .setBounds(row1.removeFromLeft(28).reduced(1, 1));
+        row1.removeFromLeft(12);
 
         playModeBox.setBounds(row1.removeFromLeft(88).reduced(2, 4));
         row1.removeFromLeft(14);

@@ -1,6 +1,18 @@
-/* SAMPLE BROWSER — left side rail. Folder tree, sample list w/ waveform previews, search */
+/* SAMPLE BROWSER — bookmark folders (user-registered), expandable tree,
+ * file ext only, hash-based color, drag-to-rack/launchpad, real-time preview, search */
 
 const { useState: useStateB, useMemo: useMemoB } = React;
+
+const FILE_COLORS = ["#d8412a","#e89c2b","#7ab87a","#5fa8d8","#b87ad6","#8d7a5a","#3da356","#2cd4d4"];
+function hashColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return FILE_COLORS[h % FILE_COLORS.length];
+}
+function fileExt(name) {
+  const m = name.match(/\.([a-z0-9]+)$/i);
+  return m ? m[1].toLowerCase() : "";
+}
 
 function miniWave(seed, n=60) {
   let s = seed;
@@ -10,7 +22,6 @@ function miniWave(seed, n=60) {
     return ((r() - 0.5) * 1.6 + Math.sin(i*0.3) * 0.4) * env;
   });
 }
-
 function MiniWave({ seed, color="var(--accent)", w=80, h=18 }) {
   const data = useMemoB(() => miniWave(seed), [seed]);
   return (
@@ -23,112 +34,134 @@ function MiniWave({ seed, color="var(--accent)", w=80, h=18 }) {
   );
 }
 
-function FolderRow({ icon, label, count, depth=0, active=false, open=false, onClick, color }) {
-  return (
-    <div onClick={onClick} style={{
-      display:"flex", alignItems:"center", gap:6,
-      padding: "4px 8px",
-      paddingLeft: 8 + depth * 12,
-      cursor:"pointer", borderRadius:3,
-      background: active ? "rgba(216,65,42,0.12)" : "transparent",
-      color: active ? "var(--ink)" : "var(--ink-soft)",
-      fontSize:10, fontWeight: active ? 700 : 500,
-      letterSpacing:"0.04em",
-      borderLeft: active ? "2px solid var(--accent)" : "2px solid transparent",
-    }}>
-      <span style={{ fontFamily:'"VT323", monospace', fontSize:13, color: color || "var(--ink-faint)", width:10 }}>
-        {icon}
-      </span>
-      <span style={{ flex:1, textTransform:"uppercase", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-        {label}
-      </span>
-      {count != null && (
-        <span style={{ fontSize:8, fontWeight:600, color:"var(--ink-faint)", letterSpacing:"0.1em" }}>
-          {count}
-        </span>
-      )}
-    </div>
-  );
-}
+/* Tree node — bookmark folder or its children. Expandable. */
+function TreeNode({ node, depth=0, expanded, onToggle, selected, onSelect }) {
+  const isExpanded = expanded.has(node.path);
+  const isSelected = selected === node.path;
+  const isFolder = node.type === "folder" || node.type === "bookmark";
+  const hasChildren = isFolder && node.children && node.children.length > 0;
 
-function SampleRow({ name, dur, note, bpm, seed, color, active, onClick }) {
   return (
-    <div onClick={onClick} style={{
-      display:"grid", gridTemplateColumns:"14px 1fr 80px auto", gap:8, alignItems:"center",
-      padding:"5px 8px", borderRadius:3, cursor:"pointer",
-      background: active ? "rgba(216,65,42,0.14)" : "transparent",
-      borderLeft: active ? "2px solid var(--accent)" : "2px solid transparent",
-    }}>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"center" }}>
-        <div style={{
-          width:0, height:0,
-          borderTop:"4px solid transparent",
-          borderBottom:"4px solid transparent",
-          borderLeft: `6px solid ${active ? "var(--accent)" : "var(--ink-faint)"}`,
-        }} />
-      </div>
-      <div style={{ minWidth:0 }}>
-        <div style={{
-          fontSize:10, fontWeight:600, color:"var(--ink)", letterSpacing:"0.02em",
-          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
-        }}>{name}</div>
-        <div style={{
-          fontSize:8, fontWeight:600, letterSpacing:"0.12em", color:"var(--ink-faint)", textTransform:"uppercase",
-          marginTop:1,
+    <>
+      <div onClick={() => isFolder ? onToggle(node.path) : onSelect(node.path)}
+        style={{
+          display:"flex", alignItems:"center", gap:5,
+          paddingLeft: 6 + depth * 12, paddingRight:8, paddingTop:3, paddingBottom:3,
+          cursor:"pointer",
+          background: isSelected ? "rgba(216,65,42,0.14)" : "transparent",
+          borderLeft: isSelected ? "2px solid var(--accent)" : "2px solid transparent",
+          fontSize:10, fontWeight: isSelected ? 700 : 500,
+          color: isFolder ? "var(--ink)" : "var(--ink-soft)",
+          letterSpacing:"0.02em",
         }}>
-          {dur} · {note} · {bpm}bpm
-        </div>
+        <span style={{
+          width:10, fontFamily:'"VT323", monospace', fontSize:13,
+          color: isFolder ? "var(--ink-faint)" : "transparent",
+          textAlign:"center",
+        }}>
+          {isFolder ? (hasChildren ? (isExpanded ? "▾" : "▸") : "·") : ""}
+        </span>
+        <span style={{
+          fontFamily:'"VT323", monospace', fontSize:13,
+          color: node.type === "bookmark" ? "var(--accent)" : "var(--ink-faint)",
+        }}>
+          {node.type === "bookmark" ? "★" : isFolder ? "▣" : "♪"}
+        </span>
+        <span style={{
+          flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+          textTransform: isFolder ? "uppercase" : "none",
+          fontWeight: node.type === "bookmark" ? 700 : (isFolder ? 600 : 500),
+        }}>{node.name}</span>
+        {!isFolder && (
+          <span style={{
+            fontSize:8, fontWeight:700, letterSpacing:"0.1em",
+            color: hashColor(node.name), textTransform:"uppercase",
+            padding:"1px 4px", borderRadius:2,
+            background:`${hashColor(node.name)}22`,
+            border:`1px solid ${hashColor(node.name)}55`,
+          }}>{fileExt(node.name)}</span>
+        )}
       </div>
-      <MiniWave seed={seed} color={color} />
-      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
-        <div style={{
-          width:5, height:5, borderRadius:"50%", background: color,
-          boxShadow:`0 0 4px ${color}`,
-        }} />
-      </div>
-    </div>
+      {isFolder && isExpanded && hasChildren && node.children.map(c => (
+        <TreeNode key={c.path} node={c} depth={depth+1}
+          expanded={expanded} onToggle={onToggle}
+          selected={selected} onSelect={onSelect} />
+      ))}
+    </>
   );
 }
 
 function SampleBrowser() {
-  const [tab, setTab] = useStateB("samples");
-  const [folder, setFolder] = useStateB("drums-909");
-  const [active, setActive] = useStateB("kick_909_punch.wav");
+  // realistic empty-state-capable bookmark tree
+  const [tree, setTree] = useStateB([
+    {
+      name: "Audio Library", path:"/lib", type:"bookmark",
+      children: [
+        { name:"909 kit", path:"/lib/909", type:"folder", children:[
+          { name:"kick_punch.wav",      path:"/lib/909/kick_punch.wav",      type:"file" },
+          { name:"kick_subby.wav",      path:"/lib/909/kick_subby.wav",      type:"file" },
+          { name:"snare_tight.wav",     path:"/lib/909/snare_tight.wav",     type:"file" },
+          { name:"snare_open.wav",      path:"/lib/909/snare_open.wav",      type:"file" },
+          { name:"hat_closed.wav",      path:"/lib/909/hat_closed.wav",      type:"file" },
+          { name:"hat_open.wav",        path:"/lib/909/hat_open.wav",        type:"file" },
+          { name:"clap_layered.aif",    path:"/lib/909/clap_layered.aif",    type:"file" },
+        ]},
+        { name:"loops", path:"/lib/loops", type:"folder", children:[
+          { name:"break_124.wav",       path:"/lib/loops/break_124.wav",     type:"file" },
+          { name:"vinyl_loop.flac",     path:"/lib/loops/vinyl_loop.flac",   type:"file" },
+        ]},
+        { name:"keys", path:"/lib/keys", type:"folder", children:[] },
+      ],
+    },
+    {
+      name: "Field Recordings", path:"/field", type:"bookmark",
+      children: [
+        { name:"birds_dawn.wav",        path:"/field/birds_dawn.wav",        type:"file" },
+        { name:"rain_window.wav",       path:"/field/rain_window.wav",       type:"file" },
+        { name:"voice_memo_03.mp3",     path:"/field/voice_memo_03.mp3",     type:"file" },
+      ],
+    },
+    {
+      name: "Project Samples", path:"/proj", type:"bookmark",
+      children: [],
+    },
+  ]);
+
+  const [expanded, setExpanded] = useStateB(new Set(["/lib","/lib/909"]));
+  const [selected, setSelected] = useStateB("/lib/909/kick_punch.wav");
   const [query, setQuery] = useStateB("");
 
-  const folders = [
-    { id:"all",        icon:"◆", label:"All sounds",    count:1284, color:"var(--ink)" },
-    { id:"recent",     icon:"◷", label:"Recent",        count:24, depth:0 },
-    { id:"favs",       icon:"★", label:"Favorites",     count:18, color:"var(--accent)" },
-    { id:"_h1",        header:"FACTORY", },
-    { id:"drums",      icon:"▸", label:"Drums",         count:412, depth:0 },
-    { id:"drums-909",  icon:"·", label:"909 kit",       count:64, depth:1 },
-    { id:"drums-808",  icon:"·", label:"808 kit",       count:48, depth:1 },
-    { id:"drums-tape", icon:"·", label:"Tape drums",    count:96, depth:1 },
-    { id:"bass",       icon:"▸", label:"Bass",          count:218, depth:0 },
-    { id:"keys",       icon:"▸", label:"Keys & pads",   count:174, depth:0 },
-    { id:"fx",         icon:"▸", label:"FX & textures", count:142, depth:0 },
-    { id:"_h2",        header:"USER", },
-    { id:"field",      icon:"▸", label:"Field rec",     count:46, depth:0 },
-    { id:"vox",        icon:"▸", label:"Voice memos",   count:31, depth:0 },
-    { id:"loops",      icon:"▸", label:"Loops",         count:88, depth:0 },
-  ];
+  const toggle = (path) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path); else next.add(path);
+      return next;
+    });
+  };
 
-  const samples = [
-    { name:"kick_909_punch.wav",   dur:"0:01", note:"C1",  bpm:124, seed:11, color:"var(--accent)" },
-    { name:"kick_909_subby.wav",   dur:"0:01", note:"C1",  bpm:124, seed:13, color:"var(--accent)" },
-    { name:"kick_909_distort.wav", dur:"0:01", note:"C1",  bpm:124, seed:17, color:"var(--accent)" },
-    { name:"snare_909_tight.wav",  dur:"0:00", note:"D2",  bpm:124, seed:19, color:"#e89c2b" },
-    { name:"snare_909_open.wav",   dur:"0:01", note:"D2",  bpm:124, seed:23, color:"#e89c2b" },
-    { name:"hat_closed_top.wav",   dur:"0:00", note:"F#3", bpm:124, seed:29, color:"#7ab87a" },
-    { name:"hat_open_long.wav",    dur:"0:02", note:"A#3", bpm:124, seed:31, color:"#7ab87a" },
-    { name:"clap_909_layered.wav", dur:"0:01", note:"D#2", bpm:124, seed:37, color:"#5fa8d8" },
-    { name:"rim_909_short.wav",    dur:"0:00", note:"E2",  bpm:124, seed:41, color:"#5fa8d8" },
-    { name:"tom_low_warm.wav",     dur:"0:01", note:"A1",  bpm:124, seed:43, color:"#b87ad6" },
-    { name:"tom_mid_dry.wav",      dur:"0:01", note:"D2",  bpm:124, seed:47, color:"#b87ad6" },
-    { name:"crash_909_long.wav",   dur:"0:04", note:"C#4", bpm:124, seed:53, color:"#b87ad6" },
-    { name:"ride_909_bell.wav",    dur:"0:03", note:"D#4", bpm:124, seed:59, color:"#b87ad6" },
-  ].filter(s => !query || s.name.includes(query.toLowerCase()));
+  // when searching, filter to flat file list
+  const filterTree = (nodes) => {
+    if (!query) return nodes;
+    const q = query.toLowerCase();
+    const flat = [];
+    const walk = (n) => {
+      if (n.type === "file" && n.name.toLowerCase().includes(q)) flat.push(n);
+      if (n.children) n.children.forEach(walk);
+    };
+    nodes.forEach(walk);
+    return flat;
+  };
+
+  const visible = filterTree(tree);
+  const selectedNode = (() => {
+    let found = null;
+    const walk = (n) => {
+      if (n.path === selected) found = n;
+      if (n.children) n.children.forEach(walk);
+    };
+    tree.forEach(walk);
+    return found;
+  })();
 
   return (
     <div style={{
@@ -152,29 +185,12 @@ function SampleBrowser() {
               BROWSER
             </div>
           </div>
-          <Tag>1,284 SOUNDS</Tag>
+          <div style={{ display:"flex", gap:4 }}>
+            <button title="Add bookmark folder" style={miniBtn()}>＋</button>
+            <button title="Refresh" style={miniBtn()}>↻</button>
+          </div>
         </div>
 
-        {/* tabs */}
-        <div style={{ display:"flex", gap:2, marginBottom:8 }}>
-          {[
-            { id:"samples", label:"SAMPLES" },
-            { id:"patches", label:"PATCHES" },
-            { id:"loops", label:"LOOPS" },
-          ].map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)} style={{
-              flex:1, padding:"4px 8px", borderRadius:3, cursor:"pointer",
-              fontSize:9, fontWeight:700, letterSpacing:"0.12em",
-              fontFamily:'"JetBrains Mono", monospace',
-              background: tab === t.id ? "var(--accent)" : "rgba(0,0,0,0.05)",
-              color: tab === t.id ? "#fff" : "var(--ink-soft)",
-              border:"1px solid " + (tab === t.id ? "var(--accent)" : "rgba(0,0,0,0.15)"),
-              boxShadow: tab === t.id ? "0 0 6px var(--accent)" : "none",
-            }}>{t.label}</button>
-          ))}
-        </div>
-
-        {/* search */}
         <div style={{
           display:"flex", alignItems:"center", gap:6,
           background:"var(--display-bg)",
@@ -183,107 +199,135 @@ function SampleBrowser() {
           border:"1px solid rgba(0,0,0,0.5)",
         }}>
           <span style={{ fontFamily:'"VT323",monospace', color:"var(--display-fg)", fontSize:14, textShadow:"0 0 3px rgba(185,255,102,0.6)" }}>›</span>
-          <input
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="search sounds..."
+          <input value={query} onChange={e => setQuery(e.target.value)}
+            placeholder="filter files..."
             style={{
               flex:1, background:"transparent", border:"none", outline:"none",
               fontFamily:'"VT323",monospace', fontSize:14, color:"var(--display-fg)",
               letterSpacing:"0.05em",
-            }}
-          />
-          <span style={{ fontFamily:'"JetBrains Mono",monospace', fontSize:8, color:"var(--display-fg)", opacity:0.5 }}>⌘F</span>
+            }} />
+          {query && (
+            <button onClick={() => setQuery("")} style={{
+              background:"transparent", border:"none", cursor:"pointer",
+              fontFamily:'"VT323",monospace', fontSize:13, color:"var(--display-fg)", opacity:0.6, padding:0,
+            }}>×</button>
+          )}
         </div>
       </div>
 
-      {/* body: folder tree + sample list */}
-      <div style={{ display:"grid", gridTemplateRows:"auto 1fr", flex:1, minHeight:0, overflow:"hidden" }}>
-        {/* folders */}
-        <div className="scroll" style={{
-          maxHeight:170, overflowY:"auto",
-          padding:"6px 4px",
-          borderBottom:"1px solid var(--rule)",
-          background:"linear-gradient(180deg, transparent, rgba(0,0,0,0.02))",
-        }}>
-          {folders.map(f => f.header ? (
-            <div key={f.id} style={{
-              fontSize:8, fontWeight:700, letterSpacing:"0.18em",
-              color:"var(--ink-faint)", textTransform:"uppercase",
-              padding:"6px 10px 2px",
-            }}>{f.header}</div>
-          ) : (
-            <FolderRow key={f.id} {...f}
-              active={folder === f.id}
-              onClick={() => setFolder(f.id)}
-            />
-          ))}
-        </div>
-
-        {/* samples */}
-        <div className="scroll" style={{ overflowY:"auto", padding:"4px" }}>
-          {samples.map(s => (
-            <SampleRow key={s.name} {...s}
-              active={active === s.name}
-              onClick={() => setActive(s.name)}
-            />
-          ))}
-        </div>
+      {/* body: tree */}
+      <div className="scroll" style={{ flex:1, overflowY:"auto", padding:"4px 0" }}>
+        {tree.length === 0 ? (
+          <EmptyState />
+        ) : query ? (
+          <div style={{ padding:"4px 0" }}>
+            {visible.length === 0 ? (
+              <div style={{ padding:"20px 12px", textAlign:"center", fontSize:10, color:"var(--ink-faint)", letterSpacing:"0.1em" }}>
+                no matches
+              </div>
+            ) : visible.map(n => (
+              <TreeNode key={n.path} node={n} depth={0}
+                expanded={expanded} onToggle={toggle}
+                selected={selected} onSelect={setSelected} />
+            ))}
+          </div>
+        ) : tree.map(n => (
+          <TreeNode key={n.path} node={n} depth={0}
+            expanded={expanded} onToggle={toggle}
+            selected={selected} onSelect={setSelected} />
+        ))}
       </div>
 
       {/* preview footer */}
-      <div style={{
-        padding:"8px 10px",
-        borderTop:"1px solid var(--panel-rim)",
-        background:"linear-gradient(180deg, var(--chassis-2), var(--chassis))",
-        display:"flex", flexDirection:"column", gap:6,
-      }}>
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-          <div style={{ minWidth:0 }}>
-            <div style={{ fontSize:9, fontWeight:600, letterSpacing:"0.12em", color:"var(--ink-faint)", textTransform:"uppercase" }}>
-              NOW PREVIEWING
-            </div>
-            <div style={{ fontSize:11, fontWeight:700, color:"var(--ink)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-              {active}
-            </div>
-          </div>
-          <LED on color="green" size={7} />
-        </div>
+      {selectedNode && selectedNode.type === "file" && (
         <div style={{
-          background:"var(--display-bg)", borderRadius:3,
-          padding:"6px 8px",
-          boxShadow:"inset 0 2px 4px rgba(0,0,0,0.7)",
-          border:"1px solid rgba(0,0,0,0.5)",
+          padding:"8px 10px",
+          borderTop:"1px solid var(--panel-rim)",
+          background:"linear-gradient(180deg, var(--chassis-2), var(--chassis))",
+          display:"flex", flexDirection:"column", gap:6,
         }}>
-          <MiniWave seed={11} w={250} h={28} color="var(--display-fg)" />
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+            <div style={{ minWidth:0 }}>
+              <div style={{ fontSize:9, fontWeight:600, letterSpacing:"0.12em", color:"var(--ink-faint)", textTransform:"uppercase" }}>
+                PREVIEW
+              </div>
+              <div style={{ fontSize:11, fontWeight:700, color:"var(--ink)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                {selectedNode.name}
+              </div>
+            </div>
+            <LED on color="green" size={7} />
+          </div>
+          <div style={{
+            background:"var(--display-bg)", borderRadius:3,
+            padding:"6px 8px",
+            boxShadow:"inset 0 2px 4px rgba(0,0,0,0.7)",
+            border:"1px solid rgba(0,0,0,0.5)",
+          }}>
+            <MiniWave seed={selectedNode.name.charCodeAt(0)*7 + selectedNode.name.length*3} w={250} h={28} color="var(--display-fg)" />
+          </div>
+          <div style={{ display:"flex", gap:4 }}>
+            <button style={{
+              flex:1, padding:"5px 8px", borderRadius:3, cursor:"grab",
+              fontSize:9, fontWeight:700, letterSpacing:"0.12em",
+              fontFamily:'"JetBrains Mono", monospace',
+              background:"var(--accent)", color:"#fff",
+              border:"1px solid var(--accent)",
+              boxShadow:"0 0 6px var(--accent)66",
+            }}>⤓ DRAG TO RACK</button>
+            <button title="Send to launchpad" style={miniBtn()}>▦</button>
+            <button title="Loop preview" style={miniBtn()}>↻</button>
+          </div>
         </div>
-        <div style={{ display:"flex", gap:4 }}>
-          <button style={{
-            flex:1, padding:"5px 8px", borderRadius:3, cursor:"pointer",
-            fontSize:9, fontWeight:700, letterSpacing:"0.12em",
-            fontFamily:'"JetBrains Mono", monospace',
-            background: "var(--accent)", color:"#fff",
-            border:"1px solid var(--accent)",
-            boxShadow:"0 0 6px var(--accent)66",
-          }}>＋ DROP TO TRACK</button>
-          <button style={{
-            padding:"5px 8px", borderRadius:3, cursor:"pointer",
-            fontSize:9, fontWeight:700, letterSpacing:"0.12em",
-            fontFamily:'"JetBrains Mono", monospace',
-            background: "transparent", color:"var(--ink-soft)",
-            border:"1px solid rgba(0,0,0,0.2)",
-          }}>★</button>
-          <button style={{
-            padding:"5px 8px", borderRadius:3, cursor:"pointer",
-            fontSize:9, fontWeight:700, letterSpacing:"0.12em",
-            fontFamily:'"JetBrains Mono", monospace',
-            background: "transparent", color:"var(--ink-soft)",
-            border:"1px solid rgba(0,0,0,0.2)",
-          }}>EDIT</button>
-        </div>
-      </div>
+      )}
     </div>
   );
+}
+
+function EmptyState() {
+  return (
+    <div style={{
+      padding:"32px 16px", textAlign:"center",
+      display:"flex", flexDirection:"column", alignItems:"center", gap:10,
+    }}>
+      <div style={{
+        width:48, height:48, borderRadius:8,
+        background:"var(--display-bg)",
+        border:"1px solid rgba(0,0,0,0.5)",
+        boxShadow:"inset 0 2px 4px rgba(0,0,0,0.6)",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        fontFamily:'"VT323", monospace', fontSize:24,
+        color:"var(--display-fg)", opacity:0.5,
+        textShadow:"0 0 4px rgba(185,255,102,0.4)",
+      }}>★</div>
+      <div style={{ fontSize:10, fontWeight:700, letterSpacing:"0.18em", color:"var(--ink)", textTransform:"uppercase" }}>
+        No bookmarks
+      </div>
+      <div style={{ fontSize:9, color:"var(--ink-faint)", lineHeight:1.5, letterSpacing:"0.04em", maxWidth:200 }}>
+        Add a folder to start browsing audio files. wav · aif · mp3 · flac · ogg
+      </div>
+      <button style={{
+        marginTop:4, padding:"6px 12px", borderRadius:3, cursor:"pointer",
+        fontSize:9, fontWeight:700, letterSpacing:"0.12em",
+        fontFamily:'"JetBrains Mono", monospace',
+        background:"var(--accent)", color:"#fff",
+        border:"1px solid var(--accent)",
+        boxShadow:"0 0 6px var(--accent)66",
+      }}>＋ ADD FOLDER</button>
+    </div>
+  );
+}
+
+function miniBtn() {
+  return {
+    width:22, height:22, padding:0, borderRadius:3, cursor:"pointer",
+    background:"linear-gradient(180deg, #ede5d1, #d8cdb1)",
+    color:"var(--ink)",
+    border:"1px solid rgba(0,0,0,0.25)",
+    boxShadow:"inset 0 1px 0 rgba(255,255,255,0.5), 0 1px 0 rgba(0,0,0,0.15)",
+    fontFamily:'"JetBrains Mono", monospace',
+    fontSize:11, fontWeight:700,
+    display:"flex", alignItems:"center", justifyContent:"center",
+  };
 }
 
 Object.assign(window, { SampleBrowser });

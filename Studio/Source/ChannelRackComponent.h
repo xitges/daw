@@ -10,6 +10,7 @@ struct ChannelRow
     bool muted  = false;
     bool soloed = false;
     juce::String sampleName = "Drop Sample";
+    juce::Colour color { 0xffd8412a };   // phase-4: per-channel colour from palette
 
     // M1.1 — Volume & Pan
     float volume = 0.8f;
@@ -227,10 +228,10 @@ public:
     }
     void resetToChannelCount(int count, const juce::String* names);
 
-    static constexpr int ROW_HEIGHT      = 58;
-    static constexpr int LABEL_WIDTH     = 250;
-    static constexpr int HEADER_HEIGHT   = 30;
-    static constexpr int INSPECTOR_HEIGHT = 140; // height of step inspector strip (4 rows)
+    static constexpr int ROW_HEIGHT       = 58;
+    static constexpr int LABEL_WIDTH      = 180;   // phase-4
+    static constexpr int HEADER_HEIGHT    = 50;    // 30px title strip + 20px step ruler
+    static constexpr int INSPECTOR_HEIGHT = 140;
 
 private:
     std::vector<ChannelRow> channels;

@@ -21,7 +21,7 @@
 #include "LivePerformance/LivePerformanceComponent.h"
 #include "LivePerformance/LiveLoopWindow.h"
 
-// Tab bar that switches between SEQUENCER / MIXER / INSTRUMENT inspector panels
+// Tab bar: INSTRUMENT / SEQUENCER / MIXER  (Phase-6 redesign)
 class InspectorTabBar : public juce::Component
 {
 public:
@@ -30,62 +30,118 @@ public:
     void setTab(int t) { activeTab_ = t; repaint(); }
     int  getTab() const { return activeTab_; }
 
+    // Dynamic sub-label setters — call from MainComponent when state changes
+    void setInstrumentSub(int chIdx, const juce::String& name)
+    {
+        instrSub_ = "CH " + juce::String(chIdx + 1).paddedLeft('0', 2)
+                  + juce::String::fromUTF8("  \xe2\x80\x94  ") + name.toUpperCase();
+        gutterSub_ = instrSub_;
+        repaint();
+    }
+    void setSequencerSub(const juce::String& patternName)
+    {
+        seqSub_ = patternName.toUpperCase();
+        repaint();
+    }
+
     void paint(juce::Graphics& g) override
     {
         using LF = StudioLookAndFeel;
+        const int W = getWidth();
+        const int H = getHeight();
+
+        // Chassis gradient background
         juce::ColourGradient bg(juce::Colour(LF::kChassis2), 0.0f, 0.0f,
-                                juce::Colour(LF::kChassis), 0.0f, (float)getHeight(), false);
+                                juce::Colour(LF::kChassis),  0.0f, (float)H, false);
         g.setGradientFill(bg);
         g.fillAll();
 
-        const int n = 3;
-        const int tw = getWidth() / n;
-        const char* names[] = { "INSTRUMENT", "SEQUENCER", "MIXER" };
-        const juce::String subs[] = {
-            "POLY-6 MK2", "PATTERN A",
-            juce::String::fromUTF8("6 CH  \xc2\xb7  2 BUS")
+        // Top + bottom hairlines
+        g.setColour(juce::Colour(LF::kPanelRim));
+        g.drawLine(0.0f, 0.5f, (float)W, 0.5f, 1.0f);
+        g.drawLine(0.0f, (float)(H - 1), (float)W, (float)(H - 1), 1.0f);
+
+        // Reserve right gutter (160px) before tab layout
+        const int gutterW = 170;
+        const int tabZoneW = W - gutterW;
+        const int tw = tabZoneW / 3;
+
+        static const char* kLabels[] = { "INSTRUMENT", "SEQUENCER", "MIXER" };
+        const juce::String kSubs[3] = {
+            instrSub_,
+            seqSub_,
+            juce::String::fromUTF8("8 INSERT  \xc2\xb7  1 MASTER"),
         };
 
-        for (int i = 0; i < n; ++i)
+        for (int i = 0; i < 3; ++i)
         {
-            juce::Rectangle<int> tab(i * tw, 0, tw, getHeight());
-            if (i == activeTab_)
+            const bool on = (i == activeTab_);
+            juce::Rectangle<int> tab(i * tw, 0, tw, H);
+
+            if (on)
             {
+                // Active tab: panel fill + 2px accent top border
                 g.setColour(juce::Colour(LF::kPanel));
-                g.fillRoundedRectangle(tab.toFloat().reduced(2.0f, 0.0f), 4.0f);
+                g.fillRect(tab.reduced(1, 0));
+                // Left/right rim lines
+                g.setColour(juce::Colour(LF::kPanelRim));
+                g.drawLine((float)(tab.getX() + 1), 0.0f, (float)(tab.getX() + 1), (float)H, 0.8f);
+                g.drawLine((float)(tab.getRight() - 1), 0.0f, (float)(tab.getRight() - 1), (float)H, 0.8f);
+                // 2px accent top
                 g.setColour(juce::Colour(LF::kAccent));
-                g.fillRect(tab.withHeight(2).reduced(3, 0));
-                g.setColour(juce::Colour(LF::kText));
+                g.fillRect(tab.getX() + 2, 0, tab.getWidth() - 4, 2);
             }
-            else
-            {
-                g.setColour(juce::Colour(LF::kTextDim));
-            }
-            auto top = tab.removeFromTop(18);
-            g.setFont(StudioLookAndFeel::monoFont(10.0f, juce::Font::bold));
-            g.drawText(names[i], top, juce::Justification::centred);
-            g.setColour(i == activeTab_ ? juce::Colour(LF::kAccent) : juce::Colour(LF::kTextFaint));
-            g.setFont(StudioLookAndFeel::monoFont(8.0f, juce::Font::bold));
-            g.drawText(subs[i], tab.removeFromTop(12), juce::Justification::centred);
+
+            // Label (INSTRUMENT / SEQUENCER / MIXER)
+            g.setFont(LF::monoFont(9.5f, juce::Font::bold));
+            g.setColour(on ? juce::Colour(LF::kText) : juce::Colour(LF::kTextDim));
+            g.drawText(kLabels[i], tab.getX(), 7, tab.getWidth(), 14, juce::Justification::centred);
+
+            // Sub-label
+            g.setFont(LF::monoFont(7.5f, juce::Font::bold));
+            g.setColour(on ? juce::Colour(LF::kAccent) : juce::Colour(LF::kTextFaint));
+            juce::String sub = kSubs[i];
+            g.drawText(sub, tab.getX() + 2, 22, tab.getWidth() - 4, 10,
+                       juce::Justification::centred, true);
         }
 
-        auto tag = juce::Rectangle<int>(getWidth() - 150, 7, 138, getHeight() - 14);
-        g.setColour(juce::Colour(LF::kChassis));
-        g.fillRoundedRectangle(tag.toFloat(), 4.0f);
-        g.setColour(juce::Colour(LF::kPanelRim));
-        g.drawRoundedRectangle(tag.toFloat(), 4.0f, 1.0f);
-        g.setColour(juce::Colour(LF::kTextFaint));
-        g.setFont(StudioLookAndFeel::monoFont(8.0f, juce::Font::bold));
-        g.drawText("INSPECTOR  TRACK 03", tag, juce::Justification::centred);
+        // Right gutter: "INSPECTOR" tag + track tag
+        {
+            const int gx = tabZoneW + 8;
+            const int gy = 5;
+            const int gh = H - 10;
 
-        // Separator line at bottom
-        g.setColour(juce::Colour(LF::kPanelRim));
-        g.drawLine(0.0f, (float)(getHeight() - 1), (float)getWidth(), (float)(getHeight() - 1), 1.0f);
+            // "INSPECTOR" pill
+            const int inspW = 62;
+            juce::Rectangle<float> inspR((float)gx, (float)gy, (float)inspW, (float)gh);
+            g.setColour(juce::Colour(LF::kChassis));
+            g.fillRoundedRectangle(inspR, 3.0f);
+            g.setColour(juce::Colour(LF::kPanelRim));
+            g.drawRoundedRectangle(inspR.reduced(0.5f), 3.0f, 0.8f);
+            g.setFont(LF::monoFont(7.5f, juce::Font::bold));
+            g.setColour(juce::Colour(LF::kTextFaint));
+            g.drawText("INSPECTOR", inspR.toNearestInt(), juce::Justification::centred);
+
+            // Track info pill
+            const int trackX = gx + inspW + 6;
+            const int trackW = gutterW - inspW - 22;
+            juce::Rectangle<float> trackR((float)trackX, (float)gy, (float)trackW, (float)gh);
+            g.setColour(juce::Colour(LF::kChassis));
+            g.fillRoundedRectangle(trackR, 3.0f);
+            g.setColour(juce::Colour(LF::kPanelRim));
+            g.drawRoundedRectangle(trackR.reduced(0.5f), 3.0f, 0.8f);
+            g.setFont(LF::monoFont(7.5f, juce::Font::bold));
+            g.setColour(juce::Colour(LF::kAccent).withAlpha(0.85f));
+            g.drawText(gutterSub_, trackR.toNearestInt(), juce::Justification::centred, true);
+        }
     }
 
     void mouseDown(const juce::MouseEvent& e) override
     {
-        const int tw = getWidth() / 3;
+        const int gutterW  = 170;
+        const int tabZoneW = getWidth() - gutterW;
+        if (e.x >= tabZoneW) return;   // click in gutter — ignore
+        const int tw = tabZoneW / 3;
         const int t  = juce::jlimit(0, 2, e.x / tw);
         if (t != activeTab_)
         {
@@ -96,7 +152,10 @@ public:
     }
 
 private:
-    int activeTab_ = 0;
+    int          activeTab_ = 1;   // default: SEQUENCER
+    juce::String instrSub_  = "CH 01";
+    juce::String seqSub_    = "PATTERN";
+    juce::String gutterSub_ = "CH 01";
 };
 
 class MainComponent : public juce::Component,

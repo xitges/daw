@@ -1,6 +1,4 @@
-/* APP — root layout, state, tweaks panel
- * Layout: [Browser] [ Transport / Arrangement / Inspector(tabbed) ]
- */
+/* APP — root layout, state, tweaks panel */
 
 const { useState: useStateA, useEffect: useEffectA } = React;
 
@@ -56,11 +54,11 @@ function applyScheme(name) {
   root.style.setProperty("--display-fg", s.displayFg);
 }
 
-function InspectorTabs({ value, onChange }) {
+function InspectorTabs({ value, onChange, currentTrack, currentPattern }) {
   const tabs = [
-    { id:"synth",     label:"INSTRUMENT",  sub:"POLY-6 mk2" },
-    { id:"sequencer", label:"SEQUENCER",  sub:"PATTERN A" },
-    { id:"mixer",     label:"MIXER",      sub:"6 CH · 2 BUS" },
+    { id:"synth",     label:"INSTRUMENT", sub:`CH ${currentTrack.idx} — ${currentTrack.name}` },
+    { id:"sequencer", label:"SEQUENCER",  sub: currentPattern },
+    { id:"mixer",     label:"MIXER",      sub:"8 INSERT · 1 MASTER" },
   ];
   return (
     <div style={{
@@ -69,31 +67,39 @@ function InspectorTabs({ value, onChange }) {
       background:"linear-gradient(180deg, var(--chassis-2), var(--chassis))",
       borderTop:"1px solid var(--panel-rim)",
       borderBottom:"1px solid var(--panel-rim)",
+      position:"relative",
     }}>
-      {tabs.map(t => (
-        <button key={t.id} onClick={() => onChange(t.id)} style={{
-          padding:"8px 16px", border:"none", cursor:"pointer",
-          background: value === t.id ? "var(--panel)" : "transparent",
-          borderTop: value === t.id ? "2px solid var(--accent)" : "2px solid transparent",
-          marginTop: value === t.id ? 0 : 0,
-          borderRadius:"4px 4px 0 0",
-          display:"flex", flexDirection:"column", alignItems:"flex-start", gap:1,
-          fontFamily:'"JetBrains Mono", monospace',
-          position:"relative",
-          boxShadow: value === t.id ? "inset 0 1px 0 rgba(255,255,255,0.5)" : "none",
-        }}>
-          <span style={{
-            fontSize:10, fontWeight:700, letterSpacing:"0.18em",
-            color: value === t.id ? "var(--ink)" : "var(--ink-soft)",
-            textTransform:"uppercase",
-          }}>{t.label}</span>
-          <span style={{
-            fontSize:8, fontWeight:600, letterSpacing:"0.12em",
-            color: value === t.id ? "var(--accent)" : "var(--ink-faint)",
-            textTransform:"uppercase",
-          }}>{t.sub}</span>
-        </button>
-      ))}
+      {tabs.map(t => {
+        const on = value === t.id;
+        return (
+          <button key={t.id} onClick={() => onChange(t.id)} style={{
+            padding:"7px 16px 8px",
+            border:"none", cursor:"pointer",
+            background: on ? "var(--panel)" : "transparent",
+            borderTop: on ? "2px solid var(--accent)" : "2px solid transparent",
+            borderLeft: on ? "1px solid var(--panel-rim)" : "1px solid transparent",
+            borderRight: on ? "1px solid var(--panel-rim)" : "1px solid transparent",
+            borderBottom: on ? "1px solid var(--panel)" : "none",
+            marginBottom: on ? -1 : 0,
+            display:"flex", flexDirection:"column", alignItems:"flex-start", gap:2,
+            fontFamily:'"JetBrains Mono", monospace',
+            position:"relative",
+            boxShadow: on ? "inset 0 1px 0 rgba(255,255,255,0.5)" : "none",
+          }}>
+            <span style={{
+              fontSize:10, fontWeight:700, letterSpacing:"0.18em",
+              color: on ? "var(--ink)" : "var(--ink-soft)",
+              textTransform:"uppercase",
+            }}>{t.label}</span>
+            <span style={{
+              fontSize:8, fontWeight:600, letterSpacing:"0.1em",
+              color: on ? "var(--accent)" : "var(--ink-faint)",
+              textTransform:"uppercase",
+              maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+            }}>{t.sub}</span>
+          </button>
+        );
+      })}
       <div style={{ flex:1 }} />
       <div style={{
         padding:"8px 12px",
@@ -101,7 +107,7 @@ function InspectorTabs({ value, onChange }) {
         fontSize:9, letterSpacing:"0.12em", color:"var(--ink-faint)",
       }}>
         <Tag>INSPECTOR</Tag>
-        <Tag>TRACK 03 — POLY-6</Tag>
+        <Tag>CH {currentTrack.idx.toString().padStart(2,"0")} — {currentTrack.name}</Tag>
       </div>
     </div>
   );
@@ -119,9 +125,22 @@ function App() {
   const [recording, setRecording] = useStateA(false);
   const [looping, setLooping] = useStateA(true);
   const [bpm] = useStateA(124.0);
+  const [playMode, setPlayMode] = useStateA("PAT");
   const [playhead, setPlayhead] = useStateA(8.4);
   const [step, setStep] = useStateA(0);
-  const [inspector, setInspector] = useStateA("synth");
+  const [inspector, setInspector] = useStateA("sequencer");
+  const [mixerOpen, setMixerOpen] = useStateA(false);
+
+  const [patterns] = useStateA(["PAT 01 — verse","PAT 02 — chorus","PAT 03 — bridge","PAT 04 — riser"]);
+  const [currentPattern, setCurrentPattern] = useStateA("PAT 01 — verse");
+
+  const [midiOn, setMidi] = useStateA(true);
+  const [audioOn, setAudio] = useStateA(true);
+  const [padOn, setPad] = useStateA(false);
+  const [touchOn, setTouch] = useStateA(false);
+  const [liveOn, setLive] = useStateA(false);
+
+  const currentTrack = { idx: 8, name: "POLY-6" };
 
   useEffectA(() => { applyScheme(tweaks.scheme); }, [tweaks.scheme]);
 
@@ -178,20 +197,30 @@ function App() {
 
       <Transport
         playing={playing} recording={recording} looping={looping}
-        bpm={bpm} position={position}
+        bpm={bpm} position={position} playMode={playMode}
         onPlay={() => setPlaying(p => !p)}
         onStop={() => { setPlaying(false); setPlayhead(0); setStep(0); }}
         onRec={() => setRecording(r => !r)}
         onLoop={() => setLooping(l => !l)}
         onScrub={(d) => setPlayhead(p => Math.max(0, Math.min(32, p + d)))}
+        onPlayMode={setPlayMode}
+        patterns={patterns}
+        currentPattern={currentPattern}
+        onPattern={setCurrentPattern}
+        onPatternNew={() => {}} onPatternDup={() => {}} onPatternDel={() => {}} onPatternRen={() => {}}
+        onNewProject={() => {}} onOpen={() => {}} onSave={() => {}} onSaveAs={() => {}} onExport={() => {}}
+        mixerOpen={mixerOpen} onToggleMixer={() => setMixerOpen(o => !o)}
+        midiOn={midiOn} audioOn={audioOn} padOn={padOn} touchOn={touchOn} liveOn={liveOn}
+        onMidi={() => setMidi(v => !v)} onAudio={() => setAudio(v => !v)}
+        onPad={() => setPad(v => !v)} onTouch={() => setTouch(v => !v)} onLive={() => setLive(v => !v)}
       />
 
       {/* main 2-column layout */}
       <div style={{
         display:"grid",
-        gridTemplateColumns:"320px 1fr",
+        gridTemplateColumns:"260px 1fr",
         gap:12,
-        minHeight: 700,
+        minHeight: 760,
       }}>
         {/* LEFT RAIL: browser */}
         <div style={{ display:"flex", flexDirection:"column", gap:10, minWidth:0, minHeight:0 }}>
@@ -206,23 +235,24 @@ function App() {
           boxShadow:"inset 0 1px 0 rgba(255,255,255,0.5), 0 1px 0 rgba(255,255,255,0.4)",
           overflow:"hidden",
         }}>
-          <div style={{ flex: tweaks.showInspector ? "1 1 60%" : "1 1 100%", display:"flex", flexDirection:"column", minHeight:0 }}>
+          <div style={{ flex: tweaks.showInspector ? "1 1 55%" : "1 1 100%", display:"flex", flexDirection:"column", minHeight:0 }}>
             <Timeline
               playing={playing}
               playhead={playhead}
-              onScrub={(p) => setPlayhead(Math.max(0, Math.min(32, p)))}
+              onScrub={(p) => setPlayhead(Math.max(0, Math.min(200, p)))}
             />
           </div>
 
           {tweaks.showInspector && (
             <>
-              <InspectorTabs value={inspector} onChange={setInspector} />
+              <InspectorTabs value={inspector} onChange={setInspector}
+                currentTrack={currentTrack} currentPattern={currentPattern} />
               <div style={{
                 flex:"0 0 auto",
                 background: "linear-gradient(180deg, var(--chassis), var(--chassis-2))",
                 padding:12,
                 borderBottom:"1px solid var(--panel-rim)",
-                maxHeight: 360, overflow:"auto",
+                maxHeight: 380, overflow:"auto",
               }} className="scroll">
                 {inspector === "synth" && <SynthPanel />}
                 {inspector === "sequencer" && <SequencerBar playing={playing} currentStep={step} />}
@@ -238,10 +268,10 @@ function App() {
         padding:"4px 8px",
         fontSize:9, letterSpacing:"0.15em", color:"var(--ink-faint)", textTransform:"uppercase",
       }}>
-        <div>fieldlab instruments · made in original spirit · serial 02-1184-1</div>
+        <div>xitges studio · juce daw · 44.1k 24b</div>
         <div style={{ display:"flex", gap:14 }}>
-          <span>USB-C · MIDI 5p · CV 1/8" × 4</span>
-          <span>v 2.4.1</span>
+          <span>USB-C · MIDI · CV 1/8" × 4</span>
+          <span>v 0.4.1</span>
         </div>
       </div>
 

@@ -161,6 +161,11 @@ MainComponent::MainComponent()
     toolbar.updatePatternList(project.patterns, activePatternId);
     channelRack.setPatternStartStep(patternStartStep);
 
+    // Phase-6: initialise inspector tab sub-labels
+    if (!project.patterns.empty())
+        inspectorTabBar_.setSequencerSub(project.patterns[0].name);
+    inspectorTabBar_.setInstrumentSub(0, channelRack.getChannelName(0));
+
     toolbar.onPlay = [this]
     {
         pausedBarSong = -1.0;
@@ -629,6 +634,7 @@ MainComponent::MainComponent()
     {
         audioEngine.setMidiTargetChannel(ch);
         channelRack.setSelectedMidiChannel(ch);
+        inspectorTabBar_.setInstrumentSub(ch, channelRack.getChannelName(ch));
     };
 
     channelRack.onMuteChanged = [this](int ch, bool muted)
@@ -2466,6 +2472,10 @@ void MainComponent::selectPattern(int id)
     audioEngine.setActivePattern(activePatternId);
     audioEngine.updatePatternSnapshot();
 
+    // Phase-6: update inspector tab sub-label with current pattern name
+    if (auto* pat = findPattern(activePatternId))
+        inspectorTabBar_.setSequencerSub(pat->name);
+
     // Update open piano roll to the newly selected pattern
     if (pianoRollWindow != nullptr && pianoRollWindow->isVisible() && pianoRollChannel >= 0)
         if (auto* pat = findPattern(activePatternId))
@@ -2891,6 +2901,11 @@ void MainComponent::reloadProjectIntoUI()
 
     projectDirty = false;
     toolbar.setProjectTitle(currentFile.getFileNameWithoutExtension(), false);
+
+    // Phase-6: refresh inspector tab sub-labels after project load
+    if (auto* pat = findPattern(activePatternId))
+        inspectorTabBar_.setSequencerSub(pat->name);
+    inspectorTabBar_.setInstrumentSub(0, channelRack.getChannelName(0));
 }
 
 void MainComponent::newProject()
@@ -3469,7 +3484,7 @@ void MainComponent::resized()
     }
 
     // M15 — sample browser: left panel, collapsible
-    constexpr int kBrowserW = 320;   // matches reference 320px browser
+    constexpr int kBrowserW = 260;   // reference updated: 260px browser
     constexpr int kReopenW  = 22;
     constexpr int kReopenH  = 32;
 
@@ -3492,8 +3507,8 @@ void MainComponent::resized()
     // Cache right panel bounds (cream panel bg drawn in paint())
     rightPanelBounds_ = area;
 
-    // Playlist — top 60% of remaining area, matching the reference arrangement-first layout
-    const int playlistHeight = juce::jmax(260, (int)std::round(area.getHeight() * 0.60f));
+    // Playlist — top ~55% of remaining area (Phase-6: reference layout)
+    const int playlistHeight = juce::jmax(260, (int)std::round(area.getHeight() * 0.55f));
     auto playlistArea = area.removeFromTop(playlistHeight);
 
     const int ctrlY = playlistArea.getY() + 2;

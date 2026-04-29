@@ -245,98 +245,98 @@ void ChannelRackComponent::updateVariationButtonStates()
 
 void ChannelRackComponent::addChannel(const juce::String& name)
 {
+    using LF = StudioLookAndFeel;
+
+    // Phase-4 palette (matches RACK_COLORS from sequencer.jsx)
+    static const juce::uint32 kPalette[] = {
+        0xffd8412a, 0xffe89c2b, 0xfff0c14a, 0xff7ab87a,
+        0xff3da356, 0xff5fa8d8, 0xff2cd4d4, 0xff7a8fe0,
+        0xffb87ad6, 0xffe07ac8, 0xffa8a098, 0xffd8c8a8,
+        0xffe89c2b, 0xff7ab87a, 0xff5fa8d8, 0xffb87ad6
+    };
+
     ChannelRow row;
-    row.name = name;
+    row.name  = name;
+    row.color = juce::Colour(kPalette[(int)channels.size() % 16]);
 
     const int ch = (int)channels.size();
+    const juce::Colour col = row.color;
 
     // ---- Mute button
     row.muteBtn = std::make_unique<juce::TextButton>("M");
-    row.muteBtn->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff323232));
-    row.muteBtn->setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+    row.muteBtn->setColour(juce::TextButton::buttonColourId,  juce::Colour(LF::kChassis2));
+    row.muteBtn->setColour(juce::TextButton::textColourOffId, juce::Colour(LF::kTextDim));
     row.muteBtn->onClick = [this, ch]
     {
         channels[ch].muted = !channels[ch].muted;
         channels[ch].muteBtn->setColour(juce::TextButton::buttonColourId,
-            channels[ch].muted ? juce::Colour(StudioLookAndFeel::kAccent) : juce::Colour(StudioLookAndFeel::kChassis));
+            channels[ch].muted ? juce::Colour(LF::kLedAmber) : juce::Colour(LF::kChassis2));
+        channels[ch].muteBtn->setColour(juce::TextButton::textColourOffId,
+            channels[ch].muted ? juce::Colour(0xff000000) : juce::Colour(LF::kTextDim));
         if (onMuteChanged) onMuteChanged(ch, channels[ch].muted);
     };
     addAndMakeVisible(*row.muteBtn);
 
     // ---- Solo button
     row.soloBtn = std::make_unique<juce::TextButton>("S");
-    row.soloBtn->setColour(juce::TextButton::buttonColourId, juce::Colour(StudioLookAndFeel::kChassis));
-    row.soloBtn->setColour(juce::TextButton::textColourOffId, juce::Colour(StudioLookAndFeel::kTextDim));
+    row.soloBtn->setColour(juce::TextButton::buttonColourId,  juce::Colour(LF::kChassis2));
+    row.soloBtn->setColour(juce::TextButton::textColourOffId, juce::Colour(LF::kTextDim));
     row.soloBtn->onClick = [this, ch]
     {
         channels[ch].soloed = !channels[ch].soloed;
         channels[ch].soloBtn->setColour(juce::TextButton::buttonColourId,
-            channels[ch].soloed ? juce::Colour(StudioLookAndFeel::kLedAmber) : juce::Colour(StudioLookAndFeel::kChassis));
+            channels[ch].soloed ? juce::Colour(LF::kLedGreen) : juce::Colour(LF::kChassis2));
+        channels[ch].soloBtn->setColour(juce::TextButton::textColourOffId,
+            channels[ch].soloed ? juce::Colour(0xff000000) : juce::Colour(LF::kTextDim));
         if (onSoloChanged) onSoloChanged(ch, channels[ch].soloed);
     };
     addAndMakeVisible(*row.soloBtn);
 
-    // ---- M1.1 Volume slider
+    // ---- Volume slider (mini bar, no text box)
     row.volSlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal,
-                                                    juce::Slider::TextBoxRight);
-    row.volSlider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 38, 14);
-    row.volSlider->setNumDecimalPlacesToDisplay(2);
+                                                    juce::Slider::NoTextBox);
     row.volSlider->setRange(0.0, 1.0, 0.01);
     row.volSlider->setValue(row.volume, juce::dontSendNotification);
-    row.volSlider->setColour(juce::Slider::thumbColourId,             juce::Colour(StudioLookAndFeel::kPanel));
-    row.volSlider->setColour(juce::Slider::trackColourId,             juce::Colour(StudioLookAndFeel::kAccent));
-    row.volSlider->setColour(juce::Slider::backgroundColourId,        juce::Colour(StudioLookAndFeel::kDark));
-    row.volSlider->setColour(juce::Slider::textBoxTextColourId,       juce::Colour(StudioLookAndFeel::kTextDim));
-    row.volSlider->setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(StudioLookAndFeel::kChassis2));
-    row.volSlider->setColour(juce::Slider::textBoxOutlineColourId,    juce::Colour(StudioLookAndFeel::kPanelRim));
+    row.volSlider->setColour(juce::Slider::thumbColourId,      col.brighter(0.5f));
+    row.volSlider->setColour(juce::Slider::trackColourId,      col);
+    row.volSlider->setColour(juce::Slider::backgroundColourId, juce::Colour(LF::kDisplayBg));
     row.volSlider->onValueChange = [this, ch]
     {
-        float v = (float)channels[ch].volSlider->getValue();
-        channels[ch].volume = v;
-        if (onVolumeChanged) onVolumeChanged(ch, v);
+        channels[ch].volume = (float)channels[ch].volSlider->getValue();
+        if (onVolumeChanged) onVolumeChanged(ch, channels[ch].volume);
+        repaint();
     };
     addAndMakeVisible(*row.volSlider);
 
-    // ---- M1.1 Pan slider
+    // ---- Pan slider (mini bar bipolar, no text box)
     row.panSlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal,
-                                                    juce::Slider::TextBoxRight);
-    row.panSlider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 38, 14);
-    row.panSlider->setNumDecimalPlacesToDisplay(2);
+                                                    juce::Slider::NoTextBox);
     row.panSlider->setRange(-1.0, 1.0, 0.01);
     row.panSlider->setValue(row.pan, juce::dontSendNotification);
-    row.panSlider->setColour(juce::Slider::thumbColourId,             juce::Colour(StudioLookAndFeel::kPanel));
-    row.panSlider->setColour(juce::Slider::trackColourId,             juce::Colour(StudioLookAndFeel::kAccent));
-    row.panSlider->setColour(juce::Slider::backgroundColourId,        juce::Colour(StudioLookAndFeel::kDark));
-    row.panSlider->setColour(juce::Slider::textBoxTextColourId,       juce::Colour(StudioLookAndFeel::kTextDim));
-    row.panSlider->setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(StudioLookAndFeel::kChassis2));
-    row.panSlider->setColour(juce::Slider::textBoxOutlineColourId,    juce::Colour(StudioLookAndFeel::kPanelRim));
+    row.panSlider->setColour(juce::Slider::thumbColourId,      col.brighter(0.5f));
+    row.panSlider->setColour(juce::Slider::trackColourId,      col);
+    row.panSlider->setColour(juce::Slider::backgroundColourId, juce::Colour(LF::kDisplayBg));
     row.panSlider->onValueChange = [this, ch]
     {
-        float p = (float)channels[ch].panSlider->getValue();
-        channels[ch].pan = p;
-        if (onPanChanged) onPanChanged(ch, p);
+        channels[ch].pan = (float)channels[ch].panSlider->getValue();
+        if (onPanChanged) onPanChanged(ch, channels[ch].pan);
+        repaint();
     };
     addAndMakeVisible(*row.panSlider);
 
-    // ---- M1.2 Pitch slider (horizontal, third row)
+    // ---- Pitch slider (mini bar bipolar, no text box)
     row.pitchSlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal,
-                                                      juce::Slider::TextBoxRight);
-    row.pitchSlider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 38, 14);
-    row.pitchSlider->setNumDecimalPlacesToDisplay(1);
-    row.pitchSlider->setTextValueSuffix(" st");
+                                                      juce::Slider::NoTextBox);
     row.pitchSlider->setRange(-24.0, 24.0, 0.5);
     row.pitchSlider->setValue(row.pitch, juce::dontSendNotification);
-    row.pitchSlider->setColour(juce::Slider::thumbColourId,             juce::Colour(StudioLookAndFeel::kPanel));
-    row.pitchSlider->setColour(juce::Slider::trackColourId,             juce::Colour(StudioLookAndFeel::kTextDim));
-    row.pitchSlider->setColour(juce::Slider::backgroundColourId,        juce::Colour(StudioLookAndFeel::kDark));
-    row.pitchSlider->setColour(juce::Slider::textBoxTextColourId,       juce::Colour(StudioLookAndFeel::kTextDim));
-    row.pitchSlider->setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(StudioLookAndFeel::kChassis2));
-    row.pitchSlider->setColour(juce::Slider::textBoxOutlineColourId,    juce::Colour(StudioLookAndFeel::kPanelRim));
+    row.pitchSlider->setColour(juce::Slider::thumbColourId,      col.brighter(0.5f));
+    row.pitchSlider->setColour(juce::Slider::trackColourId,      col);
+    row.pitchSlider->setColour(juce::Slider::backgroundColourId, juce::Colour(LF::kDisplayBg));
     row.pitchSlider->onValueChange = [this, ch]
     {
-        float s = (float)channels[ch].pitchSlider->getValue();
-        channels[ch].pitch = s;
-        if (onPitchChanged) onPitchChanged(ch, s);
+        channels[ch].pitch = (float)channels[ch].pitchSlider->getValue();
+        if (onPitchChanged) onPitchChanged(ch, channels[ch].pitch);
+        repaint();
     };
     addAndMakeVisible(*row.pitchSlider);
 
@@ -422,33 +422,84 @@ void ChannelRackComponent::layoutInspector()
 
 void ChannelRackComponent::drawInspector(juce::Graphics& g)
 {
+    using LF = StudioLookAndFeel;
     if (inspectorCh < 0) return;
 
     const int baseY = HEADER_HEIGHT + (int)channels.size() * ROW_HEIGHT + 50;
+    const int W     = getWidth();
 
-    // Background
-    g.setColour(juce::Colour(0xff1a1a22));
-    g.fillRect(0, baseY, getWidth(), INSPECTOR_HEIGHT);
-    g.setColour(juce::Colour(0xff3a9ad9).withAlpha(0.4f));
-    g.fillRect(0, baseY, 3, INSPECTOR_HEIGHT);   // accent bar on left
+    // Background: chassis gradient
+    {
+        juce::ColourGradient gr(juce::Colour(LF::kChassis),  0.0f, (float)baseY,
+                                juce::Colour(LF::kChassis2), 0.0f, (float)(baseY + INSPECTOR_HEIGHT), false);
+        g.setGradientFill(gr);
+        g.fillRect(0, baseY, W, INSPECTOR_HEIGHT);
+    }
 
-    g.setColour(juce::Colour(0xff2a2a38));
-    g.drawLine(0.0f, (float)baseY, (float)getWidth(), (float)baseY, 1.0f);
+    // Accent left strip
+    g.setColour(juce::Colour(LF::kAccent));
+    g.fillRect(0, baseY, 2, INSPECTOR_HEIGHT);
 
-    // Small parameter labels above sliders
-    const int iy  = baseY + 4;
-    const int slW = (getWidth() - 30) / 2;
+    // Top separator
+    g.setColour(juce::Colour(LF::kPanelRim));
+    g.drawLine(0.0f, (float)baseY, (float)W, (float)baseY, 0.8f);
+
+    // Header row: "STEP INSPECTOR" + "● S{n}"
+    g.setFont(LF::monoFont(8.5f, juce::Font::bold));
+    g.setColour(juce::Colour(LF::kText));
+    g.drawText("STEP INSPECTOR", 10, baseY + 4, 140, 14, juce::Justification::centredLeft);
+
+    if (inspectorStep >= 0)
+    {
+        g.setFont(LF::monoFont(8.0f, juce::Font::bold));
+        g.setColour(juce::Colour(LF::kAccent));
+        g.drawText(juce::String::fromUTF8("\xe2\x97\x8f") + " S" + juce::String(inspectorStep + 1),
+                   W - 50, baseY + 4, 44, 14, juce::Justification::centredRight);
+    }
+
+    // Params: 2-column × 3-row grid
+    const juce::String paramKeys[] = { "VEL", "GATE", "PROB", "PITCH", "CUT", "START" };
+    const int iy   = baseY + 22;
+    const int slW  = (W - 30) / 2;
     const int col2 = 15 + slW + 8;
+    const int rowH = 26;
+    for (int p = 0; p < 6; ++p)
+    {
+        const int px = (p % 2 == 0) ? 15  : col2;
+        const int py = iy + (p / 2) * rowH;
 
-    g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
-    g.setColour(juce::Colour(0xff888892));
-    g.drawText("VEL",      15,   iy + 12, 50, 10, juce::Justification::centredLeft);
-    g.drawText("GATE",     col2, iy + 12, 50, 10, juce::Justification::centredLeft);
-    g.drawText("PROB",     15,   iy + 38, 50, 10, juce::Justification::centredLeft);
-    g.drawText("PITCH",    col2, iy + 38, 50, 10, juce::Justification::centredLeft);
-    g.drawText("CUTOFF",   15,   iy + 64, 50, 10, juce::Justification::centredLeft);
-    g.drawText("START",    col2, iy + 64, 50, 10, juce::Justification::centredLeft);
-    g.drawText("TIMING",   15,   iy + 90, 50, 10, juce::Justification::centredLeft);
+        // Param cell bg
+        g.setColour(juce::Colour(0x0a000000));
+        g.fillRoundedRectangle((float)px - 2, (float)py - 1, (float)slW, (float)(rowH - 2), 2.0f);
+
+        // Key label (7px)
+        g.setFont(LF::monoFont(7.0f, juce::Font::bold));
+        g.setColour(juce::Colour(LF::kTextFaint));
+        g.drawText(paramKeys[p], px, py, 36, 10, juce::Justification::centredLeft);
+
+        // Value display — VT323 11px, accent colour
+        float val = 0.0f;
+        juce::String valStr;
+        if (inspectorCh >= 0 && inspectorStep >= 0)
+        {
+            const auto& sp = stepParamsStore[inspectorCh][inspectorStep];
+            switch (p) {
+                case 0: val = sp.velocity;          valStr = juce::String(val, 2); break;
+                case 1: val = sp.gate;              valStr = juce::String(val * 100.0f, 0) + "%"; break;
+                case 2: val = sp.probability;       valStr = juce::String(val * 100.0f, 0) + "%"; break;
+                case 3: val = (float)sp.pitchOffset; valStr = (val >= 0 ? "+" : "") + juce::String((int)val) + "st"; break;
+                case 4: val = sp.cutoffMod;         valStr = (val >= 0 ? "+" : "") + juce::String(val, 2); break;
+                case 5: val = sp.startOffsetFrac;   valStr = juce::String(val * 100.0f, 0) + "%"; break;
+            }
+        }
+        g.setFont(LF::displayFont(11.0f));
+        g.setColour(juce::Colour(LF::kAccent));
+        g.drawText(valStr, px + 36, py, slW - 40, 10, juce::Justification::centredRight);
+
+        // Small separator under each label row
+        g.setColour(juce::Colour(LF::kPanelRim));
+        g.drawLine((float)px, (float)(py + 12), (float)(px + slW - 4), (float)(py + 12), 0.5f);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -578,235 +629,309 @@ void ChannelRackComponent::paint(juce::Graphics& g)
 
 void ChannelRackComponent::drawHeader(juce::Graphics& g)
 {
-    // Header: darker chassis strip
-    juce::ColourGradient hdrGrad(juce::Colour(StudioLookAndFeel::kChassis2),
-                                  0.0f, 0.0f,
-                                  juce::Colour(StudioLookAndFeel::kPanel),
-                                  0.0f, (float)HEADER_HEIGHT, false);
-    g.setGradientFill(hdrGrad);
-    g.fillRect(0, 0, getWidth(), HEADER_HEIGHT);
+    using LF = StudioLookAndFeel;
+    const int W = getWidth();
 
-    // Bottom separator
-    g.setColour(juce::Colour(StudioLookAndFeel::kPanelRim));
-    g.drawLine(0.0f, (float)HEADER_HEIGHT - 1.0f, (float)getWidth(), (float)HEADER_HEIGHT - 1.0f, 1.0f);
+    // === Title strip (y=0..30) ===
+    {
+        juce::ColourGradient gr(juce::Colour(LF::kChassis),  0.0f, 0.0f,
+                                juce::Colour(LF::kChassis2), 0.0f, 30.0f, false);
+        g.setGradientFill(gr);
+        g.fillRect(0, 0, W, 30);
+    }
 
-    const float stepW = (getWidth() - LABEL_WIDTH) / (float)stepCount;
-    const int startX = LABEL_WIDTH + (int)(patternStartStep * stepW);
+    // Accent square
+    g.setColour(juce::Colour(LF::kAccent));
+    g.fillRoundedRectangle(10.0f, 11.0f, 7.0f, 7.0f, 2.0f);
 
-    // Pattern start highlight
-    g.setColour(juce::Colour(StudioLookAndFeel::kAccent).withAlpha(0.12f));
-    g.fillRect(startX, 0, (int)stepW, HEADER_HEIGHT);
-    g.setColour(juce::Colour(StudioLookAndFeel::kAccent).withAlpha(0.7f));
-    g.drawLine((float)startX, 0.0f, (float)startX, (float)HEADER_HEIGHT, 1.2f);
+    // "CHANNEL RACK" title
+    g.setFont(LF::monoFont(9.5f, juce::Font::bold));
+    g.setColour(juce::Colour(LF::kText));
+    g.drawText("CHANNEL RACK", 22, 0, 130, 30, juce::Justification::centredLeft);
+
+    // Tags
+    auto drawTag = [&](int x, int cy, const juce::String& t) -> int
+    {
+        g.setFont(LF::monoFont(7.5f, juce::Font::bold));
+        const int tw = g.getCurrentFont().getStringWidth(t) + 10;
+        g.setColour(juce::Colour(0x18000000));
+        g.fillRoundedRectangle((float)x, (float)(cy - 7), (float)tw, 14.0f, 2.0f);
+        g.setColour(juce::Colour(LF::kTextFaint));
+        g.drawText(t, x + 4, cy - 8, tw - 4, 16, juce::Justification::centredLeft);
+        return tw + 4;
+    };
+    int tx = 158;
+    tx += drawTag(tx, 15, juce::String((int)channels.size()) + "/16 CH");
+    tx += drawTag(tx, 15, juce::String(stepCount) + juce::String::fromUTF8("\xc2\xb7") + "64 STEP");
+
+    // "VARIATION" label (painted; buttons positioned by resized())
+    g.setFont(LF::monoFont(7.0f, juce::Font::bold));
+    g.setColour(juce::Colour(LF::kTextFaint));
+    const int varLabelX = W - 4 * 26 - 8 - 60;
+    g.drawText("VARIATION", varLabelX, 0, 56, 30, juce::Justification::centredRight);
+
+    // Title strip separator
+    g.setColour(juce::Colour(LF::kPanelRim));
+    g.drawLine(0.0f, 30.0f, (float)W, 30.0f, 0.8f);
+
+    // === Ruler strip (y=30..50) ===
+    g.setColour(juce::Colour(LF::kPanel));
+    g.fillRect(0, 30, W, 20);
+
+    // Left side: header label
+    g.setFont(LF::monoFont(7.0f, juce::Font::bold));
+    g.setColour(juce::Colour(LF::kTextFaint));
+    g.drawText("CH " + juce::String::fromUTF8("\xc2\xb7") + " NAME " + juce::String::fromUTF8("\xc2\xb7") + " BUS",
+               8, 30, LABEL_WIDTH - 8, 20, juce::Justification::centredLeft);
+
+    // Right side: step numbers
+    const int stepAreaX = LABEL_WIDTH;
+    const float stepW   = (W - stepAreaX) / (float)stepCount;
+
+    // Pattern-start highlight
+    {
+        const int startX = stepAreaX + (int)(patternStartStep * stepW);
+        g.setColour(juce::Colour(LF::kAccent).withAlpha(0.10f));
+        g.fillRect(startX, 30, (int)stepW, 20);
+        g.setColour(juce::Colour(LF::kAccent).withAlpha(0.55f));
+        g.drawLine((float)startX, 30.0f, (float)startX, 50.0f, 1.0f);
+    }
 
     for (int i = 0; i < stepCount; ++i)
     {
-        const int x = LABEL_WIDTH + (int)(i * stepW);
+        const int x         = stepAreaX + (int)(i * stepW);
+        const bool isCurrent = (i == currentPlayStep);
+        const bool isQuarter = (i % 4 == 0);
 
-        if (i == currentPlayStep)
+        if (isCurrent)
         {
-            g.setColour(juce::Colour(StudioLookAndFeel::kAccent).withAlpha(0.18f));
-            g.fillRect(x, 0, (int)stepW, HEADER_HEIGHT);
+            g.setColour(juce::Colour(LF::kAccent).withAlpha(0.15f));
+            g.fillRect(x, 30, (int)stepW, 20);
         }
 
-        // Beat numbers: dark ink, beat 1 of each bar slightly bolder
-        g.setColour(i % 4 == 0 ? juce::Colour(StudioLookAndFeel::kText)
-                                : juce::Colour(StudioLookAndFeel::kTextFaint));
-        g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f).withStyle(i % 4 == 0 ? "Bold" : "")));
-        g.drawText(juce::String(i + 1), x, 0, (int)stepW, HEADER_HEIGHT,
-                   juce::Justification::centred);
+        g.setFont(LF::monoFont(7.0f, isQuarter ? juce::Font::bold : juce::Font::plain));
+        g.setColour(isCurrent ? juce::Colour(LF::kAccent)
+                              : (isQuarter ? juce::Colour(LF::kText) : juce::Colour(LF::kTextFaint)));
+        g.drawText(juce::String(i + 1).paddedLeft('0', 2),
+                   x, 30, (int)stepW, 20, juce::Justification::centred);
     }
+
+    // Ruler bottom separator + left-area right edge
+    g.setColour(juce::Colour(LF::kPanelRim));
+    g.drawLine(0.0f, 49.0f, (float)W, 49.0f, 0.8f);
+    g.drawLine((float)LABEL_WIDTH, 30.0f, (float)LABEL_WIDTH, 50.0f, 0.8f);
 }
 
 void ChannelRackComponent::drawChannelLabels(juce::Graphics& g)
 {
+    using LF = StudioLookAndFeel;
+
     for (int i = 0; i < (int)channels.size(); ++i)
     {
-        const int y = HEADER_HEIGHT + i * ROW_HEIGHT;
+        const int y          = HEADER_HEIGHT + i * ROW_HEIGHT;
         const bool isSelected = (i == selectedMidiChannel);
         const bool hasMidi    = (midiActivityMask_ >> i) & 1;
+        const juce::Colour col = channels[i].color;
 
-        // Row background — alternating cream tones
+        // Row background
+        {
+            const juce::Colour bg = i % 2 == 0
+                ? juce::Colour(LF::kPanel) : juce::Colour(LF::kChassis);
+            g.setColour(isSelected ? juce::Colour(LF::kAccent).withAlpha(0.07f) : bg);
+            g.fillRect(0, y, LABEL_WIDTH, ROW_HEIGHT);
+        }
+
+        // Selected: 2px accent left border
         if (isSelected)
         {
-            g.setColour(juce::Colour(StudioLookAndFeel::kAccent).withAlpha(0.10f));
-            g.fillRect(0, y, LABEL_WIDTH, ROW_HEIGHT);
+            g.setColour(juce::Colour(LF::kAccent));
+            g.fillRect(0, y, 2, ROW_HEIGHT);
         }
-        else if (i == dragHoverChannel)
+
+        // Drag-hover tint
+        if (i == dragHoverChannel && !isSelected)
         {
-            g.setColour(juce::Colour(StudioLookAndFeel::kAccent).withAlpha(0.06f));
-            g.fillRect(0, y, LABEL_WIDTH, ROW_HEIGHT);
-        }
-        else
-        {
-            juce::Colour rowBg = i % 2 == 0 ? juce::Colour(StudioLookAndFeel::kPanel)
-                                             : juce::Colour(StudioLookAndFeel::kChassis);
-            g.setColour(rowBg);
+            g.setColour(juce::Colour(LF::kAccent).withAlpha(0.05f));
             g.fillRect(0, y, LABEL_WIDTH, ROW_HEIGHT);
         }
 
-        // Selected channel: left accent bar (red)
-        if (isSelected)
+        // ---- Idx colour box (18×18, x=6, y+6) ----
         {
-            g.setColour(juce::Colour(StudioLookAndFeel::kAccent));
-            g.fillRect(0, y, 3, ROW_HEIGHT);
+            g.setColour(col);
+            g.fillRoundedRectangle(6.0f, (float)(y + 6), 18.0f, 18.0f, 3.0f);
+            g.setColour(col.withAlpha(0.35f));
+            g.drawRoundedRectangle(5.0f, (float)(y + 5), 20.0f, 20.0f, 4.0f, 0.8f);
+            g.setFont(LF::monoFont(7.0f, juce::Font::bold));
+            g.setColour(juce::Colours::white.withAlpha(0.9f));
+            g.drawText(juce::String(i + 1), 6, y + 6, 18, 18, juce::Justification::centred);
         }
 
-        // MIDI activity dot
-        if (hasMidi)
+        // ---- Row 1: name + type badge ----
         {
-            g.setColour(juce::Colour(StudioLookAndFeel::kLedGreen));
-            g.fillEllipse((float)(LABEL_WIDTH - 14), (float)(y + 4), 7.0f, 7.0f);
-            // Glow ring
-            g.setColour(juce::Colour(StudioLookAndFeel::kLedGreen).withAlpha(0.3f));
-            g.drawEllipse((float)(LABEL_WIDTH - 15), (float)(y + 3), 9.0f, 9.0f, 1.0f);
-        }
-        else if (isSelected)
-        {
-            g.setColour(juce::Colour(StudioLookAndFeel::kLedOff));
-            g.fillEllipse((float)(LABEL_WIDTH - 14), (float)(y + 4), 7.0f, 7.0f);
-        }
+            const bool isMel  = (i < (int)channelTypes.size() && channelTypes[i] == ChannelType::Melodic);
+            const bool hasPlug = channelHasPlugin[i];
 
-        // Channel name
-        g.setColour(juce::Colour(StudioLookAndFeel::kText));
-        g.setFont(juce::Font(juce::FontOptions().withHeight(12.0f).withStyle("Bold")));
-        g.drawText(channels[i].name, 8, y + 2, 68, 18,
-                   juce::Justification::centredLeft);
+            // Channel name (uppercased, 10px bold)
+            g.setFont(LF::monoFont(9.5f, juce::Font::bold));
+            g.setColour(juce::Colour(LF::kText));
+            g.drawText(channels[i].name.toUpperCase(), 28, y + 5, 90, 14,
+                       juce::Justification::centredLeft, true);
 
-        // Mixer routing badge
-        g.setColour(juce::Colour(StudioLookAndFeel::kTextFaint));
-        g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
-        g.drawText(juce::String::fromUTF8("\xe2\x86\x92") + "T" + juce::String(channelRouting[i] + 1),
-                   64, y + 2, 30, 18, juce::Justification::centredLeft);
+            // DRUM/MEL/VST badge
+            const juce::String badge = hasPlug ? "VST" : (isMel ? "MEL" : "DRM");
+            const juce::Colour badgeBg   = (hasPlug || isMel)
+                ? juce::Colour(LF::kAccent).withAlpha(0.12f)
+                : juce::Colour(0x0f000000);
+            const juce::Colour badgeCol  = (hasPlug || isMel)
+                ? juce::Colour(LF::kAccent) : juce::Colour(LF::kTextFaint);
+            const juce::Colour badgeBord = (hasPlug || isMel)
+                ? juce::Colour(LF::kAccent).withAlpha(0.35f) : juce::Colour(0x22000000);
 
-        // Sample name / type badge
-        const bool isMelodic = (i < (int)channelTypes.size() &&
-                                 channelTypes[(size_t)i] == ChannelType::Melodic);
-        const bool hasPlugin = channelHasPlugin[i];
+            g.setColour(badgeBg);
+            g.fillRoundedRectangle(121.0f, (float)(y + 6), 30.0f, 12.0f, 2.0f);
+            g.setColour(badgeBord);
+            g.drawRoundedRectangle(121.0f, (float)(y + 6), 30.0f, 12.0f, 2.0f, 0.7f);
+            g.setFont(LF::monoFont(7.0f, juce::Font::bold));
+            g.setColour(badgeCol);
+            g.drawText(badge, 121, y + 6, 30, 12, juce::Justification::centred);
 
-        if (hasPlugin)
-        {
-            // VST/AU badge — warm red tint
-            g.setColour(juce::Colour(StudioLookAndFeel::kAccent).withAlpha(0.15f));
-            g.fillRoundedRectangle(6.0f, (float)(y + 23), 30.0f, 14.0f, 3.0f);
-            g.setColour(juce::Colour(StudioLookAndFeel::kAccent));
-            g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f).withStyle("Bold")));
-            g.drawText("VST", 6, y + 23, 30, 14, juce::Justification::centred);
-        }
-        else if (isMelodic)
-        {
-            g.setColour(juce::Colour(StudioLookAndFeel::kTextFaint).withAlpha(0.2f));
-            g.fillRoundedRectangle(6.0f, (float)(y + 23), 44.0f, 14.0f, 3.0f);
-            g.setColour(juce::Colour(StudioLookAndFeel::kTextDim));
-            g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f).withStyle("Bold")));
-            g.drawText("MELODIC", 6, y + 23, 44, 14, juce::Justification::centred);
-        }
-        else
-        {
-            g.setColour(juce::Colour(StudioLookAndFeel::kTextDim));
-            g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-            g.drawText(channels[(size_t)i].sampleName, 8, y + 24, 86, 16,
-                       juce::Justification::centredLeft);
+            // MIDI activity dot
+            if (hasMidi)
+            {
+                g.setColour(juce::Colour(LF::kLedGreen));
+                g.fillEllipse(155.0f, (float)(y + 9), 6.0f, 6.0f);
+                g.setColour(juce::Colour(LF::kLedGreen).withAlpha(0.3f));
+                g.drawEllipse(154.0f, (float)(y + 8), 8.0f, 8.0f, 0.8f);
+            }
         }
 
-        // Small slider labels
-        g.setFont(juce::Font(juce::FontOptions().withHeight(8.0f).withStyle("Bold")));
-        g.setColour(juce::Colour(StudioLookAndFeel::kTextFaint));
-        g.drawText("VOL", 76, y + 4,  20, 10, juce::Justification::centredRight);
-        g.drawText("PAN", 76, y + 22, 20, 10, juce::Justification::centredRight);
-        g.drawText("PCH", 76, y + 40, 20, 10, juce::Justification::centredRight);
+        // ---- Row 2: V / P / ♯ labels (y+24) ----
+        {
+            g.setFont(LF::monoFont(7.0f, juce::Font::bold));
+            g.setColour(juce::Colour(LF::kTextFaint));
+            g.drawText("V",  28, y + 24, 8, 8, juce::Justification::centred);
+            g.drawText("P",  74, y + 24, 8, 8, juce::Justification::centred);
+            g.drawText(juce::String::fromUTF8("\xe2\x99\xaf"), 118, y + 24, 8, 8, juce::Justification::centred);
+        }
 
-        // Row separator
-        g.setColour(juce::Colour(StudioLookAndFeel::kPanelRim));
+        // ---- Row 3: M/S drawn visuals + routing + step count + actions ----
+        // (M/S are actual JUCE buttons, but we paint routing/step-count labels)
+        {
+            g.setFont(LF::monoFont(7.0f));
+            g.setColour(juce::Colour(LF::kTextFaint));
+            g.drawText(juce::String::fromUTF8("\xe2\x86\x92") + " MX" + juce::String(channelRouting[i] + 1),
+                       62, y + 38, 40, 11, juce::Justification::centredLeft);
+            g.drawText(juce::String(stepCount) + "st",
+                       104, y + 38, 22, 11, juce::Justification::centredLeft);
+            // Decorative action labels
+            g.setColour(juce::Colour(LF::kTextDim));
+            g.setFont(LF::displayFont(12.0f));
+            g.drawText(juce::String::fromUTF8("\xe2\x99\xaa"), 130, y + 35, 16, 16, juce::Justification::centred);  // ♪
+            g.drawText(juce::String::fromUTF8("\xe2\x8b\xaf"), 148, y + 35, 16, 16, juce::Justification::centred);  // ⋯
+        }
+
+        // Row separator + right edge
+        g.setColour(juce::Colour(LF::kPanelRim));
         g.drawLine(0.0f, (float)(y + ROW_HEIGHT - 1), (float)LABEL_WIDTH,
-                   (float)(y + ROW_HEIGHT - 1), 1.0f);
+                   (float)(y + ROW_HEIGHT - 1), 0.6f);
+        g.drawLine((float)(LABEL_WIDTH - 0.5f), (float)y,
+                   (float)(LABEL_WIDTH - 0.5f), (float)(y + ROW_HEIGHT), 0.8f);
     }
 }
 
 void ChannelRackComponent::drawStepGrid(juce::Graphics& g)
 {
+    using LF = StudioLookAndFeel;
     const int   stepAreaX = LABEL_WIDTH;
     const float stepW     = (getWidth() - stepAreaX) / (float)stepCount;
 
+    static constexpr int kCellH = 24;
+
     for (int ch = 0; ch < (int)channels.size(); ++ch)
     {
-        const int y = HEADER_HEIGHT + ch * ROW_HEIGHT;
+        const int y      = HEADER_HEIGHT + ch * ROW_HEIGHT;
+        const int cellY  = y + (ROW_HEIGHT - kCellH) / 2;
+        const juce::Colour col = channels[ch].color;
 
         // Row background (alternating cream)
-        juce::Colour rowBg = ch % 2 == 0
-            ? juce::Colour(StudioLookAndFeel::kChassis)
-            : juce::Colour(StudioLookAndFeel::kChassis2);
-        g.setColour(rowBg);
+        g.setColour(ch % 2 == 0 ? juce::Colour(LF::kChassis) : juce::Colour(LF::kChassis2));
         g.fillRect(stepAreaX, y, getWidth() - stepAreaX, ROW_HEIGHT);
 
         // Row separator
-        g.setColour(juce::Colour(StudioLookAndFeel::kPanelRim));
+        g.setColour(juce::Colour(LF::kPanelRim));
         g.drawLine((float)stepAreaX, (float)(y + ROW_HEIGHT - 1),
-                   (float)getWidth(), (float)(y + ROW_HEIGHT - 1), 1.0f);
+                   (float)getWidth(), (float)(y + ROW_HEIGHT - 1), 0.6f);
 
         for (int s = 0; s < stepCount; ++s)
         {
-            const int x = stepAreaX + (int)(s * stepW);
-            const int w = (int)stepW - 2;
-            const int h = ROW_HEIGHT - 4;
+            const int cellX      = stepAreaX + (int)(s * stepW) + 1;
+            const int cellW      = (int)stepW - 3;
+            const bool isStep    = channels[ch].steps[s];
+            const bool isCurrent = (s == currentPlayStep);
+            const bool isSelected = (ch == inspectorCh && s == inspectorStep);
+            const bool hasCustom  = !stepParamsStore[ch][s].isDefault();
+            const bool isQuarter  = (s % 4 == 0);
+            const bool isHalfBar  = (s % 8 == 0);
 
-            const bool isCurrentStep = (s == currentPlayStep);
-            const bool isSelected    = (ch == inspectorCh && s == inspectorStep);
-            const bool hasCustom     = !stepParamsStore[ch][s].isDefault();
-            const bool isQuarter     = (s % 4 == 0);
-
-            if (channels[ch].steps[s])
+            if (isStep)
             {
-                // Active step — red accent gradient
-                juce::Colour fill = isCurrentStep
-                    ? juce::Colour(StudioLookAndFeel::kAccentHi)   // brighter on playhead
-                    : (isQuarter ? juce::Colour(StudioLookAndFeel::kAccent)
-                                 : juce::Colour(StudioLookAndFeel::kAccent).darker(0.1f));
+                // ON step — channel colour gradient
+                juce::ColourGradient gr(col.brighter(0.10f), 0.0f, (float)cellY,
+                                        col.darker(0.15f),   0.0f, (float)(cellY + kCellH), false);
+                g.setGradientFill(gr);
+                g.fillRoundedRectangle((float)cellX, (float)cellY, (float)cellW, (float)kCellH, 3.0f);
 
-                juce::ColourGradient stepGrad(fill.brighter(0.12f), (float)x, (float)y,
-                                              fill.darker(0.08f),   (float)x, (float)(y + h + 2), false);
-                g.setGradientFill(stepGrad);
-                g.fillRoundedRectangle((float)(x + 1), (float)(y + 2), (float)w, (float)h, 3.0f);
+                // Specular top edge
+                g.setColour(juce::Colours::white.withAlpha(0.30f));
+                g.drawLine((float)(cellX + 2), (float)(cellY + 1),
+                           (float)(cellX + cellW - 2), (float)(cellY + 1), 1.0f);
 
-                // Top specular highlight
-                g.setColour(juce::Colours::white.withAlpha(0.25f));
-                g.drawLine((float)(x + 3), (float)(y + 3),
-                           (float)(x + w - 1), (float)(y + 3), 1.0f);
+                // Velocity bar (bottom strip, white 55%)
+                const float vel = juce::jlimit(0.0f, 1.0f, stepParamsStore[ch][s].velocity);
+                const float velH = juce::jmax(2.0f, vel * (float)(kCellH - 5));
+                g.setColour(juce::Colours::white.withAlpha(0.55f));
+                g.fillRoundedRectangle((float)(cellX + 1), (float)(cellY + kCellH - 1) - velH,
+                                       (float)(cellW - 2), velH, 1.0f);
 
-                // Subtle glow if active on current step
-                if (isCurrentStep)
+                // Glow if on current step
+                if (isCurrent)
                 {
-                    g.setColour(juce::Colour(StudioLookAndFeel::kAccent).withAlpha(0.18f));
-                    g.fillRoundedRectangle((float)(x - 1), (float)(y + 1), (float)(w + 4), (float)(h + 4), 5.0f);
+                    g.setColour(col.withAlpha(0.35f));
+                    g.fillRoundedRectangle((float)(cellX - 1), (float)(cellY - 1),
+                                           (float)(cellW + 4), (float)(kCellH + 2), 4.0f);
                 }
             }
             else
             {
-                // Inactive step — dark pad
-                juce::Colour c = isCurrentStep
-                    ? juce::Colour(StudioLookAndFeel::kDark).brighter(0.15f)
-                    : (isQuarter ? juce::Colour(0xff231f1a)
-                                 : juce::Colour(StudioLookAndFeel::kDark));
-                g.setColour(c);
-                g.fillRoundedRectangle((float)(x + 1), (float)(y + 2), (float)w, (float)h, 3.0f);
-
-                // Subtle border
-                g.setColour(juce::Colours::black.withAlpha(isQuarter ? 0.4f : 0.3f));
-                g.drawRoundedRectangle((float)(x + 1), (float)(y + 2), (float)w, (float)h, 3.0f, 1.0f);
+                // OFF step — dark pad, half-bar stronger
+                const float alpha = isHalfBar ? 0.16f : (isQuarter ? 0.10f : 0.05f);
+                g.setColour(juce::Colour(0xff000000).withAlpha(alpha));
+                g.fillRoundedRectangle((float)cellX, (float)cellY, (float)cellW, (float)kCellH, 3.0f);
+                const float borderA = isHalfBar ? 0.35f : 0.18f;
+                g.setColour(juce::Colour(0xff000000).withAlpha(borderA));
+                g.drawRoundedRectangle((float)cellX, (float)cellY, (float)cellW, (float)kCellH, 3.0f, 0.8f);
             }
 
-            // Custom step params badge — amber dot
+            // Custom step params badge — amber dot (top-right corner)
             if (hasCustom)
             {
-                g.setColour(juce::Colour(StudioLookAndFeel::kLedAmber).withAlpha(0.9f));
-                g.fillEllipse((float)(x + w - 5), (float)(y + h - 2), 4.0f, 4.0f);
+                g.setColour(juce::Colour(LF::kLedAmber).withAlpha(0.9f));
+                g.fillEllipse((float)(cellX + cellW - 5), (float)(cellY + 1), 4.0f, 4.0f);
+            }
+
+            // Current step outline (2px accent, over everything)
+            if (isCurrent)
+            {
+                g.setColour(juce::Colour(LF::kAccent));
+                g.drawRoundedRectangle((float)(cellX - 1), (float)(cellY - 1),
+                                       (float)(cellW + 2), (float)(kCellH + 2), 3.0f, 1.8f);
             }
 
             // Inspector selection border
             if (isSelected)
             {
-                g.setColour(juce::Colour(StudioLookAndFeel::kAccent).withAlpha(0.85f));
-                g.drawRoundedRectangle((float)(x + 1), (float)(y + 2), (float)w, (float)h, 3.0f, 1.5f);
+                g.setColour(juce::Colour(LF::kAccent).withAlpha(0.85f));
+                g.drawRoundedRectangle((float)cellX, (float)cellY, (float)cellW, (float)kCellH, 3.0f, 1.5f);
             }
         }
     }
@@ -1028,7 +1153,7 @@ void ChannelRackComponent::mouseDoubleClick(const juce::MouseEvent& e)
     const int x = e.getPosition().getX();
     const int y = e.getPosition().getY() - HEADER_HEIGHT;
 
-    if (x > 94 || y < 0) return;
+    if (x >= LABEL_WIDTH || y < 0) return;
 
     const int ch = y / ROW_HEIGHT;
     if (ch < 0 || ch >= (int)channels.size()) return;
@@ -1079,49 +1204,48 @@ void ChannelRackComponent::resized()
         return;  // setSize triggers resized() again with correct dimensions
     }
 
+    // Variation buttons A/B/C/D — in the title strip header (y=5, h=20)
+    {
+        const int varBtnW = 24, varBtnH = 20, varY = 5;
+        const int varX = getWidth() - 4 * (varBtnW + 2) - 8;
+        varBtnA.setBounds(varX + 0 * (varBtnW + 2), varY, varBtnW, varBtnH);
+        varBtnB.setBounds(varX + 1 * (varBtnW + 2), varY, varBtnW, varBtnH);
+        varBtnC.setBounds(varX + 2 * (varBtnW + 2), varY, varBtnW, varBtnH);
+        varBtnD.setBounds(varX + 3 * (varBtnW + 2), varY, varBtnW, varBtnH);
+    }
+
     // Bottom controls
     const int controlsY = HEADER_HEIGHT + (int)channels.size() * ROW_HEIGHT + 8;
     addChannelBtn  .setBounds(10,  controlsY, 140, 30);
     clearStepsBtn  .setBounds(160, controlsY, 110, 30);
     stepCountSlider.setBounds(280, controlsY, 100, 30);
 
-    // Variation buttons A/B/C/D — right of step count slider
-    const int varBtnW = 24, varBtnH = 24;
-    const int varBtnY = controlsY + (30 - varBtnH) / 2;
-    const int varBtnX = 388;
-    varBtnA.setBounds(varBtnX + 0 * (varBtnW + 2), varBtnY, varBtnW, varBtnH);
-    varBtnB.setBounds(varBtnX + 1 * (varBtnW + 2), varBtnY, varBtnW, varBtnH);
-    varBtnC.setBounds(varBtnX + 2 * (varBtnW + 2), varBtnY, varBtnW, varBtnH);
-    varBtnD.setBounds(varBtnX + 3 * (varBtnW + 2), varBtnY, varBtnW, varBtnH);
-
-    // Swing slider — right of variation buttons
-    const int swingX = varBtnX + 4 * (varBtnW + 2) + 12;
-    swingLabel.setBounds(swingX, controlsY + 2, 40, 26);
+    // Swing slider
+    const int swingX = 390;
+    swingLabel.setBounds(swingX,      controlsY + 2, 40, 26);
     swingSlider.setBounds(swingX + 38, controlsY + 2, 110, 26);
 
     // Inspector position update (only if open)
     if (inspectorCh >= 0) layoutInspector();
 
-    // Per-channel controls layout
+    // Per-channel controls layout (180px head)
     for (int i = 0; i < (int)channels.size(); ++i)
     {
         const int y = HEADER_HEIGHT + i * ROW_HEIGHT;
 
-        // Three horizontal sliders stacked, each with text box on right
+        // Mini bar sliders: V(row2 left) / P(row2 mid) / ♯(row2 right)
         if (channels[i].volSlider)
-            channels[i].volSlider->setBounds(98, y + 4, 136, 14);
-
+            channels[i].volSlider->setBounds(36, y + 23, 36, 6);
         if (channels[i].panSlider)
-            channels[i].panSlider->setBounds(98, y + 22, 136, 14);
-
+            channels[i].panSlider->setBounds(82, y + 23, 36, 6);
         if (channels[i].pitchSlider)
-            channels[i].pitchSlider->setBounds(98, y + 40, 136, 14);
+            channels[i].pitchSlider->setBounds(128, y + 23, 38, 6);
 
-        // Mute / Solo buttons — far right, aligned to rows 1 & 2
+        // Mute / Solo — row 3 (y+37), 14×12
         if (channels[i].muteBtn)
-            channels[i].muteBtn->setBounds(236, y + 4, 12, 16);
+            channels[i].muteBtn->setBounds(28, y + 37, 14, 12);
         if (channels[i].soloBtn)
-            channels[i].soloBtn->setBounds(236, y + 22, 12, 16);
+            channels[i].soloBtn->setBounds(44, y + 37, 14, 12);
     }
 }
 

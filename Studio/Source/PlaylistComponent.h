@@ -158,12 +158,14 @@ private:
 
     std::vector<PlaylistClip> localDemoClips;
 
-    static constexpr int headerHeight  = 22;
-    static constexpr int trackHeight   = 62;
-    static constexpr int trackGap      = 0;
+    static constexpr int kPlaylistHdrH  = 38;  // PLAYLIST title + snap strip
+    static constexpr int kRulerH        = 22;  // ruler band
+    static constexpr int headerHeight   = kPlaylistHdrH + kRulerH;  // 60 total
+    static constexpr int trackHeight    = 54;
+    static constexpr int trackGap       = 0;
     static constexpr int trackHeaderWidth = 160;
-    static constexpr int resizeHotspot = 10; // px from right edge = resize handle
-    static constexpr int autoLaneHeight = 60; // M9 — height of each automation lane
+    static constexpr int resizeHotspot  = 10;
+    static constexpr int autoLaneHeight = 60;
 
     int barWidth = 44;  // matches the HTML reference timeline scale
 
@@ -570,49 +572,164 @@ inline void PlaylistComponent::paint(juce::Graphics& g)
 inline void PlaylistComponent::drawBackground(juce::Graphics& g)
 {
     using LF = StudioLookAndFeel;
+    const float W = (float)getWidth();
 
-    juce::ColourGradient bg(juce::Colour(LF::kDisplayBg), 0.0f, 0.0f,
-                            juce::Colour(0xff151d18), 0.0f, (float)getHeight(), false);
-    g.setGradientFill(bg);
+    // Full bg (track area shows through)
+    g.setColour(juce::Colour(LF::kPanel));
     g.fillAll();
 
-    juce::ColourGradient ruler(juce::Colour(LF::kChassis2), 0.0f, 0.0f,
-                               juce::Colour(LF::kChassis), 0.0f, (float)headerHeight, false);
-    g.setGradientFill(ruler);
-    g.fillRect(0, 0, getWidth(), headerHeight);
+    // ---- PLAYLIST header strip (0..kPlaylistHdrH) ----
+    {
+        juce::ColourGradient hdrBg(juce::Colour(LF::kChassis),  0.0f, 0.0f,
+                                   juce::Colour(LF::kChassis2), 0.0f, (float)kPlaylistHdrH, false);
+        g.setGradientFill(hdrBg);
+        g.fillRect(0, 0, (int)W, kPlaylistHdrH);
+        g.setColour(juce::Colour(LF::kPanelRim));
+        g.drawLine(0.0f, (float)kPlaylistHdrH, W, (float)kPlaylistHdrH, 1.0f);
 
-    g.setColour(juce::Colour(LF::kPanelRim));
-    g.drawLine(0.0f, (float)headerHeight - 1.0f, (float)getWidth(), (float)headerHeight - 1.0f, 1.0f);
+        const int cy = kPlaylistHdrH / 2;
+
+        // Accent square
+        g.setColour(juce::Colour(LF::kAccent));
+        g.fillRoundedRectangle(12.0f, (float)(cy - 4), 8.0f, 8.0f, 2.0f);
+
+        // "PLAYLIST"
+        g.setFont(LF::monoFont(10.0f, juce::Font::bold));
+        g.setColour(juce::Colour(LF::kText));
+        g.drawText("PLAYLIST", 28, cy - 7, 68, 14, juce::Justification::centredLeft);
+
+        // Tag helper
+        auto drawTag = [&](int tx, int ty2, int tw, const juce::String& txt)
+        {
+            const juce::Rectangle<float> r((float)tx, (float)ty2, (float)tw, 14.0f);
+            g.setColour(juce::Colour(LF::kChassis2).withAlpha(0.7f));
+            g.fillRoundedRectangle(r, 3.0f);
+            g.setColour(juce::Colour(LF::kPanelRim));
+            g.drawRoundedRectangle(r, 3.0f, 0.5f);
+            g.setFont(LF::monoFont(7.0f, juce::Font::bold));
+            g.setColour(juce::Colour(LF::kTextFaint));
+            g.drawText(txt, tx + 3, ty2 + 1, tw - 6, 12, juce::Justification::centredLeft);
+        };
+        drawTag(100, cy - 7, 76, juce::String::fromUTF8("200 BARS \xc2\xb7 4/4"));
+        drawTag(180, cy - 7, 56, juce::String(getTrackCount()) + " TRACKS");
+
+        // Snap section
+        g.setFont(LF::monoFont(7.5f, juce::Font::bold));
+        g.setColour(juce::Colour(LF::kTextFaint));
+        g.drawText("SNAP", 240, cy - 7, 30, 14, juce::Justification::centredRight);
+
+        const juce::String snapNames[] = {
+            "1bar",
+            juce::String::fromUTF8("\xc2\xbd"),    // ½
+            juce::String::fromUTF8("\xc2\xbc"),    // ¼
+            "FREE"
+        };
+        const int snapDivs[]  = { 1, 2, 4, 0 };
+        const int snapBtnW[]  = { 30, 20, 20, 36 };
+
+        // Snap container bg
+        g.setColour(juce::Colour(0x0f000000));
+        g.fillRoundedRectangle(242.0f, (float)(cy - 8), 110.0f, 16.0f, 3.0f);
+
+        int bx = 244;
+        for (int i = 0; i < 4; ++i)
+        {
+            const bool active = (snapDivisor == snapDivs[i]);
+            const juce::Rectangle<float> btnR((float)bx, (float)(cy - 7), (float)snapBtnW[i], 14.0f);
+            if (active)
+            {
+                g.setColour(juce::Colour(LF::kAccent));
+                g.fillRoundedRectangle(btnR, 2.0f);
+            }
+            g.setFont(LF::monoFont(7.5f, juce::Font::bold));
+            g.setColour(active ? juce::Colours::white : juce::Colour(LF::kTextDim));
+            g.drawText(snapNames[i], (int)btnR.getX(), (int)btnR.getY(),
+                       (int)btnR.getWidth(), (int)btnR.getHeight(), juce::Justification::centred);
+            bx += snapBtnW[i];
+        }
+
+        // UNDO ⌘Z tag
+        drawTag(bx + 4, cy - 7, 54,
+                juce::String::fromUTF8("UNDO \xe2\x8c\x98") + "Z");
+    }
 }
 
 inline void PlaylistComponent::drawTimeRuler(juce::Graphics& g)
 {
     using LF = StudioLookAndFeel;
-    g.setFont(StudioLookAndFeel::displayFont(13.0f));
-    const int totalBars = juce::jmax(getWidth() / barWidth + 1, 32);
+    const float ry = (float)kPlaylistHdrH;
+    const float rh = (float)kRulerH;
+    const int W = getWidth();
+    const int totalBars = juce::jmax(W / barWidth + 1, 32);
 
-    // Sub-bar grid lines
+    // ---- Ruler bg (display-bg) ----
+    g.setColour(juce::Colour(LF::kDisplayBg));
+    g.fillRect((int)0, (int)ry, W, (int)rh);
+    // Bottom shadow
+    g.setColour(juce::Colour(0x80000000));
+    g.fillRect(0, (int)(ry + rh - 1), W, 1);
+
+    // ---- TRK column header ----
+    {
+        g.setColour(juce::Colour(LF::kDisplayBg).darker(0.18f));
+        g.fillRect(0, (int)ry, trackHeaderWidth, (int)rh);
+
+        g.setFont(juce::Font(juce::FontOptions("VT323", 12.0f, juce::Font::plain)));
+        g.setColour(juce::Colour(LF::kDisplayFg).withAlpha(0.7f));
+        g.drawText("TRK / " + juce::String(getTrackCount()), 8, (int)ry, 80, (int)rh, juce::Justification::centredLeft);
+
+        // ＋ add track button
+        g.setFont(juce::Font(juce::FontOptions("VT323", 14.0f, juce::Font::plain)));
+        g.setColour(juce::Colour(LF::kDisplayFg));
+        g.drawText(juce::String::fromUTF8("\xef\xbc\x8b"), // ＋
+                   trackHeaderWidth - 22, (int)ry, 18, (int)rh, juce::Justification::centred);
+
+        // Right border
+        g.setColour(juce::Colour(0x60000000));
+        g.fillRect(trackHeaderWidth - 1, (int)ry, 1, (int)rh);
+    }
+
+    // ---- Bar marks (ruler + track grid) ----
+    // Sub-bar grid
     if (snapDivisor > 1)
     {
-        g.setColour(juce::Colour(LF::kDisplayFg).withAlpha(0.08f));
+        g.setColour(juce::Colour(LF::kDisplayFg).withAlpha(0.05f));
         for (int bar = 0; bar < totalBars; ++bar)
             for (int sub = 1; sub < snapDivisor; ++sub)
             {
-                const float x = trackHeaderWidth + (bar + (float)sub / snapDivisor) * barWidth;
+                const float x = (float)trackHeaderWidth + (bar + (float)sub / snapDivisor) * barWidth;
                 g.drawLine(x, (float)headerHeight, x, (float)getHeight(), 0.5f);
             }
     }
 
     for (int bar = 0; bar < totalBars; ++bar)
     {
-        const int x = trackHeaderWidth + bar * barWidth;
-        g.setColour(bar % 4 == 0 ? juce::Colour(LF::kDisplayFg).withAlpha(0.22f)
-                                  : juce::Colour(0xff243128).withAlpha(0.9f));
-        g.drawLine((float)x, 0.0f, (float)x, (float)getHeight(), 1.0f);
+        const float x = (float)trackHeaderWidth + (float)bar * barWidth;
+        const bool major = (bar % 4 == 0);
 
-        g.setColour(bar % 4 == 0 ? juce::Colour(LF::kDisplayFg) : juce::Colour(LF::kDisplayFg).withAlpha(0.45f));
-        g.drawText(juce::String(bar + 1).paddedLeft('0', 2), x + 4, 0, barWidth - 6, headerHeight,
-                   juce::Justification::centredLeft);
+        // Ruler tick line
+        g.setColour(major ? juce::Colour(LF::kDisplayFg).withAlpha(0.5f)
+                          : juce::Colour(LF::kDisplayFg).withAlpha(0.15f));
+        g.fillRect(x, ry, 1.0f, rh);
+
+        // Track grid line (extends through track rows)
+        g.setColour(major ? juce::Colour(0x1e000000) : juce::Colour(0x0d000000));
+        g.fillRect(x, (float)headerHeight, 1.0f, (float)(getHeight() - headerHeight));
+
+        // Bar number (every 4 bars, VT323 phosphor glow)
+        if (major)
+        {
+            const juce::String barNum = juce::String(bar + 1).paddedLeft('0', 3);
+            g.setFont(juce::Font(juce::FontOptions("VT323", 13.0f, juce::Font::plain)));
+            // Glow pass
+            g.setColour(juce::Colour(LF::kDisplayFg).withAlpha(0.28f));
+            g.drawText(barNum, (int)x + 3, (int)ry + 2, barWidth - 4, (int)rh - 4,
+                       juce::Justification::centredLeft);
+            // Main text
+            g.setColour(juce::Colour(LF::kDisplayFg));
+            g.drawText(barNum, (int)x + 4, (int)ry + 3, barWidth - 4, (int)rh - 4,
+                       juce::Justification::centredLeft);
+        }
     }
 }
 
@@ -620,57 +737,136 @@ inline void PlaylistComponent::drawTracks(juce::Graphics& g)
 {
     using LF = StudioLookAndFeel;
     const int count = getTrackCount();
+    const bool hasTracks = (project != nullptr && !project->playlistTracks.empty());
+
     for (int t = 0; t < count; ++t)
     {
         const int trackY = headerHeight + t * (trackHeight + trackGap);
 
-        g.setColour(t % 2 == 0 ? juce::Colour(0xff121a15) : juce::Colour(0xff0f1512));
-        g.fillRect(0, trackY, getWidth(), trackHeight);
+        // Per-track colour: from model or fallback palette
+        const juce::Colour tCol = (hasTracks && t < (int)project->playlistTracks.size())
+            ? project->playlistTracks[(size_t)t].colour
+            : juce::Colour(t % 2 == 0 ? 0xffd8412a : 0xffe89c2b);
 
-        // Track header label area — slightly elevated
-        juce::ColourGradient hdr(juce::Colour(LF::kPanel), 0.0f, (float)trackY,
-                                 juce::Colour(LF::kChassis), 0.0f, (float)(trackY + trackHeight), false);
-        g.setGradientFill(hdr);
-        g.fillRect(0, trackY, trackHeaderWidth, trackHeight);
-        // Right separator line
-        g.setColour(juce::Colour(LF::kPanelRim).withAlpha(0.8f));
-        g.drawLine((float)trackHeaderWidth - 0.5f, (float)trackY,
-                   (float)trackHeaderWidth - 0.5f, (float)(trackY + trackHeight), 1.0f);
+        // ---- Track row bg (cream tones matching reference) ----
+        {
+            const juce::Colour c1 = (t % 2 == 0) ? juce::Colour(0xfff3ecda) : juce::Colour(0xffede5d1);
+            const juce::Colour c2 = (t % 2 == 0) ? juce::Colour(0xffede5d1) : juce::Colour(0xffe6dec9);
+            juce::ColourGradient rowBg(c1, 0.0f, (float)trackY, c2, 0.0f, (float)(trackY + trackHeight), false);
+            g.setGradientFill(rowBg);
+            g.fillRect(trackHeaderWidth, trackY, getWidth() - trackHeaderWidth, trackHeight);
+        }
 
-        const juce::String name = (project != nullptr && t < (int)project->playlistTracks.size())
-                                  ? project->playlistTracks[(size_t)t].name
-                                  : ("Track " + juce::String(t + 1));
+        // Row bottom border
+        g.setColour(juce::Colour(LF::kPanelRim).withAlpha(0.5f));
+        g.drawLine(0.0f, (float)(trackY + trackHeight - 1), (float)getWidth(), (float)(trackY + trackHeight - 1), 0.5f);
 
-        g.setColour(juce::Colour(LF::kText));
-        g.setFont(StudioLookAndFeel::monoFont(11.0f, juce::Font::bold));
-        g.drawText(juce::String(t + 1), 8, trackY + 6, 20, 14, juce::Justification::centred);
-        g.drawText(name, 34, trackY + 4, trackHeaderWidth - 56, 18, juce::Justification::centredLeft);
+        // ---- Track header bg (panel → chassis-2 gradient) ----
+        {
+            juce::ColourGradient hdrBg(juce::Colour(LF::kPanel),    0.0f, (float)trackY,
+                                       juce::Colour(LF::kChassis2), 0.0f, (float)(trackY + trackHeight), false);
+            g.setGradientFill(hdrBg);
+            g.fillRect(0, trackY, trackHeaderWidth, trackHeight);
+            g.setColour(juce::Colour(LF::kPanelRim).withAlpha(0.8f));
+            g.drawLine((float)trackHeaderWidth - 0.5f, (float)trackY,
+                       (float)trackHeaderWidth - 0.5f, (float)(trackY + trackHeight), 1.0f);
+        }
 
-        g.setColour(juce::Colour(LF::kTextFaint));
-        g.setFont(StudioLookAndFeel::monoFont(8.0f, juce::Font::bold));
-        g.drawText((project != nullptr && t < (int)project->playlistTracks.size()
-                    ? "SAMPLER"
-                    : "TRACK"),
-                   34, trackY + 22, trackHeaderWidth - 56, 10, juce::Justification::centredLeft);
+        // ---- Idx colour box (18×18, rounded 3) ----
+        {
+            const int boxX = 8, boxY = trackY + (trackHeight - 18) / 2;
+            // Soft glow ring
+            g.setColour(tCol.withAlpha(0.22f));
+            g.fillRoundedRectangle((float)(boxX - 2), (float)(boxY - 2), 22.0f, 22.0f, 4.0f);
+            // Box fill
+            g.setColour(tCol);
+            g.fillRoundedRectangle((float)boxX, (float)boxY, 18.0f, 18.0f, 3.0f);
+            // Border
+            g.setColour(juce::Colour(0x66000000));
+            g.drawRoundedRectangle((float)boxX + 0.5f, (float)boxY + 0.5f, 17.0f, 17.0f, 3.0f, 1.0f);
+            // Number
+            g.setFont(juce::Font(juce::FontOptions("JetBrains Mono", 9.0f, juce::Font::bold)));
+            g.setColour(juce::Colours::white.withAlpha(0.9f));
+            g.drawText(juce::String(t + 1), boxX, boxY, 18, 18, juce::Justification::centred);
+        }
 
-        // Subtle right-click hint (three dots)
-        g.setColour(juce::Colour(LF::kTextFaint));
-        for (int d = 0; d < 3; ++d)
-            g.fillEllipse((float)(trackHeaderWidth - 18 + d * 4), (float)(trackY + trackHeight / 2 - 1), 2.0f, 2.0f);
+        // ---- Track name (10px bold uppercase) ----
+        {
+            const juce::String name = (hasTracks && t < (int)project->playlistTracks.size())
+                                      ? project->playlistTracks[(size_t)t].name
+                                      : ("Track " + juce::String(t + 1));
+            g.setFont(juce::Font(juce::FontOptions("JetBrains Mono", 9.5f, juce::Font::bold)));
+            g.setColour(juce::Colour(LF::kText));
+            g.drawText(name.toUpperCase(), 34, trackY + 5, trackHeaderWidth - 34 - 34, 13,
+                       juce::Justification::centredLeft, true);
+        }
+
+        // ---- M / S / R buttons (16×13) ----
+        {
+            struct BtnDef { const char* label; juce::uint32 onColor; bool on; };
+            const BtnDef btns[] = {
+                { "M", LF::kLedAmber, false },
+                { "S", LF::kLedGreen, false },
+                { "R", LF::kLedRed,   false },
+            };
+            int bx = 34;
+            const int by = trackY + 22;
+            for (const auto& b : btns)
+            {
+                const juce::Rectangle<float> btnR((float)bx, (float)by, 16.0f, 13.0f);
+                g.setColour(b.on ? juce::Colour(b.onColor) : juce::Colour(0x0d000000));
+                g.fillRoundedRectangle(btnR, 2.0f);
+                g.setColour(juce::Colour(0x33000000));
+                g.drawRoundedRectangle(btnR.reduced(0.5f), 2.0f, 0.5f);
+                if (b.on)
+                {
+                    g.setColour(juce::Colour(b.onColor).withAlpha(0.35f));
+                    g.fillRoundedRectangle(btnR.expanded(2.0f, 2.0f), 3.0f);
+                }
+                g.setFont(juce::Font(juce::FontOptions("JetBrains Mono", 7.0f, juce::Font::bold)));
+                g.setColour(b.on ? juce::Colour(0xcc000000) : juce::Colour(LF::kTextFaint));
+                g.drawText(b.label, (int)btnR.getX(), (int)btnR.getY(), 16, 13, juce::Justification::centred);
+                bx += 19;
+            }
+        }
+
+        // ---- VOL knob (22×22, painted) ----
+        {
+            const float kx = (float)(trackHeaderWidth - 8 - 22);
+            const float ky = (float)(trackY + (trackHeight - 22) / 2);
+            const float kr = 11.0f;
+            const float cx = kx + kr, cy2 = ky + kr;
+            juce::ColourGradient kg(juce::Colour(LF::kChassis), cx - kr * 0.3f, cy2 - kr * 0.3f,
+                                    juce::Colour(0xff0d0d0d), cx + kr, cy2 + kr, true);
+            g.setGradientFill(kg);
+            g.fillEllipse(kx, ky, 22.0f, 22.0f);
+            g.setColour(juce::Colour(LF::kPanelRim));
+            g.drawEllipse(kx + 0.5f, ky + 0.5f, 21.0f, 21.0f, 0.8f);
+            // Indicator needle at ~80% volume position
+            const float angle = -juce::MathConstants<float>::pi * 0.75f
+                                + 0.8f * juce::MathConstants<float>::pi * 1.5f;
+            const float ix = cx + std::cos(angle) * (kr - 3.5f);
+            const float iy = cy2 + std::sin(angle) * (kr - 3.5f);
+            g.setColour(juce::Colour(LF::kAccent));
+            g.fillEllipse(ix - 1.5f, iy - 1.5f, 3.0f, 3.0f);
+        }
     }
 }
 
 inline void PlaylistComponent::drawClips(juce::Graphics& g)
 {
-    // Colour palette: cycle per patternId so different patterns look distinct
     using LF = StudioLookAndFeel;
-
-    static const juce::Colour palette[] = {
-        juce::Colour(0xffd8412a), juce::Colour(0xffb64b2c),
-        juce::Colour(0xffc77632), juce::Colour(0xff8b6a2d),
-        juce::Colour(0xff587345), juce::Colour(0xff45726e),
+    // ---- Track colour: from project model or fallback palette ----
+    auto trackCol = [&](int tidx) -> juce::Colour
+    {
+        if (project != nullptr && tidx < (int)project->playlistTracks.size())
+            return project->playlistTracks[(size_t)tidx].colour;
+        static const juce::uint32 pal[] = {
+            0xffd8412a, 0xffe89c2b, 0xff7ab87a, 0xff5fa8d8,
+            0xffb87ad6, 0xff8d7a5a, 0xff5dd8c8, 0xffb8b87a
+        };
+        return juce::Colour(pal[(size_t)tidx % 8]);
     };
-    constexpr int paletteSize = (int)(sizeof(palette) / sizeof(palette[0]));
 
     const int tc = getTrackCount();
     for (const auto& clip : clipList())
@@ -678,502 +874,222 @@ inline void PlaylistComponent::drawClips(juce::Graphics& g)
         if (clip.trackIndex < 0 || clip.trackIndex >= tc) continue;
 
         const int x  = trackHeaderWidth + (int)(clip.startBar  * barWidth);
-        const int w  = juce::jmax(4, juce::jmin((int)(clip.lengthBars * barWidth) - 2, getWidth() * 4));
+        const int w  = juce::jmax(4, juce::jmin((int)(clip.lengthBars * barWidth) - 4, getWidth() * 4));
         const int ty = headerHeight + clip.trackIndex * (trackHeight + trackGap) + 3;
+
         const int h  = juce::jmax(4, trackHeight - 6);
 
-        // Skip clips entirely outside visible area
         if (x + w < 0 || x > getWidth()) continue;
 
-        const bool isAudioClip  = (clip.clipType == ClipType::Audio);
-        const bool hasPattern   = !isAudioClip && clip.patternId > 0;
-        const bool isSlipTarget = (clip.id == slipDraggingClipId || clip.id == patSlipClipId);
+        const bool isAudio  = (clip.clipType == ClipType::Audio);
+        const juce::Colour col = trackCol(clip.trackIndex);
+        const float muteA  = clip.muted ? 0.4f : 1.0f;
+        const float baseA  = (clip.id == draggingClipId ? 0.6f : 1.0f) * muteA;
 
-        // Audio clips: teal/green tone to distinguish from pattern clips
-        const juce::Colour fill = isAudioClip
-            ? juce::Colour(0xff5a7a56)
-            : (hasPattern ? palette[(clip.patternId - 1) % paletteSize]
-                          : juce::Colour(0xff766b59));
-        // Slip-editing: bright white-gold outline to signal active slip
-        const juce::Colour border = isSlipTarget
-            ? juce::Colour(0xffffd080)
-            : (isAudioClip
-               ? juce::Colour(0xffa9d796)
-               : (hasPattern ? fill.brighter(0.35f) : juce::Colour(LF::kPanelRim)));
-
-        const float baseAlpha = clip.id == draggingClipId ? 0.6f : 0.85f;
-        g.setColour(fill.withAlpha(clip.muted ? baseAlpha * 0.35f : baseAlpha));
-        g.fillRoundedRectangle((float)x + 1, (float)ty, (float)w, (float)h, 4.0f);
-
-        g.setColour(clip.muted ? border.withAlpha(0.4f) : border);
-        g.drawRoundedRectangle((float)x + 1, (float)ty, (float)w, (float)h, 4.0f, 1.3f);
-
-        // Muted indicator — diagonal hatch lines + "M" badge
-        if (clip.muted)
+        // ---- Clip background ----
         {
-            g.setColour(juce::Colour(0x30ffffff));
-            for (int hx = x + 1; hx < x + w; hx += 8)
-                g.drawLine((float)hx, (float)ty, (float)(hx + h), (float)(ty + h), 0.5f);
-
-            g.setColour(juce::Colour(0xccff6666));
-            g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f).withStyle("Bold")));
-            g.drawText("M", x + w - 16, ty + 2, 14, 12, juce::Justification::centredRight);
+            juce::Graphics::ScopedSaveState ss(g);
+            g.reduceClipRegion(x, ty, w, h);
+            g.setColour(col.withAlpha(0.22f * baseA));
+            g.fillRoundedRectangle((float)x, (float)ty, (float)w, (float)h, 3.0f);
+            if (isAudio)
+            {
+                // Diagonal stripes (135°): alternating color33/color55
+                for (float sx = (float)(x - h); sx < (float)(x + w); sx += 8.0f)
+                {
+                    g.setColour(col.withAlpha(0.20f * baseA));
+                    g.drawLine(sx, (float)ty, sx + (float)h, (float)(ty + h), 4.0f);
+                    g.setColour(col.withAlpha(0.33f * baseA));
+                    g.drawLine(sx + 4.0f, (float)ty, sx + 4.0f + (float)h, (float)(ty + h), 4.0f);
+                }
+            }
         }
 
-        // Resize handle stripe
-        g.setColour(border.withAlpha(0.5f));
-        g.fillRect(x + w - 4, ty + 2, 4, h - 4);
+        // ---- Border ----
+        g.setColour(col.withAlpha(baseA));
+        g.drawRoundedRectangle((float)x + 0.5f, (float)ty + 0.5f,
+                               (float)w - 1.0f, (float)h - 1.0f, 3.0f, 1.0f);
 
-        // M11.5 — mini note + step preview inside the clip
-        if (project != nullptr && hasPattern && w > 20)
+        // ---- Clip header row (top 18px): gradient + bottom rule ----
         {
-            const Pattern* pat = nullptr;
-            for (const auto& p : project->patterns)
-                if (p.id == clip.patternId) { pat = &p; break; }
+            juce::Graphics::ScopedSaveState ss(g);
+            g.reduceClipRegion(x + 1, ty + 1, w - 2, 17);
+            juce::ColourGradient hg(col.withAlpha(0.40f * baseA), 0.0f, (float)ty,
+                                    col.withAlpha(0.20f * baseA), 0.0f, (float)(ty + 18), false);
+            g.setGradientFill(hg);
+            g.fillRect(x + 1, ty + 1, w - 2, 17);
+        }
+        g.setColour(col.withAlpha(0.65f * baseA));
+        g.drawLine((float)(x + 1), (float)(ty + 18), (float)(x + w - 1), (float)(ty + 18), 0.5f);
 
-            if (pat != nullptr && pat->stepCount > 0)
+        // ---- Clip label ----
+        if (w > 20)
+        {
+            juce::String prefix, label;
+            if (isAudio)
             {
-                const int   previewX  = x + 4;
-                const int   previewW  = w - 8;
-                const float clipBeats = juce::jmax(0.25f, clip.lengthBars * 4.0f);
-                const int   vi        = juce::jlimit(0, Pattern::kMaxVariations - 1, clip.variationIdx);
+                prefix = juce::String::fromUTF8("\xe2\x99\xaa"); // ♪
+                label  = clip.name.isNotEmpty() ? clip.name
+                       : juce::File(clip.audioFilePath).getFileNameWithoutExtension();
+            }
+            else
+            {
+                prefix = juce::String::fromUTF8("\xe2\x96\xa6"); // ▦
+                const juce::String patId = (clip.patternId > 0)
+                    ? ("PAT " + juce::String::formatted("%02d", clip.patternId))
+                    : "PAT --";
+                const juce::String cname = clip.name.isNotEmpty() ? clip.name
+                                         : ("Clip " + juce::String(clip.id));
+                label = patId + juce::String::fromUTF8(" \xc2\xb7 ") + cname;
+            }
+            g.setFont(juce::Font(juce::FontOptions("JetBrains Mono", 8.5f, juce::Font::bold)));
+            g.setColour(juce::Colour(StudioLookAndFeel::kText).withAlpha(baseA));
+            g.drawText(prefix + " " + label,
+                       x + 5, ty + 4, w - 10 - (clip.muted ? 12 : 0), 10,
+                       juce::Justification::centredLeft, true);
+            if (clip.muted && w > 30)
+            {
+                g.setColour(juce::Colour(StudioLookAndFeel::kTextFaint));
+                g.drawText("M", x + w - 13, ty + 4, 10, 10, juce::Justification::centredRight);
+            }
+        }
 
-                // ---- Unified waveform — full clip body below title --------------
-                // All voices (steps + notes, all channels) are additively combined
-                // into a single normalised min/max waveform.
+        // ---- Pattern body: 16×4 step-dot grid ----
+        if (!isAudio && w > 24)
+        {
+            const int gridX = x + 3;
+            const int gridY = ty + 21;
+            const int gridW = w - 6;
+            const int gridH = h - 24;
+            if (gridH > 4)
+            {
+                const Pattern* pat = nullptr;
+                const int vi = juce::jlimit(0, Pattern::kMaxVariations - 1, clip.variationIdx);
+                if (project != nullptr && clip.patternId > 0)
+                    for (const auto& p : project->patterns)
+                        if (p.id == clip.patternId) { pat = &p; break; }
+
+                static constexpr int kCols = 16, kRows = 4;
+                const float cW = (float)gridW / kCols;
+                const float cH = (float)gridH / kRows;
+
+                int rngSeed = clip.id * 7 + clip.patternId * 13 + 1;
+                for (int r = 0; r < kRows; ++r)
                 {
-                    const double bpm = (project != nullptr) ? project->bpm : 120.0;
-                    const int bpmRounded = (int)std::round(bpm);
-                    const auto cacheKey = std::make_tuple(clip.patternId, vi, previewW, bpmRounded);
-                    auto it = waveformCache_.find(cacheKey);
-                    if (it == waveformCache_.end())
+                    for (int c = 0; c < kCols; ++c)
                     {
-                        waveformCache_[cacheKey] = buildPatternWave(*pat, vi, previewW, clipBeats, bpm);
-                        it = waveformCache_.find(cacheKey);
-                    }
-                    const auto& wave = it->second;
-
-                    // Waveform area: full clip body, below the title row
-                    static constexpr int kTitleH = 14;  // height reserved for clip name
-                    const int   waveY    = ty + kTitleH + 2;
-                    const int   waveBot  = ty + h - 3;
-                    const int   waveH    = juce::jmax(4, waveBot - waveY);
-                    const float centerY  = (float)waveY + (float)waveH * 0.5f;
-                    const float halfH    = (float)waveH * 0.5f - 1.0f;
-
-                    // === Centre line (midline) ===
-                    // Visible axis: always drawn, indicates ±0 baseline
-                    g.setColour(fill.brighter(0.8f).withAlpha(0.35f));
-                    g.drawHorizontalLine((int)std::round(centerY),
-                                        (float)previewX, (float)(previewX + previewW));
-
-                    // === Waveform — Lanczos-3 interpolated path rendering ===
-                    // Extract max[] and min[] arrays for L3 sampling.
-                    // Sub-pixel step of 0.5px gives 2x horizontal resolution,
-                    // smoothing the staircase artefacts visible at zoom.
-                    {
-                        const int wLen = (int)wave.size();
-                        if (wLen > 1)
+                        bool on = false;
+                        if (pat != nullptr && r < Pattern::kMaxChannels && c < pat->stepCount)
+                            on = pat->variations[vi].steps[r][c];
+                        else
                         {
-                            // Build flat arrays for lerpL3
-                            std::vector<float> maxArr(wLen), minArr(wLen);
-                            for (int i = 0; i < wLen; ++i)
-                            {
-                                maxArr[i] = wave[i].max;
-                                minArr[i] = wave[i].min;
-                            }
-
-                            // Pattern slip offset: shift waveform by patternStartOffsetBars
-                            // patternWidthPx = pixels representing one pattern cycle in the preview
-                            const double patternBarsLocal = (pat != nullptr && pat->stepCount > 0)
-                                ? (double)pat->stepCount / 16.0 : (double)clip.lengthBars;
-                            const float patternWidthPx = (clip.lengthBars > 0.0f)
-                                ? (float)((patternBarsLocal / (double)clip.lengthBars) * (double)wLen)
-                                : (float)wLen;
-                            const float patOffsetPx = (patternWidthPx > 0.0f)
-                                ? (clip.patternStartOffsetBars / (float)patternBarsLocal) * patternWidthPx
-                                : 0.0f;
-
-                            // --- Layer 1: halo glow (wide, low alpha, transients only) ---
-                            {
-                                juce::Path glowPath;
-                                bool glowOpen = false;
-                                static constexpr float kStep = 1.0f;  // 1px step for glow
-                                for (float fpx = 0.0f; fpx < (float)previewW; fpx += kStep)
-                                {
-                                    const float rawSx = std::fmod(fpx + patOffsetPx, patternWidthPx);
-                                    const float sx  = juce::jlimit(0.0f, (float)(wLen - 1), rawSx);
-                                    const float wMx = lerpL3(maxArr.data(), wLen, sx);
-                                    const float wMn = lerpL3(minArr.data(), wLen, sx);
-                                    const float amp = (wMx - wMn) * 0.5f;
-                                    if (amp < 0.38f) { glowOpen = false; continue; }
-                                    const float gx  = (float)previewX + fpx;
-                                    const float gy1 = centerY - wMx * halfH - 2.0f;
-                                    const float gy2 = centerY - wMn * halfH + 2.0f;
-                                    if (!glowOpen) { glowPath.startNewSubPath(gx, gy1); glowOpen = true; }
-                                    else           { glowPath.lineTo(gx, gy1); }
-                                    glowPath.lineTo(gx, gy2);  // close column top→bottom
-                                }
-                                if (!glowPath.isEmpty())
-                                {
-                                    g.setColour(fill.brighter(2.6f).withAlpha(0.12f));
-                                    g.strokePath(glowPath, juce::PathStrokeType(3.0f));
-                                }
-                            }
-
-                            // --- Layer 2: filled body (halo, continuous path) ---
-                            {
-                                static constexpr float kStep = 0.5f;  // sub-pixel resolution
-                                std::vector<std::pair<float,float>> topPts, botPts;
-                                topPts.reserve((int)(previewW / kStep) + 2);
-                                botPts.reserve((int)(previewW / kStep) + 2);
-
-                                for (float fpx = 0.0f; fpx <= (float)(previewW - 1); fpx += kStep)
-                                {
-                                    const float rawSx = std::fmod(fpx + patOffsetPx, patternWidthPx);
-                                    const float sx  = juce::jlimit(0.0f, (float)(wLen - 1), rawSx);
-                                    float wMx = lerpL3(maxArr.data(), wLen, sx);
-                                    float wMn = lerpL3(minArr.data(), wLen, sx);
-                                    // Clamp to valid range after L3 ringing
-                                    wMx = juce::jlimit(-1.0f, 1.0f, wMx);
-                                    wMn = juce::jlimit(-1.0f, 1.0f, wMn);
-                                    const float gx = (float)previewX + fpx;
-                                    topPts.push_back({ gx, centerY - wMx * halfH });
-                                    botPts.push_back({ gx, centerY - wMn * halfH });
-                                }
-
-                                if (!topPts.empty())
-                                {
-                                    // Halo fill
-                                    juce::Path haloShape;
-                                    haloShape.startNewSubPath(topPts[0].first, topPts[0].second);
-                                    for (size_t i = 1; i < topPts.size(); ++i)
-                                        haloShape.lineTo(topPts[i].first, topPts[i].second);
-                                    for (int i = (int)botPts.size() - 1; i >= 0; --i)
-                                        haloShape.lineTo(botPts[i].first, botPts[i].second);
-                                    haloShape.closeSubPath();
-
-                                    g.setColour(fill.brighter(1.5f).withAlpha(0.18f));
-                                    g.fillPath(haloShape);
-
-                                    // Core fill (slightly narrower, brighter)
-                                    juce::Path coreShape;
-                                    coreShape.startNewSubPath(topPts[0].first, topPts[0].second + 0.5f);
-                                    for (size_t i = 1; i < topPts.size(); ++i)
-                                        coreShape.lineTo(topPts[i].first, topPts[i].second + 0.5f);
-                                    for (int i = (int)botPts.size() - 1; i >= 0; --i)
-                                        coreShape.lineTo(botPts[i].first, botPts[i].second - 0.5f);
-                                    coreShape.closeSubPath();
-
-                                    g.setColour(fill.brighter(0.7f).withAlpha(0.55f));
-                                    g.fillPath(coreShape);
-
-                                    // --- Layer 3: bright edge strokes (top & bottom silhouette) ---
-                                    juce::Path edgeTop, edgeBot;
-                                    edgeTop.startNewSubPath(topPts[0].first, topPts[0].second);
-                                    edgeBot.startNewSubPath(botPts[0].first, botPts[0].second);
-                                    for (size_t i = 1; i < topPts.size(); ++i)
-                                    {
-                                        edgeTop.lineTo(topPts[i].first, topPts[i].second);
-                                        edgeBot.lineTo(botPts[i].first, botPts[i].second);
-                                    }
-                                    const juce::PathStrokeType edgeStroke(1.0f);
-                                    g.setColour(fill.brighter(2.2f).withAlpha(0.80f));
-                                    g.strokePath(edgeTop, edgeStroke);
-                                    g.strokePath(edgeBot, edgeStroke);
-                                }
-                            }
+                            rngSeed = (rngSeed * 9301 + 49297) % 233280;
+                            on = ((float)rngSeed / 233280.0f) < 0.35f;
                         }
-                    }
-
-                    // Loop repeat markers (subtle vertical guides when clip > pattern length)
-                    const float patternBeats = juce::jmax(0.25f, (float)pat->stepCount * 0.25f);
-                    if (clipBeats > patternBeats + 0.01f)
-                    {
-                        g.setColour(juce::Colours::white.withAlpha(0.08f));
-                        const float pxPerBeat = (float)previewW / clipBeats;
-                        for (float lb = patternBeats; lb < clipBeats; lb += patternBeats)
-                        {
-                            const int lx = previewX + (int)std::round(lb * pxPerBeat);
-                            g.drawVerticalLine(lx, (float)waveY, (float)waveBot);
-                        }
+                        const float dx = (float)gridX + c * cW + cW * 0.15f;
+                        const float dy = (float)gridY + r * cH + cH * 0.15f;
+                        g.setColour(on ? col.withAlpha(0.95f * baseA)
+                                       : juce::Colour(0x33000000).withAlpha(baseA));
+                        g.fillRoundedRectangle(dx, dy, cW * 0.7f, cH * 0.7f, 0.6f);
                     }
                 }
             }
         }
 
-        // --- Audio clip waveform preview -----------------------------------
-        if (isAudioClip && w > 20 && clip.audioFilePath.isNotEmpty())
-        {
-            const int   previewX  = x + 4;
-            const int   previewW  = w - 8;
+        // ---- Resize handle stripe (right edge) ----
+        g.setColour(col.withAlpha(0.45f * baseA));
+        g.fillRect(x + w - 4, ty + 2, 3, h - 4);
 
-            static constexpr int kTitleH = 14;
-            const int   waveY    = ty + kTitleH + 2;
-            const int   waveBot  = ty + h - 3;
-            const int   waveH    = juce::jmax(4, waveBot - waveY);
-            const float centerY  = (float)waveY + (float)waveH * 0.5f;
-            const float halfH    = (float)waveH * 0.5f - 1.0f;
-
-            // Centre line
-            g.setColour(border.withAlpha(0.4f));
-            g.drawHorizontalLine((int)std::round(centerY),
-                                 (float)previewX, (float)(previewX + previewW));
-
-            // Build / retrieve waveform cache.
-            // Key: (pathHash, fileWidthPx) — NO lenKey.  The cache always
-            // represents the file at its native zoom-level width.  Tiling in
-            // the render loop below handles clips longer than the file.
-            const size_t pathHash = std::hash<std::string>{}(clip.audioFilePath.toStdString());
-            const double bpm_  = (project != nullptr) ? project->bpm : 120.0;
-            const double spb_  = 44100.0 * 60.0 / bpm_;   // samples per beat (display SR)
-
-            int fileWidthPx = 1;
-            if (getAudioBuffer)
-            {
-                auto buf = getAudioBuffer(clip.audioFilePath);
-                if (buf != nullptr && buf->getNumSamples() > 0)
-                {
-                    const double fileBars_ = (double)buf->getNumSamples() / (spb_ * 4.0);
-                    fileWidthPx = juce::jmax(1, (int)std::round(fileBars_ * barWidth));
-                    const auto ck = std::make_pair(pathHash, fileWidthPx);
-                    if (audioWaveCache_.find(ck) == audioWaveCache_.end())
-                        audioWaveCache_[ck] = buildAudioWave(*buf, fileWidthPx);
-                }
-            }
-
-            const auto   cacheKey = std::make_pair(pathHash, fileWidthPx);
-            auto it = audioWaveCache_.find(cacheKey);
-
-            if (it != audioWaveCache_.end())
-            {
-                const auto& wave = it->second;
-                const int wLen = (int)wave.size();
-                if (wLen > 1)
-                {
-                    // Build flat arrays for Lanczos-3
-                    std::vector<float> maxArr(wLen), minArr(wLen);
-                    for (int i = 0; i < wLen; ++i)
-                        { maxArr[i] = wave[i].max; minArr[i] = wave[i].min; }
-
-                    std::vector<std::pair<float,float>> topPts, botPts;
-                    topPts.reserve(previewW * 2 + 2);
-                    botPts.reserve(previewW * 2 + 2);
-                    static constexpr float kStep = 0.5f;
-                    const float fwPx = (float)fileWidthPx;
-
-                    // Slip offset: convert sourceOffsetSamples → pixels in file space
-                    const float offsetPx = (fileWidthPx > 0 && getAudioBuffer)
-                        ? [&]() -> float {
-                            auto buf_ = getAudioBuffer(clip.audioFilePath);
-                            if (buf_ == nullptr || buf_->getNumSamples() <= 0) return 0.0f;
-                            return clip.sourceOffsetSamples / (float)buf_->getNumSamples() * fwPx;
-                          }()
-                        : 0.0f;
-
-                    for (float fpx = 0.0f; fpx <= (float)(previewW - 1); fpx += kStep)
-                    {
-                        // Loop-tile with slip: shift by offsetPx, then wrap into file width
-                        const float cx  = std::fmod(std::fmod(fpx + offsetPx, fwPx) + fwPx, fwPx);
-                        const float sx  = juce::jlimit(0.0f, (float)(wLen - 1), cx);
-                        float wMx = lerpL3(maxArr.data(), wLen, sx);
-                        float wMn = lerpL3(minArr.data(), wLen, sx);
-                        wMx = juce::jlimit(-1.0f, 1.0f, wMx);
-                        wMn = juce::jlimit(-1.0f, 1.0f, wMn);
-                        const float gx = (float)previewX + fpx;
-                        topPts.push_back({ gx, centerY - wMx * halfH });
-                        botPts.push_back({ gx, centerY - wMn * halfH });
-                    }
-
-                    if (!topPts.empty())
-                    {
-                        // Halo fill
-                        juce::Path haloShape;
-                        haloShape.startNewSubPath(topPts[0].first, topPts[0].second);
-                        for (size_t i = 1; i < topPts.size(); ++i)
-                            haloShape.lineTo(topPts[i].first, topPts[i].second);
-                        for (int i = (int)botPts.size() - 1; i >= 0; --i)
-                            haloShape.lineTo(botPts[i].first, botPts[i].second);
-                        haloShape.closeSubPath();
-                        g.setColour(border.withAlpha(0.22f));
-                        g.fillPath(haloShape);
-
-                        // Core fill
-                        juce::Path coreShape;
-                        coreShape.startNewSubPath(topPts[0].first, topPts[0].second + 0.5f);
-                        for (size_t i = 1; i < topPts.size(); ++i)
-                            coreShape.lineTo(topPts[i].first, topPts[i].second + 0.5f);
-                        for (int i = (int)botPts.size() - 1; i >= 0; --i)
-                            coreShape.lineTo(botPts[i].first, botPts[i].second - 0.5f);
-                        coreShape.closeSubPath();
-                        g.setColour(border.withAlpha(0.60f));
-                        g.fillPath(coreShape);
-
-                        // Bright edge strokes
-                        juce::Path edgeTop, edgeBot;
-                        edgeTop.startNewSubPath(topPts[0].first, topPts[0].second);
-                        edgeBot.startNewSubPath(botPts[0].first, botPts[0].second);
-                        for (size_t i = 1; i < topPts.size(); ++i)
-                        {
-                            edgeTop.lineTo(topPts[i].first, topPts[i].second);
-                            edgeBot.lineTo(botPts[i].first, botPts[i].second);
-                        }
-                        g.setColour(border.brighter(0.8f).withAlpha(0.85f));
-                        g.strokePath(edgeTop, juce::PathStrokeType(1.0f));
-                        g.strokePath(edgeBot, juce::PathStrokeType(1.0f));
-
-                        // Loop separator — thin vertical line at each tile boundary
-                        g.setColour(border.brighter(1.2f).withAlpha(0.45f));
-                        for (int tx = fileWidthPx; tx < previewW; tx += fileWidthPx)
-                            g.drawLine((float)(previewX + tx), (float)waveY,
-                                       (float)(previewX + tx), (float)waveBot, 0.8f);
-                    }
-                }
-            }
-        }
-
-        // Fade-in / fade-out overlay triangles (all clip types)
+        // ---- Fade overlays ----
         if (w > 4)
         {
-            const float fadeInPx  = clip.fadeInBars  * (float)barWidth;
-            const float fadeOutPx = clip.fadeOutBars * (float)barWidth;
-
-            if (fadeInPx > 0.5f)
+            const float fiPx = clip.fadeInBars  * (float)barWidth;
+            const float foPx = clip.fadeOutBars * (float)barWidth;
+            if (fiPx > 0.5f)
             {
-                const float ex = juce::jmin(fadeInPx, (float)w);
+                const float ex = juce::jmin(fiPx, (float)w);
                 juce::Path tri;
-                tri.addTriangle((float)x + 1,        (float)ty,
-                                (float)x + 1 + ex,   (float)ty,
-                                (float)x + 1,        (float)(ty + h));
-                g.setColour(juce::Colours::black.withAlpha(0.45f));
+                tri.addTriangle((float)x + 1, (float)ty, (float)x + 1 + ex, (float)ty, (float)x + 1, (float)(ty + h));
+                g.setColour(juce::Colours::black.withAlpha(0.35f));
                 g.fillPath(tri);
-                // drag handle dot at fade edge, top of clip
-                g.setColour(juce::Colours::white.withAlpha(0.8f));
+                g.setColour(juce::Colours::white.withAlpha(0.7f));
                 g.fillEllipse((float)x + 1 + ex - 4.0f, (float)ty, 8.0f, 8.0f);
             }
-
-            if (fadeOutPx > 0.5f)
+            if (foPx > 0.5f)
             {
-                const float ex = juce::jmin(fadeOutPx, (float)w);
+                const float ex = juce::jmin(foPx, (float)w);
                 const float rx = (float)(x + 1 + w);
                 juce::Path tri;
-                tri.addTriangle(rx,        (float)ty,
-                                rx - ex,   (float)ty,
-                                rx,        (float)(ty + h));
-                g.setColour(juce::Colours::black.withAlpha(0.45f));
+                tri.addTriangle(rx, (float)ty, rx - ex, (float)ty, rx, (float)(ty + h));
+                g.setColour(juce::Colours::black.withAlpha(0.35f));
                 g.fillPath(tri);
-                // drag handle dot
-                g.setColour(juce::Colours::white.withAlpha(0.8f));
+                g.setColour(juce::Colours::white.withAlpha(0.7f));
                 g.fillEllipse(rx - ex - 4.0f, (float)ty, 8.0f, 8.0f);
             }
         }
 
-        juce::String assignedPatternName;
-        if (project != nullptr && hasPattern)
+        // ---- Slip edit labels (kept for drag feedback) ----
+        if (!isAudio && clip.patternStartOffsetBars != clip.originalPatternStartOffsetBars
+            && clip.id == patSlipClipId && w > 40)
         {
-            for (const auto& pattern : project->patterns)
-            {
-                if (pattern.id == clip.patternId)
-                {
-                    assignedPatternName = pattern.name;
-                    break;
-                }
-            }
-        }
-
-        g.setColour(juce::Colour(0xfff7f1e2));
-        g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
-        juce::String clipLabel;
-        if (isAudioClip)
-        {
-            clipLabel = clip.name.isNotEmpty() ? clip.name
-                                               : juce::File(clip.audioFilePath).getFileNameWithoutExtension();
-        }
-        else if (hasPattern)
-        {
-            const auto clipName = clip.name.isNotEmpty() ? clip.name : "Clip " + juce::String(clip.id);
-            clipLabel = assignedPatternName.isNotEmpty()
-                ? clipName + "  [" + assignedPatternName + "]"
-                : clipName;
-        }
-        else
-        {
-            clipLabel = clip.name.isNotEmpty() ? clip.name + " (Unassigned)" : "Unassigned Clip";
-        }
-        g.drawText(clipLabel, x + 6, ty + 1, w - 14, 12, juce::Justification::centredLeft);
-
-        // Show variation letter (A/B/C/D) in top-right of clip
-        if (hasPattern && w > 20)
-        {
-            const juce::String varLetter = juce::String::charToString('A' + clip.variationIdx);
+            const juce::String txt = juce::String(clip.patternStartOffsetBars, 2) + " bar";
             g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
-            g.setColour(juce::Colours::white.withAlpha(0.7f));
-            g.drawText(varLetter, x + w - 14, ty + 2, 12, 10, juce::Justification::right);
+            const int lblX = x + (w - 48) / 2;
+            g.setColour(juce::Colour(0xff604020).withAlpha(0.85f));
+            g.fillRoundedRectangle((float)lblX, (float)(ty + h/2 - 6), 48.0f, 12.0f, 3.0f);
+            g.setColour(juce::Colour(0xffffd080));
+            g.drawText(txt, lblX, ty + h/2 - 6, 48, 12, juce::Justification::centred);
+        }
+        if (isAudio && clip.sourceOffsetSamples != clip.originalSourceOffsetSamples
+            && clip.id == slipDraggingClipId && w > 40)
+        {
+            const double bpmL = (project != nullptr) ? project->bpm : 120.0;
+            const float offsetBars = (float)((double)clip.sourceOffsetSamples / (44100.0 * 60.0 / bpmL * 4.0));
+            g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+            const juce::String txt = juce::String(offsetBars, 2) + " bar";
+            const int lblX = x + (w - 48) / 2;
+            g.setColour(juce::Colour(0xff102040).withAlpha(0.85f));
+            g.fillRoundedRectangle((float)lblX, (float)(ty + h/2 - 6), 48.0f, 12.0f, 3.0f);
+            g.setColour(juce::Colour(0xff80d0ff));
+            g.drawText(txt, lblX, ty + h/2 - 6, 48, 12, juce::Justification::centred);
         }
 
-        // Pattern slip offset indicator
-        if (!isAudioClip && clip.patternStartOffsetBars != clip.originalPatternStartOffsetBars)
-        {
-            const juce::String offsetLabel = juce::String(clip.patternStartOffsetBars, 2) + " bar";
-            if (clip.id == patSlipClipId)
-            {
-                g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-                const int lblW = 64, lblH = 13;
-                const int lblX = x + (w - lblW) / 2;
-                const int lblY = ty + h / 2 - lblH / 2;
-                g.setColour(juce::Colour(0xff604020).withAlpha(0.85f));
-                g.fillRoundedRectangle((float)lblX, (float)lblY, (float)lblW, (float)lblH, 3.0f);
-                g.setColour(juce::Colour(0xffffd080));
-                g.drawText(offsetLabel, lblX, lblY, lblW, lblH, juce::Justification::centred);
-            }
-            else if (w > 40)
-            {
-                g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
-                g.setColour(juce::Colour(0xffffd080).withAlpha(0.85f));
-                g.drawText(offsetLabel, x + 4, ty + 1, w - 8, 12, juce::Justification::centredRight);
-            }
-        }
+        // (isAudioClip, hasPattern, isSlipTarget kept as unused — suppress warnings)
+        (void)isAudio;
+    }
 
-        // Audio slip offset indicator: shown during active drag or when offset != original
-        if (isAudioClip && clip.sourceOffsetSamples != clip.originalSourceOffsetSamples)
-        {
-            const double bpmLocal_    = (project != nullptr) ? project->bpm : 120.0;
-            const double spBar_       = 44100.0 * 60.0 / bpmLocal_ * 4.0;
-            const float  offsetBars   = (float)((double)clip.sourceOffsetSamples / spBar_);
-            juce::String offsetLabel  = juce::String(offsetBars, 2) + " bar";
-            if (clip.id == slipDraggingClipId)
-            {
-                // During drag: gold pill badge at clip centre
-                g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-                const int lblW = 64, lblH = 13;
-                const int lblX = x + (w - lblW) / 2;
-                const int lblY = ty + h / 2 - lblH / 2;
-                g.setColour(juce::Colour(0xff604020).withAlpha(0.85f));
-                g.fillRoundedRectangle((float)lblX, (float)lblY, (float)lblW, (float)lblH, 3.0f);
-                g.setColour(juce::Colour(0xffffd080));
-                g.drawText(offsetLabel, lblX, lblY, lblW, lblH, juce::Justification::centred);
-            }
-            else if (w > 40)
-            {
-                // Idle: small gold text at top-right corner
-                g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
-                g.setColour(juce::Colour(0xffffd080).withAlpha(0.85f));
-                g.drawText(offsetLabel, x + 4, ty + 1, w - 8, 12, juce::Justification::centredRight);
-            }
-        }
+    // Audio drag hover indicator
+    if (audioDragHover_ && audioDragHoverTrack_ >= 0)
+    {
+        const int hY = headerHeight + audioDragHoverTrack_ * (trackHeight + trackGap);
+        g.setColour(juce::Colour(StudioLookAndFeel::kAccent).withAlpha(0.25f));
+        g.fillRect((int)audioDragHoverX_, hY, 4, trackHeight);
     }
 }
+
 
 inline void PlaylistComponent::drawPlayhead(juce::Graphics& g)
 {
     if (playheadBar < 0.0) return;
-    const int x = trackHeaderWidth + (int)(playheadBar * barWidth);
+    const float px = (float)(trackHeaderWidth + (int)(playheadBar * barWidth));
+
+    // Glow
+    g.setColour(juce::Colour(0xffff3333).withAlpha(0.25f));
+    g.fillRect(px - 2.0f, (float)kPlaylistHdrH, 5.0f, (float)(getHeight() - kPlaylistHdrH));
+
+    // Main 2px line (starts at ruler, goes to bottom)
     g.setColour(juce::Colour(0xffff3333));
-    g.drawLine((float)x, 0.0f, (float)x, (float)getHeight(), 2.0f);
+    g.drawLine(px, (float)kPlaylistHdrH, px, (float)getHeight(), 2.0f);
+
+    // Triangle cap in ruler
     juce::Path tri;
-    tri.addTriangle((float)x - 6, 0.0f, (float)x + 6, 0.0f, (float)x, 12.0f);
+    tri.addTriangle(px - 5.0f, (float)kPlaylistHdrH,
+                    px + 5.0f, (float)kPlaylistHdrH,
+                    px,        (float)(kPlaylistHdrH + 10));
+    g.setColour(juce::Colour(0xffff3333));
     g.fillPath(tri);
 }
+
 
 // ---------------------------------------------------------------------------
 // Hit testing helpers
@@ -1216,7 +1132,6 @@ inline int PlaylistComponent::fadeHandleAt(const PlaylistClip& clip, int mouseX,
     const int cx  = trackHeaderWidth + (int)(clip.startBar    * barWidth);
     const int cw  = juce::jmin((int)(clip.lengthBars * barWidth) - 2, getWidth() * 4);
     const int cy  = headerHeight + clip.trackIndex * (trackHeight + trackGap) + 3;
-    const int ch  = trackHeight - 6;
     if (cw <= 0) return 0;
     // Fade handles occupy the top 8px of the clip, 14px wide at each edge
     if (mouseY < cy || mouseY > cy + 8) return 0;
@@ -1232,6 +1147,28 @@ inline int PlaylistComponent::fadeHandleAt(const PlaylistClip& clip, int mouseX,
 inline void PlaylistComponent::mouseDown(const juce::MouseEvent& e)
 {
     const auto pos = e.getPosition();
+
+    // Click in PLAYLIST header strip → check snap buttons
+    if (pos.y < kPlaylistHdrH)
+    {
+        if (!e.mods.isRightButtonDown())
+        {
+            const int snapDivs[] = { 1, 2, 4, 0 };
+            const int snapBtnW[] = { 30, 20, 20, 36 };
+            int bx = 244;
+            for (int i = 0; i < 4; ++i)
+            {
+                if (pos.x >= bx && pos.x < bx + snapBtnW[i])
+                {
+                    snapDivisor = snapDivs[i];
+                    repaint();
+                    return;
+                }
+                bx += snapBtnW[i];
+            }
+        }
+        return;
+    }
 
     // Click on time ruler → seek
     if (pos.y < headerHeight)
