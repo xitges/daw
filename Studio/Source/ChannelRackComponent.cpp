@@ -394,7 +394,7 @@ void ChannelRackComponent::refreshInspector()
 
     const juce::String chName = (inspectorCh < (int)channels.size())
                                 ? channels[(size_t)inspectorCh].name : "Ch";
-    inspectorLabel.setText("Step " + juce::String(inspectorStep + 1) + "  \xe2\x80\x94  " + chName,
+    inspectorLabel.setText("Step " + juce::String(inspectorStep + 1) + juce::String::fromUTF8("  \xe2\x80\x94  ") + chName,
                            juce::dontSendNotification);
 }
 

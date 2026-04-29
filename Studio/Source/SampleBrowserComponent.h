@@ -1,6 +1,6 @@
 /*
   ==============================================================================
-    SampleBrowserComponent.h  —  M15 Sample Browser panel
+    SampleBrowserComponent.h  —  Sample Browser (reference: browser.jsx)
     Header-only inline implementation.
   ==============================================================================
 */
@@ -12,194 +12,369 @@
 class SampleBrowserComponent : public juce::Component
 {
 public:
-    // Fired when the user clicks a file — wire to audioEngine.previewBrowserFile()
     std::function<void(juce::File)> onPreviewFile;
-
-    // Fired when the Stop button is clicked — wire to audioEngine.stopBrowserPreview()
-    std::function<void()> onStopPreview;
-
-    // Fired when the in-header collapse button is clicked
-    std::function<void()> onCollapseClicked;
+    std::function<void()>           onStopPreview;
+    std::function<void()>           onCollapseClicked;
+    std::function<void(juce::File)> onDropToTrack;
 
     SampleBrowserComponent()
     {
-        addFolderBtn.setButtonText("+ FOLDER");
-        addFolderBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(StudioLookAndFeel::kChassis));
-        addFolderBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(StudioLookAndFeel::kText));
-        addFolderBtn.onClick = [this] { chooseAndAddBookmark(); };
-        addAndMakeVisible(addFolderBtn);
+        using LF = StudioLookAndFeel;
 
-        stopPreviewBtn.setButtonText("STOP");
-        stopPreviewBtn.setColour(juce::TextButton::buttonColourId,  juce::Colour(StudioLookAndFeel::kAccent).withAlpha(0.18f));
-        stopPreviewBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(StudioLookAndFeel::kAccent));
-        stopPreviewBtn.onClick = [this] { if (onStopPreview) onStopPreview(); };
-        addAndMakeVisible(stopPreviewBtn);
+        // ---- Search prefix label "›" (VT323, displayFg) ----
+        searchPrefix_.setText(juce::String::fromUTF8("\xe2\x80\xba"), juce::dontSendNotification);
+        searchPrefix_.setFont(LF::displayFont(15.0f));
+        searchPrefix_.setColour(juce::Label::textColourId,
+                                juce::Colour(LF::kDisplayFg).withAlpha(0.9f));
+        searchPrefix_.setColour(juce::Label::backgroundColourId, juce::Colours::transparentBlack);
+        searchPrefix_.setJustificationType(juce::Justification::centred);
+        addAndMakeVisible(searchPrefix_);
 
-        searchField.setTextToShowWhenEmpty("Search...", juce::Colour(StudioLookAndFeel::kTextFaint));
-        searchField.setColour(juce::TextEditor::backgroundColourId, juce::Colour(StudioLookAndFeel::kDisplayBg));
-        searchField.setColour(juce::TextEditor::textColourId,       juce::Colour(StudioLookAndFeel::kDisplayFg));
-        searchField.setColour(juce::TextEditor::outlineColourId,    juce::Colour(StudioLookAndFeel::kPanelRim));
-        searchField.onTextChange = [this] { rebuildList(); };
-        addAndMakeVisible(searchField);
+        // ---- Search hint "⌘F" ----
+        searchHint_.setText(juce::String::fromUTF8("\xe2\x8c\x98") + "F",
+                            juce::dontSendNotification);
+        searchHint_.setFont(LF::monoFont(7.5f));
+        searchHint_.setColour(juce::Label::textColourId,
+                              juce::Colour(LF::kDisplayFg).withAlpha(0.45f));
+        searchHint_.setColour(juce::Label::backgroundColourId, juce::Colours::transparentBlack);
+        searchHint_.setJustificationType(juce::Justification::centred);
+        addAndMakeVisible(searchHint_);
 
-        collapseBtn.setButtonText("<");
-        collapseBtn.setColour(juce::TextButton::buttonColourId,  juce::Colour(StudioLookAndFeel::kChassis));
-        collapseBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(StudioLookAndFeel::kTextDim));
-        collapseBtn.onClick = [this] { if (onCollapseClicked) onCollapseClicked(); };
-        addAndMakeVisible(collapseBtn);
+        // ---- Search field (transparent bg — dark rect painted behind it) ----
+        searchField_.setTextToShowWhenEmpty("search sounds...",
+                                            juce::Colour(LF::kDisplayFg).withAlpha(0.3f));
+        searchField_.setColour(juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
+        searchField_.setColour(juce::TextEditor::textColourId,       juce::Colour(LF::kDisplayFg));
+        searchField_.setColour(juce::TextEditor::outlineColourId,    juce::Colours::transparentBlack);
+        searchField_.setColour(juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
+        searchField_.setFont(LF::displayFont(13.0f));
+        searchField_.onTextChange = [this] { rebuildList(); };
+        addAndMakeVisible(searchField_);
 
-        for (auto* b : { &samplesTabBtn, &patchesTabBtn, &loopsTabBtn })
+        // ---- Tabs ----
+        const auto setupTab = [&](juce::TextButton& b)
         {
-            addAndMakeVisible(*b);
-            b->setClickingTogglesState(false);
-            b->setColour(juce::TextButton::buttonColourId, juce::Colour(StudioLookAndFeel::kChassis).darker(0.03f));
-            b->setColour(juce::TextButton::textColourOffId, juce::Colour(StudioLookAndFeel::kTextDim));
-        }
-        samplesTabBtn.onClick = [this] { activeTab_ = 0; updateTabButtons(); };
-        patchesTabBtn.onClick = [this] { activeTab_ = 1; updateTabButtons(); };
-        loopsTabBtn.onClick   = [this] { activeTab_ = 2; updateTabButtons(); };
-        updateTabButtons();
+            addAndMakeVisible(b);
+            b.setClickingTogglesState(false);
+        };
+        setupTab(samplesBtn_);
+        setupTab(patchesBtn_);
+        setupTab(loopsBtn_);
+        samplesBtn_.onClick = [this] { activeTab_ = 0; updateTabs(); };
+        patchesBtn_.onClick = [this] { activeTab_ = 1; updateTabs(); };
+        loopsBtn_.onClick   = [this] { activeTab_ = 2; updateTabs(); };
+        updateTabs();
 
-        listViewport.setViewedComponent(&listContent, false);
-        listViewport.setScrollBarsShown(true, false);
-        listViewport.setScrollBarThickness(6);
-        addAndMakeVisible(listViewport);
+        // ---- Collapse button ----
+        collapseBtn_.setButtonText(juce::String::fromUTF8("\xc2\xab")); // «
+        collapseBtn_.setColour(juce::TextButton::buttonColourId,  juce::Colours::transparentBlack);
+        collapseBtn_.setColour(juce::TextButton::textColourOffId, juce::Colour(LF::kTextDim));
+        collapseBtn_.onClick = [this] { if (onCollapseClicked) onCollapseClicked(); };
+        addAndMakeVisible(collapseBtn_);
+
+        // ---- Footer: "+ DROP TO TRACK" ----
+        dropToTrackBtn_.setButtonText("+ DROP TO TRACK");
+        dropToTrackBtn_.setColour(juce::TextButton::buttonColourId,  juce::Colour(LF::kAccent));
+        dropToTrackBtn_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+        dropToTrackBtn_.onClick = [this]
+        {
+            if (currentPreviewFile_.existsAsFile())
+            {
+                if (onDropToTrack) onDropToTrack(currentPreviewFile_);
+            }
+        };
+        addAndMakeVisible(dropToTrackBtn_);
+
+        // ---- Footer: "★" favorite ----
+        favoriteBtn_.setButtonText(juce::String::fromUTF8("\xe2\x98\x85"));
+        favoriteBtn_.setColour(juce::TextButton::buttonColourId,  juce::Colours::transparentBlack);
+        favoriteBtn_.setColour(juce::TextButton::textColourOffId, juce::Colour(LF::kTextDim));
+        addAndMakeVisible(favoriteBtn_);
+
+        // ---- Footer: "EDIT" → add folder ----
+        addFolderBtn_.setButtonText("EDIT");
+        addFolderBtn_.setColour(juce::TextButton::buttonColourId,  juce::Colours::transparentBlack);
+        addFolderBtn_.setColour(juce::TextButton::textColourOffId, juce::Colour(LF::kTextDim));
+        addFolderBtn_.setTooltip("Add sample folder bookmark");
+        addFolderBtn_.onClick = [this] { chooseAndAddBookmark(); };
+        addAndMakeVisible(addFolderBtn_);
+
+        // ---- List viewport ----
+        listViewport_.setViewedComponent(&listContent_, false);
+        listViewport_.setScrollBarsShown(true, false);
+        listViewport_.setScrollBarThickness(5);
+        addAndMakeVisible(listViewport_);
 
         loadBookmarks();
         rebuildList();
     }
 
+    // ---- public API ----
+    void setCurrentPreviewName(const juce::String& name)
+    {
+        currentPreviewName_ = name;
+        repaint();
+    }
+
+    static void closeSettings() { getProps().closeFiles(); }
+
     void paint(juce::Graphics& g) override
     {
         using LF = StudioLookAndFeel;
+        const float W  = (float)getWidth();
+        const float H  = (float)getHeight();
+        const float hdr = (float)kHdrH;
+        const float ftr = (float)kFtrH;
 
-        juce::ColourGradient panelGrad(juce::Colour(LF::kPanel), 0.0f, 0.0f,
-                                       juce::Colour(LF::kChassis), 0.0f, (float)getHeight(),
-                                       false);
-        g.setGradientFill(panelGrad);
-        g.fillAll();
-
-        auto bounds = getLocalBounds().toFloat().reduced(0.5f);
-        g.setColour(juce::Colours::white.withAlpha(0.28f));
-        g.drawRoundedRectangle(bounds, 7.0f, 1.0f);
-
-        g.setColour(juce::Colour(LF::kPanelRim));
-        g.drawLine(0.0f, 29.0f, (float)getWidth(), 29.0f, 1.0f);
-
-        g.setColour(juce::Colour(LF::kText));
-        g.setFont(StudioLookAndFeel::monoFont(10.0f, juce::Font::bold));
-        g.drawText("SAMPLE BROWSER", 10, 6, getWidth() - 20, 12, juce::Justification::centredLeft);
-
-        auto tag = juce::Rectangle<int>(getWidth() - 88, 5, 78, 14);
-        g.setColour(juce::Colour(LF::kChassis));
-        g.fillRoundedRectangle(tag.toFloat(), 3.0f);
-        g.setColour(juce::Colour(LF::kPanelRim));
-        g.drawRoundedRectangle(tag.toFloat(), 3.0f, 1.0f);
-        g.setColour(juce::Colour(LF::kTextFaint));
-        g.setFont(StudioLookAndFeel::monoFont(8.0f, juce::Font::bold));
-        g.drawText("1,284 SOUNDS", tag, juce::Justification::centred);
-
-        auto footer = getLocalBounds().removeFromBottom(74);
-        g.setColour(juce::Colour(LF::kPanelRim));
-        g.drawLine(0.0f, (float)footer.getY(), (float)getWidth(), (float)footer.getY(), 1.0f);
-
-        g.setColour(juce::Colour(LF::kTextFaint));
-        g.setFont(StudioLookAndFeel::monoFont(8.0f, juce::Font::bold));
-        g.drawText("NOW PREVIEWING", 10, footer.getY() + 6, 120, 10, juce::Justification::centredLeft);
-        g.setColour(juce::Colour(LF::kText));
-        g.setFont(StudioLookAndFeel::monoFont(10.0f, juce::Font::bold));
-        g.drawText(currentPreviewName_.isNotEmpty() ? currentPreviewName_ : "none selected",
-                   10, footer.getY() + 18, getWidth() - 34, 12, juce::Justification::centredLeft, true);
-
-        g.setColour(juce::Colour(LF::kLedGreen));
-        g.fillEllipse((float)getWidth() - 20.0f, (float)footer.getY() + 18.0f, 7.0f, 7.0f);
-
-        auto display = juce::Rectangle<float>(10.0f, (float)footer.getY() + 34.0f,
-                                              (float)getWidth() - 20.0f, 28.0f);
-        g.setColour(juce::Colour(LF::kDisplayBg));
-        g.fillRoundedRectangle(display, 3.0f);
-        g.setColour(juce::Colours::black.withAlpha(0.55f));
-        g.drawRoundedRectangle(display, 3.0f, 1.0f);
-        g.setColour(juce::Colour(LF::kDisplayFg).withAlpha(0.75f));
-        for (int i = 0; i < (int)display.getWidth() - 8; i += 3)
+        // ============================================================
+        // Container: panel bg + border + top inset highlight
+        // ============================================================
         {
-            const float amp = std::sin((float)i * 0.14f + 0.8f) * 6.0f + std::sin((float)i * 0.05f) * 2.0f;
-            const float cx = display.getX() + 4.0f + (float)i;
-            const float mid = display.getCentreY();
-            g.drawLine(cx, mid - amp, cx, mid + amp, 1.0f);
+            const juce::Rectangle<float> bounds(0.5f, 0.5f, W - 1.0f, H - 1.0f);
+            g.setColour(juce::Colour(LF::kPanel));
+            g.fillRoundedRectangle(bounds, 8.0f);
+            g.setColour(juce::Colour(LF::kPanelRim));
+            g.drawRoundedRectangle(bounds, 8.0f, 1.0f);
+            // Top inset highlight
+            g.setColour(juce::Colours::white.withAlpha(0.5f));
+            g.drawLine(8.0f, 1.0f, W - 8.0f, 1.0f, 1.0f);
+        }
+
+        // ============================================================
+        // Header: chassis gradient bg + bottom rule
+        // ============================================================
+        {
+            juce::ColourGradient hdrBg(juce::Colour(LF::kChassis),  0.0f, 0.0f,
+                                       juce::Colour(LF::kChassis2), 0.0f, hdr,  false);
+            g.setGradientFill(hdrBg);
+            // Fill with top-rounded, bottom-flat rect
+            g.fillRoundedRectangle(0.5f, 0.5f, W - 1.0f, hdr, 8.0f);
+            g.fillRect(0.5f, hdr * 0.5f, W - 1.0f, hdr * 0.5f);
+            g.setColour(juce::Colour(LF::kPanelRim));
+            g.drawLine(1.0f, hdr, W - 1.0f, hdr, 1.0f);
+
+            // Row 1: accent square + "BROWSER" + count tag
+            const int by = 10;
+            // Accent square 8×8 r=2
+            g.setColour(juce::Colour(LF::kAccent));
+            g.fillRoundedRectangle(12.0f, (float)by + 2.0f, 8.0f, 8.0f, 2.0f);
+            // "BROWSER"
+            g.setFont(LF::monoFont(10.0f, juce::Font::bold));
+            g.setColour(juce::Colour(LF::kText));
+            g.drawText("BROWSER", 28, by, 80, 14, juce::Justification::centredLeft);
+            // Count tag
+            const juce::Rectangle<float> tag(W - 90.0f, (float)by - 1.0f, 78.0f, 14.0f);
+            g.setColour(juce::Colour(LF::kChassis2).withAlpha(0.7f));
+            g.fillRoundedRectangle(tag, 3.0f);
+            g.setColour(juce::Colour(LF::kPanelRim));
+            g.drawRoundedRectangle(tag, 3.0f, 0.5f);
+            g.setFont(LF::monoFont(7.5f, juce::Font::bold));
+            g.setColour(juce::Colour(LF::kTextFaint));
+            g.drawText("1,284 SOUNDS", tag.reduced(2.0f, 0.0f).toNearestInt(),
+                       juce::Justification::centred);
+
+            // Search box bg (drawn behind child TextEditor / Labels)
+            if (searchBoxBounds_.getWidth() > 0)
+            {
+                const juce::Rectangle<float> sb(searchBoxBounds_.toFloat());
+                g.setColour(juce::Colour(LF::kDisplayBg));
+                g.fillRoundedRectangle(sb, 3.0f);
+                // Inset shadow
+                g.setColour(juce::Colour(0x30000000));
+                g.fillRoundedRectangle(sb.withHeight(4.0f), 3.0f);
+                g.setColour(juce::Colour(0x80000000));
+                g.drawRoundedRectangle(sb.reduced(0.5f), 3.0f, 1.0f);
+            }
+        }
+
+        // ============================================================
+        // Footer: chassis-2→chassis gradient bg + top rule
+        // ============================================================
+        {
+            const float fy = H - ftr;
+            juce::ColourGradient ftrBg(juce::Colour(LF::kChassis2), 0.0f, fy,
+                                       juce::Colour(LF::kChassis),  0.0f, H,  false);
+            g.setGradientFill(ftrBg);
+            g.fillRoundedRectangle(0.5f, fy, W - 1.0f, ftr - 0.5f, 8.0f);
+            // Flat top half to avoid double corner radius
+            g.fillRect(0.5f, fy, W - 1.0f, ftr * 0.5f);
+            g.setColour(juce::Colour(LF::kPanelRim));
+            g.drawLine(1.0f, fy, W - 1.0f, fy, 1.0f);
+
+            const int px = 10, pw = (int)W - 20;
+            int ry = (int)fy + 6;
+
+            // "NOW PREVIEWING" label
+            g.setFont(LF::monoFont(7.5f, juce::Font::bold));
+            g.setColour(juce::Colour(LF::kTextFaint));
+            g.drawText("NOW PREVIEWING", px, ry, pw - 18, 10,
+                       juce::Justification::centredLeft);
+            // Green LED dot
+            const juce::Colour ledCol = currentPreviewName_.isNotEmpty()
+                ? juce::Colour(LF::kLedGreen) : juce::Colour(LF::kLedOff);
+            g.setColour(ledCol);
+            g.fillEllipse(W - 18.0f, (float)ry + 1.5f, 7.0f, 7.0f);
+
+            ry += 13;
+            // Filename
+            g.setFont(LF::monoFont(10.0f, juce::Font::bold));
+            g.setColour(juce::Colour(LF::kText));
+            const juce::String name = currentPreviewName_.isNotEmpty()
+                                     ? currentPreviewName_ : "none selected";
+            g.drawText(name, px, ry, pw, 13, juce::Justification::centredLeft, true);
+
+            ry += 16;
+            // Waveform display box
+            const juce::Rectangle<float> wdBox((float)px, (float)ry, (float)pw, 30.0f);
+            g.setColour(juce::Colour(LF::kDisplayBg));
+            g.fillRoundedRectangle(wdBox, 3.0f);
+            g.setColour(juce::Colour(0x28000000));
+            g.fillRoundedRectangle(wdBox.withHeight(5.0f), 3.0f);
+            g.setColour(juce::Colour(0x80000000));
+            g.drawRoundedRectangle(wdBox.reduced(0.5f), 3.0f, 1.0f);
+            // Mini waveform
+            drawMiniWave(g, wdBox.reduced(6.0f, 4.0f),
+                         previewSeed_,
+                         juce::Colour(LF::kDisplayFg).withAlpha(0.85f));
         }
     }
 
     void resized() override
     {
-        auto area = getLocalBounds();
-        auto hdr  = area.removeFromTop(28).reduced(2, 2);
-        addFolderBtn  .setBounds(hdr.removeFromLeft(84).reduced(1));
-        stopPreviewBtn.setBounds(hdr.removeFromLeft(48).reduced(1));
-        collapseBtn   .setBounds(hdr.removeFromRight(24).reduced(1)); // collapse tab on right
-        searchField   .setBounds(hdr.reduced(2, 0));                  // search fills middle
+        const int W = getWidth(), H = getHeight();
 
-        auto tabs = area.removeFromTop(24).reduced(8, 2);
-        const int tabW = (tabs.getWidth() - 4) / 3;
-        samplesTabBtn.setBounds(tabs.removeFromLeft(tabW));
-        tabs.removeFromLeft(2);
-        patchesTabBtn.setBounds(tabs.removeFromLeft(tabW));
-        tabs.removeFromLeft(2);
-        loopsTabBtn.setBounds(tabs);
+        // ---- Header widgets ----
+        {
+            // Row 1: brand (painted) + collapse btn far-right
+            collapseBtn_.setBounds(W - 26, 8, 20, 16);
 
-        area.removeFromBottom(74);
-        listViewport.setBounds(area);
+            // Row 2: tabs — y=32, h=22
+            const int tabY = 32, tabH = 22, tabX = 12, tabW = W - 24;
+            const int tw = (tabW - 4) / 3;
+            samplesBtn_.setBounds(tabX,                tabY, tw,              tabH);
+            patchesBtn_.setBounds(tabX + tw + 2,       tabY, tw,              tabH);
+            loopsBtn_  .setBounds(tabX + (tw + 2) * 2, tabY, tabW - (tw+2)*2, tabH);
+
+            // Row 3: search — y=60, h=26
+            const int sy = 60, sh = 26, sx = 12, sw = W - 24;
+            searchBoxBounds_ = { sx, sy, sw, sh };
+            searchPrefix_.setBounds(sx, sy, 20, sh);
+            searchHint_  .setBounds(sx + sw - 26, sy, 24, sh);
+            searchField_ .setBounds(sx + 20, sy + 3, sw - 48, sh - 6);
+        }
+
+        // ---- List viewport: header → footer ----
+        listViewport_.setBounds(0, kHdrH, W, H - kHdrH - kFtrH);
         updateListSize();
+
+        // ---- Footer widgets ----
+        {
+            const int btnY = H - kFtrH + 75;
+            const int btnH = 22, px = 10, pw = W - 20;
+            dropToTrackBtn_.setBounds(px,          btnY, pw - 60, btnH);
+            favoriteBtn_   .setBounds(px + pw - 58, btnY, 28,     btnH);
+            addFolderBtn_  .setBounds(px + pw - 28, btnY, 28,     btnH);
+        }
     }
 
-    static void closeSettings() { getProps().closeFiles(); }
-
 private:
-    // ---- data types -------------------------------------------------------
+    // ---- Constants ----
+    static constexpr int kHdrH   = 90;   // header height px
+    static constexpr int kFtrH   = 106;  // footer height px
+    static constexpr int kItemH  = 26;   // audio file row height
+    static constexpr int kFolderH = 22;  // folder row height (uniform for simplicity: use kItemH)
+
+    // ---- Data ----
     struct Item
     {
         enum class Type { Folder, AudioFile } type;
         juce::File file;
         int indent = 0;
     };
-
     juce::Array<juce::File> bookmarks;
-    juce::StringArray       expandedPaths;   // full paths of expanded folders
-    std::vector<Item>       items;
+    juce::StringArray        expandedPaths;
+    std::vector<Item>        items;
 
-    static constexpr int itemH = 24;
+    // ---- State ----
+    juce::String         currentPreviewName_;
+    juce::File           currentPreviewFile_;
+    int                  activeItemIdx_ = -1;
+    int                  previewSeed_   = 11;
+    int                  activeTab_     = 0;
+    juce::Rectangle<int> searchBoxBounds_;
 
-    // ---- widgets ----------------------------------------------------------
-    juce::TextButton addFolderBtn   { "+ FOLDER" };
-    juce::TextButton stopPreviewBtn { "STOP" };
-    juce::TextButton collapseBtn    { "<" };
-    juce::TextButton samplesTabBtn  { "SAMPLES" };
-    juce::TextButton patchesTabBtn  { "PATCHES" };
-    juce::TextButton loopsTabBtn    { "LOOPS" };
-    juce::TextEditor searchField;
-    juce::Viewport   listViewport;
+    // ---- Widgets ----
+    juce::Label      searchPrefix_;
+    juce::Label      searchHint_;
+    juce::TextEditor searchField_;
+    juce::TextButton samplesBtn_      { "SAMPLES" };
+    juce::TextButton patchesBtn_      { "PATCHES" };
+    juce::TextButton loopsBtn_        { "LOOPS"   };
+    juce::TextButton collapseBtn_;
+    juce::TextButton dropToTrackBtn_;
+    juce::TextButton favoriteBtn_;
+    juce::TextButton addFolderBtn_;
+    juce::Viewport   listViewport_;
+    std::shared_ptr<juce::FileChooser> fileChooser_;
 
-    std::shared_ptr<juce::FileChooser> fileChooser;
-    int activeTab_ = 0;
-    juce::String currentPreviewName_;
-
-    void updateTabButtons()
+    // ---- Helpers ----
+    static int hashSeed(const juce::String& s)
     {
-        auto apply = [](juce::TextButton& b, bool on)
+        unsigned int h = 5381u;
+        for (auto c : s) h = h * 31u + (unsigned)c;
+        return (int)(h % 997u) + 7;
+    }
+
+    static juce::Colour fileColor(const juce::String& name)
+    {
+        static const juce::uint32 pal[] = {
+            0xffd8412a, 0xffe89c2b, 0xff7ab87a, 0xff5fa8d8, 0xffb87ad6
+        };
+        unsigned int h = 0;
+        for (auto c : name) h = h * 31u + (unsigned)c;
+        return juce::Colour(pal[h % 5]);
+    }
+
+    // Draws a mini waveform (reference: miniWave() with LCG + sin modulation)
+    static void drawMiniWave(juce::Graphics& g,
+                             const juce::Rectangle<float>& rect,
+                             int seed, juce::Colour col)
+    {
+        const int N = 60;
+        const float step = rect.getWidth() / (float)N;
+        int s = seed;
+        g.setColour(col);
+        for (int i = 0; i < N; ++i)
+        {
+            s = (s * 9301 + 49297) % 233280;
+            const float r   = (float)s / 233280.0f;
+            const float env = std::sin((float)i / N * juce::MathConstants<float>::pi) * 0.7f + 0.3f;
+            const float v   = ((r - 0.5f) * 1.6f + std::sin((float)i * 0.3f) * 0.4f) * env;
+            const float bh  = std::abs(v) * (rect.getHeight() * 0.5f - 1.0f);
+            const float bx  = rect.getX() + (float)i * step;
+            const float by  = rect.getCentreY() - bh;
+            g.fillRect(bx, by, 0.8f, bh * 2.0f);
+        }
+    }
+
+    void updateTabs()
+    {
+        using LF = StudioLookAndFeel;
+        const auto style = [&](juce::TextButton& b, bool on)
         {
             b.setColour(juce::TextButton::buttonColourId,
-                        on ? juce::Colour(StudioLookAndFeel::kAccent)
-                           : juce::Colour(StudioLookAndFeel::kChassis).darker(0.03f));
+                        on ? juce::Colour(LF::kAccent)
+                           : juce::Colour(0x0d000000)); // rgba(0,0,0,0.05)
             b.setColour(juce::TextButton::textColourOffId,
-                        on ? juce::Colours::white : juce::Colour(StudioLookAndFeel::kTextDim));
+                        on ? juce::Colours::white : juce::Colour(LF::kTextDim));
         };
-        apply(samplesTabBtn, activeTab_ == 0);
-        apply(patchesTabBtn, activeTab_ == 1);
-        apply(loopsTabBtn,   activeTab_ == 2);
+        style(samplesBtn_, activeTab_ == 0);
+        style(patchesBtn_, activeTab_ == 1);
+        style(loopsBtn_,   activeTab_ == 2);
         repaint();
     }
 
-    // ---- inner list component ---------------------------------------------
+    // ---- Inner list component ----
     struct ListContent : public juce::Component
     {
         SampleBrowserComponent& owner;
@@ -209,96 +384,203 @@ private:
 
         explicit ListContent(SampleBrowserComponent& o) : owner(o) {}
 
+        int rowHeight(int i) const
+        {
+            return (owner.items[(size_t)i].type == Item::Type::Folder)
+                   ? kFolderH : kItemH;
+        }
+
+        int yForRow(int idx) const
+        {
+            int y = 0;
+            for (int i = 0; i < idx; ++i) y += rowHeight(i);
+            return y;
+        }
+
+        int rowAtY(int my) const
+        {
+            int y = 0;
+            for (int i = 0; i < (int)owner.items.size(); ++i)
+            {
+                const int h = rowHeight(i);
+                if (my >= y && my < y + h) return i;
+                y += h;
+            }
+            return -1;
+        }
+
         void paint(juce::Graphics& g) override
         {
             using LF = StudioLookAndFeel;
+            const int W = getWidth();
 
-            juce::ColourGradient listGrad(juce::Colour(LF::kPanel), 0.0f, 0.0f,
-                                          juce::Colour(LF::kChassis2), 0.0f, (float)getHeight(),
-                                          false);
-            g.setGradientFill(listGrad);
+            g.setColour(juce::Colour(LF::kPanel));
             g.fillAll();
 
+            int y = 0;
             for (int i = 0; i < (int)owner.items.size(); ++i)
             {
-                const auto& item    = owner.items[(size_t)i];
-                const bool isFolder = (item.type == Item::Type::Folder);
-                const int  rowY     = i * itemH;
-                const int  indentX  = item.indent * 14;
+                const auto& item     = owner.items[(size_t)i];
+                const bool  isFolder = (item.type == Item::Type::Folder);
+                const bool  isActive = (i == owner.activeItemIdx_);
+                const bool  isHover  = (i == hoveredIdx);
+                const int   rh       = isFolder ? kFolderH : kItemH;
+                const int   indent   = 8 + item.indent * 12;  // reference: 8 + depth*12
 
-                // Row background
-                g.setColour(i == hoveredIdx
-                    ? juce::Colour(LF::kAccent).withAlpha(0.08f)
-                    : isFolder ? juce::Colour(LF::kChassis).brighter(0.03f)
-                               : juce::Colour(LF::kPanel));
-                g.fillRect(0, rowY, getWidth(), itemH);
+                // Row bg
+                if (isActive)
+                {
+                    g.setColour(juce::Colour(LF::kAccent).withAlpha(isFolder ? 0.12f : 0.14f));
+                    g.fillRect(0, y, W, rh);
+                }
+                else if (isHover)
+                {
+                    g.setColour(juce::Colour(LF::kAccent).withAlpha(0.06f));
+                    g.fillRect(0, y, W, rh);
+                }
+
+                // Left border (active: 2px accent, else 2px transparent)
+                if (isActive)
+                {
+                    g.setColour(juce::Colour(LF::kAccent));
+                    g.fillRect(0, y, 2, rh);
+                }
 
                 if (isFolder)
                 {
-                    const bool exp = owner.expandedPaths.contains(
-                                         item.file.getFullPathName());
-                    g.setColour(juce::Colour(LF::kTextFaint));
-                    g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
-                    g.drawText(exp ? juce::String::fromUTF8("\xe2\x96\xbc")
-                                   : juce::String::fromUTF8("\xe2\x96\xb6"),
-                               4 + indentX, rowY, 12, itemH,
-                               juce::Justification::centredLeft);
-                    g.setColour(juce::Colour(LF::kAccent));
-                    g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f).withStyle("Bold")));
-                    g.drawText("DIR", 16 + indentX, rowY, 20, itemH,
-                               juce::Justification::centredLeft);
+                    // ---- FolderRow ----
+                    const bool exp = owner.expandedPaths.contains(item.file.getFullPathName());
+                    // Icon: ▸ collapsed, ▾ expanded (VT323 13px at indent pos)
+                    g.setFont(juce::Font(juce::FontOptions("VT323", 13.0f, juce::Font::plain)));
+                    g.setColour(isActive
+                        ? juce::Colour(LF::kAccent)
+                        : juce::Colour(LF::kTextFaint));
+                    const auto iconStr = exp
+                        ? juce::String::fromUTF8("\xe2\x96\xbe")   // ▾
+                        : juce::String::fromUTF8("\xe2\x96\xb8");  // ▸
+                    g.drawText(iconStr, indent, y, 10, rh, juce::Justification::centredLeft);
 
-                    g.setColour(juce::Colour(LF::kText));
-                    g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
-                    g.drawText(item.file.getFileName(),
-                               34 + indentX, rowY,
-                               getWidth() - 34 - indentX - 4, itemH,
+                    // Label: uppercase
+                    g.setFont(juce::Font(juce::FontOptions("JetBrains Mono", 9.5f,
+                              isActive ? juce::Font::bold : juce::Font::plain)));
+                    g.setColour(isActive ? juce::Colour(LF::kText) : juce::Colour(LF::kTextDim));
+                    const juce::String label = item.file.getFileName().toUpperCase();
+                    g.drawText(label, indent + 14, y, W - indent - 34, rh,
                                juce::Justification::centredLeft, true);
+
+                    // Count badge (file count) — right-aligned
+                    if (item.indent == 0)
+                    {
+                        const int cnt = countAudioFiles(item.file);
+                        g.setFont(juce::Font(juce::FontOptions("JetBrains Mono", 7.5f, juce::Font::bold)));
+                        g.setColour(juce::Colour(LF::kTextFaint));
+                        g.drawText(juce::String(cnt), W - 30, y, 24, rh,
+                                   juce::Justification::centredRight);
+                    }
                 }
                 else
                 {
-                    g.setColour(juce::Colour(LF::kDisplayFg));
-                    g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
-                    g.drawText("WAV",
-                               22 + indentX, rowY, 14, itemH,
-                               juce::Justification::centredLeft);
+                    // ---- SampleRow ----
+                    // Grid: [14px play tri] [1fr name+meta] [68px mini wave] [12px dot]
+                    const int colPlay = indent;
+                    const int colName = colPlay + 14;
+                    const int colWave = W - 84;
+                    const int colDot  = W - 12;
+                    const int waveW   = 68;
 
-                    g.setColour(juce::Colour(LF::kTextDim));
-                    g.drawText(item.file.getFileName(),
-                               38 + indentX, rowY,
-                               getWidth() - 38 - indentX - 4, itemH,
-                               juce::Justification::centredLeft, true);
+                    const juce::Colour col = fileColor(item.file.getFileName());
+
+                    // Play triangle
+                    {
+                        juce::Path tri;
+                        const float tx = (float)colPlay + 4.0f;
+                        const float ty = (float)y + rh * 0.5f;
+                        const float ts = isActive ? 5.0f : 4.0f;
+                        tri.addTriangle(tx, ty - ts, tx + ts * 1.4f, ty, tx, ty + ts);
+                        g.setColour(isActive ? juce::Colour(LF::kAccent)
+                                             : juce::Colour(LF::kTextFaint));
+                        g.fillPath(tri);
+                    }
+
+                    // Name (10px bold ink, ellipsis)
+                    {
+                        g.setFont(juce::Font(juce::FontOptions("JetBrains Mono", 9.5f, juce::Font::bold)));
+                        g.setColour(juce::Colour(LF::kText));
+                        const int ny = y + 4;
+                        g.drawText(item.file.getFileName(), colName, ny,
+                                   colWave - colName - 6, 11,
+                                   juce::Justification::centredLeft, true);
+                    }
+
+                    // Meta: "0:00 · EXT · --" (8px, 0.12em, kTextFaint uppercase)
+                    {
+                        g.setFont(juce::Font(juce::FontOptions("JetBrains Mono", 7.5f, juce::Font::plain)));
+                        g.setColour(juce::Colour(LF::kTextFaint));
+                        const juce::String ext = item.file.getFileExtension().toUpperCase()
+                                                            .trimCharactersAtStart(".");
+                        const juce::String meta = juce::String::fromUTF8(
+                            "0:01 \xc2\xb7 ") + ext;
+                        const int my2 = y + rh - 11;
+                        g.drawText(meta, colName, my2, colWave - colName - 6, 9,
+                                   juce::Justification::centredLeft);
+                    }
+
+                    // Mini waveform
+                    {
+                        const int seed = hashSeed(item.file.getFileName());
+                        const juce::Rectangle<float> waveRect(
+                            (float)colWave, (float)y + 4.0f, (float)waveW, (float)rh - 8.0f);
+                        drawMiniWave(g, waveRect, seed, col.withAlpha(0.85f));
+                    }
+
+                    // Color dot (5×5 with soft glow)
+                    {
+                        const float dx = (float)colDot;
+                        const float dy = (float)y + rh * 0.5f - 2.5f;
+                        g.setColour(col.withAlpha(0.25f));
+                        g.fillEllipse(dx - 3.5f, dy - 3.5f, 12.0f, 12.0f);
+                        g.setColour(col);
+                        g.fillEllipse(dx, dy, 5.0f, 5.0f);
+                    }
                 }
 
-                // Separator
-                g.setColour(juce::Colour(LF::kPanelRim).withAlpha(0.5f));
-                g.drawLine(0.0f, (float)(rowY + itemH - 1),
-                           (float)getWidth(), (float)(rowY + itemH - 1), 0.5f);
+                // Separator line
+                g.setColour(juce::Colour(LF::kPanelRim).withAlpha(0.35f));
+                g.drawLine(2.0f, (float)(y + rh - 1),
+                           (float)W - 2.0f, (float)(y + rh - 1), 0.5f);
+
+                y += rh;
+            }
+
+            // Empty state
+            if (owner.items.empty())
+            {
+                g.setFont(juce::Font(juce::FontOptions("JetBrains Mono", 9.0f, juce::Font::plain)));
+                g.setColour(juce::Colour(LF::kTextFaint));
+                g.drawText("No folders added.", 0, 40, getWidth(), 14, juce::Justification::centred);
+                g.drawText("Click \"EDIT\" to add a sample folder.",
+                           0, 58, getWidth(), 14, juce::Justification::centred);
             }
         }
 
+        // ---- Mouse events ----
         void mouseMove(const juce::MouseEvent& e) override
         {
-            const int h = e.getPosition().y / itemH;
+            const int h = rowAtY(e.getPosition().y);
             if (h != hoveredIdx) { hoveredIdx = h; repaint(); }
         }
-
-        void mouseExit(const juce::MouseEvent&) override
-        {
-            hoveredIdx = -1; repaint();
-        }
+        void mouseExit(const juce::MouseEvent&) override { hoveredIdx = -1; repaint(); }
 
         void mouseDown(const juce::MouseEvent& e) override
         {
-            mouseDownIdx = e.getPosition().y / itemH;
+            mouseDownIdx = rowAtY(e.getPosition().y);
             mouseDownPos = e.getPosition();
         }
 
         void mouseUp(const juce::MouseEvent& e) override
         {
-            const int idx = e.getPosition().y / itemH;
-            if (idx != mouseDownIdx ||
-                idx < 0 || idx >= (int)owner.items.size()) return;
+            const int idx = rowAtY(e.getPosition().y);
+            if (idx < 0 || idx != mouseDownIdx || idx >= (int)owner.items.size()) return;
 
             const auto& item = owner.items[(size_t)idx];
             if (item.type == Item::Type::Folder)
@@ -310,11 +592,16 @@ private:
                     owner.expandedPaths.add(path);
                 owner.rebuildList();
             }
-            else if (owner.onPreviewFile)
+            else
             {
+                owner.activeItemIdx_      = idx;
                 owner.currentPreviewName_ = item.file.getFileName();
+                owner.currentPreviewFile_ = item.file;
+                owner.previewSeed_        = hashSeed(item.file.getFileName());
                 owner.repaint();
-                owner.onPreviewFile(item.file);
+
+                if (owner.onPreviewFile)
+                    owner.onPreviewFile(item.file);
             }
         }
 
@@ -329,7 +616,6 @@ private:
 
             if (auto* dc = juce::DragAndDropContainer::findParentDragContainerFor(this))
             {
-                // Small drag image showing just the filename
                 const juce::String name = item.file.getFileNameWithoutExtension();
                 const int imgW = juce::jmin(180, name.length() * 7 + 20);
                 juce::Image dragImg(juce::Image::ARGB, imgW, 20, true);
@@ -344,17 +630,15 @@ private:
                 dc->startDragging(item.file.getFullPathName(), this,
                                   juce::ScaledImage(dragImg), true);
             }
-
             mouseDownIdx = -1;
         }
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ListContent)
 
-    } listContent { *this };
-
+    } listContent_ { *this };
     friend struct ListContent;
 
-    // ---- bookmark persistence ---------------------------------------------
+    // ---- Bookmark persistence ----
     static juce::ApplicationProperties& getProps()
     {
         static juce::ApplicationProperties props;
@@ -370,19 +654,17 @@ private:
         }
         return props;
     }
-
     static juce::PropertiesFile* getSettings() { return getProps().getUserSettings(); }
 
     void loadBookmarks()
     {
         bookmarks.clear();
-        if (auto* settings = getSettings())
+        if (auto* s = getSettings())
         {
-            const int n = settings->getIntValue("sampleBrowserCount", 0);
+            const int n = s->getIntValue("sampleBrowserCount", 0);
             for (int i = 0; i < n; ++i)
             {
-                juce::File f(settings->getValue(
-                    "sampleBrowserPath" + juce::String(i)));
+                juce::File f(s->getValue("sampleBrowserPath" + juce::String(i)));
                 if (f.isDirectory()) bookmarks.add(f);
             }
         }
@@ -390,22 +672,21 @@ private:
 
     void saveBookmarks()
     {
-        auto* settings = getSettings();
-        if (settings == nullptr) return;
-        settings->setValue("sampleBrowserCount", bookmarks.size());
+        auto* s = getSettings();
+        if (!s) return;
+        s->setValue("sampleBrowserCount", bookmarks.size());
         for (int i = 0; i < bookmarks.size(); ++i)
-            settings->setValue("sampleBrowserPath" + juce::String(i),
-                               bookmarks[i].getFullPathName());
-        settings->save();
+            s->setValue("sampleBrowserPath" + juce::String(i),
+                        bookmarks[i].getFullPathName());
+        s->save();
     }
 
     void chooseAndAddBookmark()
     {
-        fileChooser = std::make_shared<juce::FileChooser>(
+        fileChooser_ = std::make_shared<juce::FileChooser>(
             "Select Sample Folder",
             juce::File::getSpecialLocation(juce::File::userHomeDirectory));
-
-        fileChooser->launchAsync(
+        fileChooser_->launchAsync(
             juce::FileBrowserComponent::openMode |
             juce::FileBrowserComponent::canSelectDirectories,
             [this](const juce::FileChooser& fc)
@@ -420,7 +701,7 @@ private:
             });
     }
 
-    // ---- list building (recursive) ----------------------------------------
+    // ---- List building ----
     static const juce::StringArray& audioExts()
     {
         static const juce::StringArray exts {
@@ -429,73 +710,67 @@ private:
         return exts;
     }
 
-    void addFolderContents(const juce::File& folder,
-                           int indent,
-                           const juce::String& filter)
+    // Count audio files in a directory (non-recursive, for count badge)
+    static int countAudioFiles(const juce::File& dir)
     {
-        // Subfolders first
+        juce::Array<juce::File> files;
+        dir.findChildFiles(files, juce::File::findFiles, false, "*");
+        int n = 0;
+        for (auto& f : files)
+            if (audioExts().contains(f.getFileExtension().toLowerCase())) ++n;
+        return n;
+    }
+
+    void addFolderContents(const juce::File& folder, int indent, const juce::String& filter)
+    {
         juce::Array<juce::File> subDirs;
         folder.findChildFiles(subDirs, juce::File::findDirectories, false, "*");
         subDirs.sort();
         for (const auto& dir : subDirs)
         {
-            Item item;
-            item.type   = Item::Type::Folder;
-            item.file   = dir;
-            item.indent = indent;
-            items.push_back(item);
-
+            items.push_back({ Item::Type::Folder, dir, indent });
             if (expandedPaths.contains(dir.getFullPathName()))
                 addFolderContents(dir, indent + 1, filter);
         }
 
-        // Audio files
-        juce::Array<juce::File> allFiles;
-        folder.findChildFiles(allFiles, juce::File::findFiles, false, "*");
-        allFiles.sort();
-        for (const auto& file : allFiles)
+        juce::Array<juce::File> files;
+        folder.findChildFiles(files, juce::File::findFiles, false, "*");
+        files.sort();
+        for (const auto& file : files)
         {
-            if (!audioExts().contains(file.getFileExtension().toLowerCase()))
-                continue;
-            if (!filter.isEmpty() &&
-                !file.getFileName().toLowerCase().contains(filter))
-                continue;
-
-            Item item;
-            item.type   = Item::Type::AudioFile;
-            item.file   = file;
-            item.indent = indent;
-            items.push_back(item);
+            if (!audioExts().contains(file.getFileExtension().toLowerCase())) continue;
+            if (!filter.isEmpty() && !file.getFileName().toLowerCase().contains(filter)) continue;
+            items.push_back({ Item::Type::AudioFile, file, indent });
         }
     }
 
     void rebuildList()
     {
-        const juce::String filter = searchField.getText().toLowerCase();
+        const juce::String filter = searchField_.getText().toLowerCase();
         items.clear();
 
-        for (int fi = 0; fi < bookmarks.size(); ++fi)
-        {
-            Item folderItem;
-            folderItem.type   = Item::Type::Folder;
-            folderItem.file   = bookmarks[fi];
-            folderItem.indent = 0;
-            items.push_back(folderItem);
+        // Clamp activeItemIdx after rebuild
+        activeItemIdx_ = -1;
 
-            if (expandedPaths.contains(bookmarks[fi].getFullPathName()))
-                addFolderContents(bookmarks[fi], 1, filter);
+        for (auto& bm : bookmarks)
+        {
+            items.push_back({ Item::Type::Folder, bm, 0 });
+            if (expandedPaths.contains(bm.getFullPathName()))
+                addFolderContents(bm, 1, filter);
         }
 
         updateListSize();
-        listContent.repaint();
+        listContent_.repaint();
     }
 
     void updateListSize()
     {
-        const int w = listViewport.getWidth() > 0 ? listViewport.getWidth() : 220;
-        const int h = juce::jmax(listViewport.getHeight(),
-                                 (int)items.size() * itemH);
-        listContent.setSize(w, h);
+        const int w = listViewport_.getWidth() > 0 ? listViewport_.getWidth() : 220;
+        int totalH = 0;
+        for (auto& item : items)
+            totalH += (item.type == Item::Type::Folder) ? kFolderH : kItemH;
+        const int h = juce::jmax(listViewport_.getHeight(), totalH);
+        listContent_.setSize(w, h);
     }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SampleBrowserComponent)

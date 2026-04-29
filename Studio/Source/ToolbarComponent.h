@@ -32,7 +32,11 @@ public:
     bool     isPlaying()   const { return playing; }
     PlayMode getPlayMode() const { return playMode; }
     double   getBPM()      const { return bpmSlider.getValue(); }
-    void setBPM(double bpm)      { bpmSlider.setValue(bpm, juce::dontSendNotification); }
+    void setBPM(double bpm)
+    {
+        bpmSlider.setValue(bpm, juce::dontSendNotification);
+        bpmLabel.setText(juce::String(bpm, 1), juce::dontSendNotification);
+    }
     void setPlayMode(PlayMode mode)
     {
         playMode = mode;
@@ -58,6 +62,10 @@ public:
     std::function<void()>           onStop;
     std::function<void(double)>     onBPMChanged;
     std::function<void(PlayMode)>   onPlayModeChanged;
+    std::function<void()>           onRewind;
+    std::function<void()>           onFastForward;
+    std::function<void()>           onToggleLoop;
+    std::function<void(double)>     onMasterVolChanged;
 
     // M2.1 — Pattern management callbacks
     std::function<void(int patternId)> onPatternSelected;
@@ -95,6 +103,13 @@ public:
     // Update LIVE button appearance to reflect current mode state
     void setLiveModeActive(bool active);
 
+    // Loop state for visual feedback
+    void setLoopEnabled(bool b)
+    {
+        loopEnabled_ = b;
+        loopBtn_.setToggleState(b, juce::dontSendNotification);
+    }
+
     // Recording — single toggle: start/stop recording
     std::function<void()>  onRecordStart;
     std::function<void()>  onRecordStop;
@@ -108,15 +123,22 @@ public:
     // Recording elapsed time — call from MainComponent timer
     void setRecordingElapsed(double seconds);
 
+    // Playback position for segment display (bars, 0-based)
+    void setPlaybackBar(double bars) { barPos_ = bars; }
+
 private:
-    // Row 1 — transport
-    juce::TextButton playButton   { "Play" };
-    juce::TextButton stopButton   { "Stop" };
-    juce::TextButton recordButton { "Rec"  };
+    // Row 1 — transport buttons (icon-based)
+    juce::TextButton rewBtn_      { "REW"  };
+    juce::TextButton playButton   { "PLAY" };
+    juce::TextButton stopButton   { "STOP" };
+    juce::TextButton recordButton { "REC"  };
+    juce::TextButton ffBtn_       { "FF"   };
+    juce::TextButton loopBtn_     { "LOOP" };
     juce::ComboBox   playModeBox;
     juce::Slider     bpmSlider;
     juce::Label      bpmLabel;
     juce::Label      titleLabel;
+    juce::Slider     masterVolSlider;
 
     // Recording elapsed time label
     juce::Label      recTimeLabel;
@@ -157,11 +179,13 @@ private:
 
     bool     playing          = false;
     bool     recordingActive_ = false;
+    bool     loopEnabled_     = false;
     int      blinkCounter_    = 0;
     float    inputLevelL_     = 0.0f;
     float    inputLevelR_     = 0.0f;
     double   recElapsedSec_   = 0.0;
-    float    reelAngle_       = 0.0f;   // tape reel rotation (degrees)
+    float    reelAngle_       = 0.0f;
+    double   barPos_          = 0.0;
     PlayMode playMode = PlayMode::Pattern;
 
     // Draw a decorative tape reel at (cx, cy) with radius r

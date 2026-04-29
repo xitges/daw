@@ -154,7 +154,7 @@ MainComponent::MainComponent()
     inspectorTabBar_.onTabChanged = [this](int t)
     {
         inspectorTab_ = t;
-        showMixer = (t == 1);
+        showMixer = (t == 2);   // tab 2 = MIXER
         resized();
     };
 
@@ -1940,7 +1940,7 @@ MainComponent::MainComponent()
     toolbar.onToggleMixer = [this]
     {
         showMixer    = !showMixer;
-        inspectorTab_ = showMixer ? 1 : 0;
+        inspectorTab_ = showMixer ? 2 : 1;   // 1=SEQUENCER, 2=MIXER
         inspectorTabBar_.setTab(inspectorTab_);
         resized();
     };
@@ -2329,6 +2329,19 @@ MainComponent::MainComponent()
             liveLoopWindow_->setVisible(false);
             audioEngine.liveLoopResetAll();
         }
+    };
+
+    toolbar.onMasterVolChanged = [this](double v)
+    {
+        audioEngine.setMasterVolume((float)v);
+    };
+
+    toolbar.onRewind      = [this] { audioEngine.stop(); };
+    toolbar.onFastForward = [this] { /* fast-forward: stub */ };
+    toolbar.onToggleLoop  = [this]
+    {
+        loopRecordEnabled_ = !loopRecordEnabled_;
+        toolbar.setLoopEnabled(loopRecordEnabled_);
     };
     // -------------------------------------------------------------------------
 
@@ -3338,25 +3351,95 @@ void MainComponent::paint(juce::Graphics& g)
 {
     using LF = StudioLookAndFeel;
 
+    // 1. Chassis gradient fill
     juce::ColourGradient bodyGrad(juce::Colour(LF::kChassis), 0.0f, 0.0f,
-                                  juce::Colour(LF::kChassis2), 0.0f, (float)getHeight(),
-                                  false);
+                                  juce::Colour(LF::kChassis2), 0.0f, (float)getHeight(), false);
     g.setGradientFill(bodyGrad);
     g.fillAll();
 
+    // 2. Chassis border (1px, chassisShadow=#b9ad8c) + inset highlights
+    {
+        const auto bounds = getLocalBounds().toFloat().reduced(0.5f);
+        g.setColour(juce::Colour(0xffb9ad8c));
+        g.drawRoundedRectangle(bounds, 18.0f, 1.0f);
+        // top inset highlight
+        g.setColour(juce::Colour(0xffffffff).withAlpha(0.4f));
+        g.drawLine(20.0f, 1.5f, bounds.getRight() - 20.0f, 1.5f, 1.5f);
+        // bottom inset shadow
+        g.setColour(juce::Colour(0xff000000).withAlpha(0.15f));
+        g.drawLine(20.0f, bounds.getBottom() - 1.0f, bounds.getRight() - 20.0f, bounds.getBottom() - 1.0f, 2.0f);
+    }
+
+    // 3. Right panel cream background
+    if (!rightPanelBounds_.isEmpty())
+    {
+        const auto r = rightPanelBounds_.toFloat();
+        g.setColour(juce::Colour(LF::kPanel));
+        g.fillRoundedRectangle(r, 8.0f);
+        // inset top highlight
+        g.setColour(juce::Colour(0xffffffff).withAlpha(0.5f));
+        g.drawLine(r.getX() + 9.0f, r.getY() + 0.5f, r.getRight() - 9.0f, r.getY() + 0.5f, 1.0f);
+        // panel rim border
+        g.setColour(juce::Colour(LF::kPanelRim));
+        g.drawRoundedRectangle(r.reduced(0.5f), 8.0f, 1.0f);
+    }
+
+    // 4. Inspector content area: chassis gradient (matches reference's inspector bg)
+    if (!inspectorContentBounds_.isEmpty() && inspectorTab_ != -1)
+    {
+        const auto r = inspectorContentBounds_.toFloat();
+        juce::ColourGradient inspGrad(juce::Colour(LF::kChassis), r.getX(), r.getY(),
+                                       juce::Colour(LF::kChassis2), r.getX(), r.getBottom(), false);
+        g.setGradientFill(inspGrad);
+        g.fillRect(r);
+        // bottom border
+        g.setColour(juce::Colour(LF::kPanelRim));
+        g.drawLine(r.getX(), r.getBottom() - 0.5f, r.getRight(), r.getBottom() - 0.5f, 1.0f);
+    }
+
+    // 5. Corner screws (10px diameter, 8px from corners)
+    {
+        const float sz = 10.0f;
+        const float off = 8.0f;
+        const float W = (float)getWidth();
+        const float H = (float)getHeight();
+        const float cx[] = { off + sz*0.5f, W - off - sz*0.5f, off + sz*0.5f, W - off - sz*0.5f };
+        const float cy[] = { off + sz*0.5f, off + sz*0.5f, H - off - sz*0.5f, H - off - sz*0.5f };
+        const float angles[] = { 45.0f, 125.0f, 75.0f, 160.0f };
+
+        for (int i = 0; i < 4; ++i)
+        {
+            const float x = cx[i], y = cy[i];
+            // Radial gradient: light at 30%/25% of diameter from top-left, dark at edge
+            juce::ColourGradient screwGrad(
+                juce::Colour(0xffd8d0bb), x - sz*0.2f, y - sz*0.25f,
+                juce::Colour(0xff4a4338), x + sz*0.35f, y + sz*0.35f, true);
+            screwGrad.addColour(0.5, juce::Colour(0xff888070));
+            g.setGradientFill(screwGrad);
+            g.fillEllipse(x - sz*0.5f, y - sz*0.5f, sz, sz);
+            // Border
+            g.setColour(juce::Colour(0x66000000));
+            g.drawEllipse(x - sz*0.5f + 0.5f, y - sz*0.5f + 0.5f, sz - 1.0f, sz - 1.0f, 1.0f);
+            // Slot
+            const float rad = angles[i] * juce::MathConstants<float>::pi / 180.0f;
+            const float len = sz * 0.32f;
+            g.setColour(juce::Colour(0x99000000));
+            g.drawLine(x - std::cos(rad)*len, y - std::sin(rad)*len,
+                       x + std::cos(rad)*len, y + std::sin(rad)*len, 1.0f);
+        }
+    }
+
+    // 6. Footer
     const int footerH = 22;
     auto footer = getLocalBounds().removeFromBottom(footerH).reduced(8, 0);
-
     g.setColour(juce::Colour(0xffffffff).withAlpha(0.12f));
     g.drawLine((float)footer.getX(), (float)footer.getY(),
                (float)footer.getRight(), (float)footer.getY(), 1.0f);
-
     g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f).withStyle("Bold")));
     g.setColour(juce::Colour(LF::kTextFaint));
-    g.drawText("fieldlab instruments  .  made in original spirit  .  serial 02-1184-1",
+    g.drawText(juce::String::fromUTF8("fieldlab instruments  \xc2\xb7  made in original spirit  \xc2\xb7  serial 02-1184-1"),
                footer.removeFromLeft(620), juce::Justification::centredLeft, true);
-
-    g.drawText("USB-C  .  MIDI 5P  .  CV 1/8\" x 4  .  v 2.4.1",
+    g.drawText(juce::String::fromUTF8("USB-C  \xc2\xb7  MIDI 5P  \xc2\xb7  CV 1/8\" x4  \xc2\xb7  v2.4.1"),
                footer, juce::Justification::centredRight, true);
 }
 
@@ -3365,7 +3448,7 @@ void MainComponent::resized()
     constexpr int kPad = 14;
     constexpr int kGap = 12;
     constexpr int kFooterH = 22;
-    constexpr int kToolbarH = 104;
+    constexpr int kToolbarH = 132;   // 92px transport + 40px pattern strip
     constexpr int kTabH = 36;
 
     auto area = getLocalBounds().reduced(kPad);
@@ -3386,7 +3469,7 @@ void MainComponent::resized()
     }
 
     // M15 — sample browser: left panel, collapsible
-    constexpr int kBrowserW = 300;
+    constexpr int kBrowserW = 320;   // matches reference 320px browser
     constexpr int kReopenW  = 22;
     constexpr int kReopenH  = 32;
 
@@ -3406,6 +3489,9 @@ void MainComponent::resized()
         browserCollapseBtn.toFront(false);
     }
 
+    // Cache right panel bounds (cream panel bg drawn in paint())
+    rightPanelBounds_ = area;
+
     // Playlist — top 60% of remaining area, matching the reference arrangement-first layout
     const int playlistHeight = juce::jmax(260, (int)std::round(area.getHeight() * 0.60f));
     auto playlistArea = area.removeFromTop(playlistHeight);
@@ -3424,10 +3510,11 @@ void MainComponent::resized()
 
     // Inspector tab bar — 36px strip between playlist and inspector content
     inspectorTabBar_.setBounds(area.removeFromTop(kTabH));
+    inspectorContentBounds_ = area;
 
-    // Inspector content — channel rack (tab 0) or mixer (tab 1) or empty (tab 2)
-    const bool showSeq  = (inspectorTab_ == 0);
-    const bool showMix  = (inspectorTab_ == 1);
+    // Inspector content — INSTRUMENT(0) / SEQUENCER(1) / MIXER(2)
+    const bool showSeq  = (inspectorTab_ == 1);
+    const bool showMix  = (inspectorTab_ == 2);
 
     channelRackViewport.setVisible(showSeq);
     mixer.setVisible(showMix);
@@ -3589,6 +3676,14 @@ void MainComponent::timerCallback()
                                                       proc.getConfidence(),
                                                       proc.isVoiced(),
                                                       proc.getCorrectedPitchHz());
+    }
+
+    // --- BAR.BEAT.TICK position display ---
+    {
+        const double barPos = (toolbar.getPlayMode() == PlayMode::Song)
+                              ? audioEngine.getSongBeatPosition() / 4.0
+                              : audioEngine.getPatternBeatPos() / 4.0;
+        toolbar.setPlaybackBar(barPos);
     }
 
     if (!audioEngine.isPlaying()) return;

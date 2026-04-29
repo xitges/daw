@@ -40,8 +40,11 @@ public:
 
         const int n = 3;
         const int tw = getWidth() / n;
-        const char* names[] = { "SEQUENCER", "MIXER", "INSTRUMENT" };
-        const char* subs[]  = { "PATTERN A", "6 CH  2 BUS", "POLY-6 MK2" };
+        const char* names[] = { "INSTRUMENT", "SEQUENCER", "MIXER" };
+        const juce::String subs[] = {
+            "POLY-6 MK2", "PATTERN A",
+            juce::String::fromUTF8("6 CH  \xc2\xb7  2 BUS")
+        };
 
         for (int i = 0; i < n; ++i)
         {
@@ -145,9 +148,11 @@ private:
     int synthEditorChannel = -1;
     int fxEditorTrack      = -1;
 
-    // Inspector tab bar (SEQUENCER / MIXER / INSTRUMENT)
+    // Inspector tab bar (INSTRUMENT=0 / SEQUENCER=1 / MIXER=2)
     InspectorTabBar  inspectorTabBar_;
-    int              inspectorTab_ = 0;   // 0=sequencer, 1=mixer, 2=instrument
+    int              inspectorTab_ = 1;   // default: SEQUENCER (channel rack)
+    juce::Rectangle<int> rightPanelBounds_;        // cached in resized(), used in paint()
+    juce::Rectangle<int> inspectorContentBounds_;  // area below tab bar (inspector content)
 
     // Launchpad — inline right panel (toggled)
     LaunchpadPanel   launchpadPanel;

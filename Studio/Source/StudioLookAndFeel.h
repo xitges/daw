@@ -107,84 +107,203 @@ public:
     }
 
     // =========================================================================
-    // Button — cream hardware key with inset press
+    // Button — cream hardware key with inset press + per-button active color
     // =========================================================================
     void drawButtonBackground(juce::Graphics& g, juce::Button& btn,
-                              const juce::Colour& bg,
+                              const juce::Colour& /*bg*/,
                               bool isMouseOver, bool isButtonDown) override
     {
         const auto  b = btn.getLocalBounds().toFloat().reduced(0.5f);
-        const float r = 5.0f;
+        const float r = 6.0f;
         const bool  isOn = btn.getToggleState();
+
+        // Active color: per-button (buttonOnColourId), falls back to kAccent
+        const juce::Colour onCol = btn.findColour(juce::TextButton::buttonOnColourId,
+                                                   true);
 
         if (isOn)
         {
-            // Active: accent red fill with subtle glow
-            const juce::Colour fill = isButtonDown ? juce::Colour(kAccent).darker(0.15f)
-                                                   : isMouseOver ? juce::Colour(kAccentHi)
-                                                                 : juce::Colour(kAccent);
-            juce::ColourGradient grad(fill.brighter(0.15f), 0.0f, b.getY(),
-                                      fill.darker(0.1f),    0.0f, b.getBottom(), false);
+            // Active: radial gradient with per-button LED color (reference style)
+            const float cx = b.getX() + b.getWidth() * 0.3f;
+            const float cy = b.getY() + b.getHeight() * 0.25f;
+            juce::ColourGradient grad(onCol.withAlpha(0.85f), cx, cy,
+                                      onCol.withAlpha(0.55f), b.getRight(), b.getBottom(), true);
             g.setGradientFill(grad);
             g.fillRoundedRectangle(b, r);
 
-            // Inset shadow at top (pressed-in feel)
+            // Inset top highlight
+            g.setColour(juce::Colours::white.withAlpha(0.35f));
+            g.drawLine(b.getX() + r, b.getY() + 1.0f, b.getRight() - r, b.getY() + 1.0f, 1.0f);
+            // Inner bottom shadow
             g.setColour(juce::Colours::black.withAlpha(0.22f));
-            g.fillRoundedRectangle(b.withHeight(5.0f), r);
+            g.drawLine(b.getX() + r, b.getBottom() - 1.5f, b.getRight() - r, b.getBottom() - 1.5f, 1.5f);
+
+            // Outer glow ring (simulate box-shadow glow)
+            g.setColour(onCol.withAlpha(0.32f));
+            g.drawRoundedRectangle(b.expanded(1.5f), r + 1.5f, 2.0f);
+            g.setColour(onCol.withAlpha(0.14f));
+            g.drawRoundedRectangle(b.expanded(3.0f), r + 3.0f, 2.5f);
         }
         else if (isButtonDown)
         {
-            // Pressed: darker cream, concave inset
+            // Pressed: darker cream, inset shadow
             juce::ColourGradient grad(juce::Colour(kPanelRim), 0.0f, b.getY(),
-                                      juce::Colour(kChassis2),  0.0f, b.getBottom(), false);
+                                      juce::Colour(kChassis2), 0.0f, b.getBottom(), false);
             g.setGradientFill(grad);
             g.fillRoundedRectangle(b, r);
-            g.setColour(juce::Colours::black.withAlpha(0.18f));
-            g.fillRoundedRectangle(b.withHeight(4.0f), r);
+            g.setColour(juce::Colours::black.withAlpha(0.2f));
+            g.fillRoundedRectangle(b.withHeight(5.0f), r);
         }
         else
         {
-            // Normal: cream gradient — light at top, tan at mid, darker at bottom
-            juce::Colour base = isMouseOver ? juce::Colour(kPanel).brighter(0.07f)
-                                            : juce::Colour(kPanel);
-            juce::ColourGradient grad(
-                base.brighter(0.08f),          0.0f, b.getY(),
-                juce::Colour(kChassis2),       0.0f, b.getBottom(), false);
+            // Normal: cream gradient (reference: #f3ecda → #c7bb9a 60% → #8d8268)
+            juce::ColourGradient grad(juce::Colour(kPanel).brighter(0.06f), 0.0f, b.getY(),
+                                      juce::Colour(0xff8d8268),             0.0f, b.getBottom(), false);
+            grad.addColour(0.6, juce::Colour(kPanelRim));
             g.setGradientFill(grad);
             g.fillRoundedRectangle(b, r);
 
-            // Top specular line
-            g.setColour(topLight());
-            g.drawLine(b.getX() + r, b.getY() + 1.0f,
-                       b.getRight() - r, b.getY() + 1.0f, 1.0f);
+            // Top specular
+            g.setColour(juce::Colours::white.withAlpha(0.55f));
+            g.drawLine(b.getX() + r, b.getY() + 1.0f, b.getRight() - r, b.getY() + 1.0f, 1.0f);
+            // Bottom shadow
+            g.setColour(juce::Colours::black.withAlpha(0.38f));
+            g.drawLine(b.getX() + r, b.getBottom() + 0.5f, b.getRight() - r, b.getBottom() + 0.5f, 1.5f);
 
-            // Bottom shadow line
-            g.setColour(juce::Colours::black.withAlpha(0.12f));
-            g.drawLine(b.getX() + r, b.getBottom() - 1.0f,
-                       b.getRight() - r, b.getBottom() - 1.0f, 1.0f);
+            if (isMouseOver)
+            {
+                g.setColour(juce::Colours::white.withAlpha(0.12f));
+                g.fillRoundedRectangle(b, r);
+            }
         }
 
-        // Outer rim
-        g.setColour(isButtonDown ? juce::Colour(kPanelRim).darker(0.2f)
-                                 : juce::Colour(kPanelRim));
+        // Outer rim (1px dark border)
+        g.setColour(juce::Colour(0x80000000));
         g.drawRoundedRectangle(b, r, 1.0f);
     }
 
     void drawButtonText(juce::Graphics& g, juce::TextButton& btn,
-                        bool, bool isButtonDown) override
+                        bool /*isMouseOver*/, bool isButtonDown) override
     {
-        const bool isOn = btn.getToggleState();
-        juce::Colour col = isOn
-            ? btn.findColour(juce::TextButton::textColourOnId)
-            : btn.findColour(juce::TextButton::textColourOffId);
+        const bool   isOn  = btn.getToggleState();
+        const juce::String text = btn.getButtonText();
 
+        // Transport icon buttons: draw path icons instead of text
+        static const juce::StringArray iconKeys {
+            "PLAY", "PAUSE", "STOP", "REC", "REW", "FF", "LOOP"
+        };
+        if (iconKeys.contains(text))
+        {
+            const float W = (float)btn.getWidth();
+            const float H = (float)btn.getHeight();
+            const float cx = W * 0.5f, cy = H * 0.5f;
+
+            // Icon color: white when active, dark ink otherwise
+            juce::Colour col = isOn ? juce::Colour(0xffffffff)
+                                    : juce::Colour(kText).withAlpha(isButtonDown ? 0.6f : 1.0f);
+            g.setColour(col);
+
+            if (text == "PLAY")
+            {
+                juce::Path p;
+                p.addTriangle(cx - W*0.22f, cy - H*0.30f,
+                              cx + W*0.30f, cy,
+                              cx - W*0.22f, cy + H*0.30f);
+                g.fillPath(p);
+            }
+            else if (text == "PAUSE")
+            {
+                const float bw = W * 0.15f, bh = H * 0.52f;
+                g.fillRect(cx - W*0.22f, cy - bh*0.5f, bw, bh);
+                g.fillRect(cx + W*0.07f, cy - bh*0.5f, bw, bh);
+            }
+            else if (text == "STOP")
+            {
+                const float s = juce::jmin(W, H) * 0.44f;
+                g.fillRoundedRectangle(cx - s*0.5f, cy - s*0.5f, s, s, 1.5f);
+            }
+            else if (text == "REC")
+            {
+                const float rr = juce::jmin(W, H) * 0.28f;
+                g.fillEllipse(cx - rr, cy - rr, rr*2.0f, rr*2.0f);
+            }
+            else if (text == "REW")
+            {
+                // Reference: one left-pointing triangle + vertical bar on left
+                // SVG: polygon(11,2 5,7 11,12) + rect(3,2 w2 h10) in 14x14 viewBox
+                const float sc = juce::jmin(W, H) / 14.0f;
+                const float ox = cx - 7.0f * sc, oy = cy - 7.0f * sc;
+                juce::Path p;
+                p.addTriangle(ox + 11*sc, oy + 2*sc,
+                              ox +  5*sc, oy + 7*sc,
+                              ox + 11*sc, oy + 12*sc);
+                g.fillPath(p);
+                g.fillRect(ox + 3*sc, oy + 2*sc, 2*sc, 10*sc);
+            }
+            else if (text == "FF")
+            {
+                // Reference: one right-pointing triangle + vertical bar on right
+                // SVG: polygon(3,2 9,7 3,12) + rect(9,2 w2 h10) in 14x14 viewBox
+                const float sc = juce::jmin(W, H) / 14.0f;
+                const float ox = cx - 7.0f * sc, oy = cy - 7.0f * sc;
+                juce::Path p;
+                p.addTriangle(ox + 3*sc, oy + 2*sc,
+                              ox + 9*sc, oy + 7*sc,
+                              ox + 3*sc, oy + 12*sc);
+                g.fillPath(p);
+                g.fillRect(ox + 9*sc, oy + 2*sc, 2*sc, 10*sc);
+            }
+            else if (text == "LOOP")
+            {
+                // Reference: arc M2 7 a5 5 0 1 1 5 5 in 14x14 viewBox
+                // Center (7,7), start (2,7)=left, end (7,12)=bottom, ~270° clockwise arc
+                // Arrowhead polyline: (5,11)→(7,12)→(8,10)
+                const float sc  = juce::jmin(W, H) / 14.0f;
+                const float ox  = cx - 7.0f * sc, oy = cy - 7.0f * sc;
+                const float rr  = 5.0f * sc;
+                const float acx = ox + 7*sc, acy = oy + 7*sc;  // arc circle center
+                // Arc: from 180° (left) clockwise to 90° (downward in screen coords)
+                // In JUCE: angles measured from 12 o'clock, clockwise
+                // 180° screen = startAngle=pi (JUCE: measured from 3 o'clock CCW... use addArc)
+                // addArc uses standard math angles: 0=right, pi/2=up, pi=left, 3pi/2=down
+                // screen 180° (left) = math angle pi; screen 90° down = math angle -pi/2 (= 3pi/2)
+                // We want 270° clockwise = -270° = from pi to -pi/2 going clockwise (decreasing angle)
+                // JUCE addArc(x,y,w,h, fromAngle, toAngle, startNewSubPath):
+                //   angles clockwise from 12 o'clock (top). fromAngle < toAngle = clockwise.
+                // Top=0, Right=pi/2, Bottom=pi, Left=3pi/2 in JUCE convention.
+                // Start at Left(3pi/2), going clockwise 270° to Bottom (adding 270°=3pi/2 → wraps to pi)
+                // Actually easier: start pi (left in standard), end -pi/2 (down standard), clockwise → decreasing = not clockwise
+                // Let's just use 3/4 arc from 270° to 540° (=180°) in JUCE coords (0=top, CW)
+                // JUCE: left = 3pi/2, bottom = pi, right = pi/2, top = 0
+                // Start (2,7) = left → JUCE angle = 3*pi/2
+                // End (7,12) = bottom → JUCE angle = pi
+                // Clockwise 270°: from 3pi/2 going +270° → 3pi/2 + 3pi/2 = 3pi = pi (after mod 2pi)
+                // So fromAngle=3pi/2, toAngle=3pi/2+3pi/2=3pi
+                juce::Path arc;
+                const float pi = juce::MathConstants<float>::pi;
+                arc.addArc(acx - rr, acy - rr, rr*2.0f, rr*2.0f,
+                           3.0f*pi/2.0f, 3.0f*pi/2.0f + 3.0f*pi/2.0f, true);
+                juce::PathStrokeType(1.4f * sc).createStrokedPath(arc, arc);
+                g.fillPath(arc);
+                // Arrowhead: polyline (5,11)→(7,12)→(8,10)
+                juce::Path arrow;
+                arrow.startNewSubPath(ox + 5*sc, oy + 11*sc);
+                arrow.lineTo(ox + 7*sc, oy + 12*sc);
+                arrow.lineTo(ox + 8*sc, oy + 10*sc);
+                juce::PathStrokeType(1.4f * sc).createStrokedPath(arrow, arrow);
+                g.fillPath(arrow);
+            }
+            return;
+        }
+
+        // Regular text buttons
+        juce::Colour col = isOn ? btn.findColour(juce::TextButton::textColourOnId)
+                                : btn.findColour(juce::TextButton::textColourOffId);
         if (isButtonDown) col = col.withAlpha(0.75f);
-
         g.setColour(col);
         const float h = btn.getHeight() <= 18 ? 8.5f : btn.getHeight() <= 28 ? 9.5f : 11.0f;
         g.setFont(monoFont(h, juce::Font::bold));
-        g.drawFittedText(btn.getButtonText(),
-                         btn.getLocalBounds().reduced(5, 2),
+        g.drawFittedText(text, btn.getLocalBounds().reduced(5, 2),
                          juce::Justification::centred, 1, 0.85f);
     }
 
