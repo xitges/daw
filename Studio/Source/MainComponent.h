@@ -372,6 +372,467 @@ private:
 };
 
 // =========================================================================
+// Instrument Panel — shown when INSTRUMENT (tab 0) is active
+//
+// Layout:
+//   Left col (kLeftW): OSC1 waveform frame (top) + OSC2 waveform frame (below)
+//   Right col         : OSCILLATORS / FILTER / ENVELOPE sections with sliders
+// =========================================================================
+class InstrumentPanel : public juce::Component
+{
+public:
+    std::function<void(float semitones)>    onTuneChanged;
+    std::function<void(const SynthParams&)> onSynthParamsChanged;
+
+    InstrumentPanel()
+    {
+        // ---- Wave-select buttons (OSC 2 synth waveform) ----
+        static const char* kWaveLbls[]  = { "SINE", "SAW", "SQ", "TRI", "NOISE" };
+        static const int   kWaveIdx[]   = { 0, 1, 2, 3, 5 };
+        for (int i = 0; i < 5; ++i)
+        {
+            waveButtons_[i].setButtonText(kWaveLbls[i]);
+            waveButtons_[i].setClickingTogglesState(false);
+            waveButtons_[i].onClick = [this, wi = kWaveIdx[i]] { setWaveform(wi); };
+            addAndMakeVisible(waveButtons_[i]);
+        }
+
+        // ---- Filter type buttons (LP / BP / HP) ----
+        static const char* kFiltLbls[] = { "LP", "BP", "HP" };
+        static const int   kFiltIdx[]  = { 0, 2, 1 }; // maps to synthParams_.filterType
+        for (int i = 0; i < 3; ++i)
+        {
+            filtButtons_[i].setButtonText(kFiltLbls[i]);
+            filtButtons_[i].setClickingTogglesState(false);
+            filtButtons_[i].onClick = [this, fi = kFiltIdx[i]] { setFilterType(fi); };
+            addAndMakeVisible(filtButtons_[i]);
+        }
+
+        // ---- Sliders ----
+        auto mkSlider = [&](juce::Slider& s, double lo, double hi, double step)
+        {
+            s.setRange(lo, hi, step);
+            s.setSliderStyle(juce::Slider::LinearHorizontal);
+            s.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, kRowH);
+            s.setColour(juce::Slider::textBoxTextColourId,       juce::Colours::black);
+            s.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xffe8e8ecu));
+            s.setColour(juce::Slider::textBoxOutlineColourId,    juce::Colour(0xffd0d0d4u));
+            addAndMakeVisible(s);
+        };
+
+        mkSlider(tuneSlider_,    -24.0,  24.0,   0.5);
+        mkSlider(detSlider_,       0.0, 100.0,   0.1);
+        mkSlider(driveSlider_,     0.0,   1.0,  0.01);
+        mkSlider(cutoffSlider_,  200.0, 20000.0, 10.0);
+        mkSlider(resSlider_,       0.0,   1.0,  0.01);
+        mkSlider(envAmtSlider_,   -1.0,   1.0,  0.01);
+        mkSlider(attackSlider_,    0.0, 5000.0,   1.0);
+        mkSlider(decaySlider_,     0.0, 5000.0,   1.0);
+        mkSlider(sustainSlider_,   0.0,   1.0,  0.01);
+        mkSlider(releaseSlider_,   0.0, 5000.0,   1.0);
+
+        tuneSlider_.onValueChange = [this] {
+            tune_ = (float)tuneSlider_.getValue();
+            if (onTuneChanged) onTuneChanged(tune_);
+        };
+        auto synthCb = [this] { pullSynthParams(); if (onSynthParamsChanged) onSynthParamsChanged(synthParams_); };
+        detSlider_.onValueChange = driveSlider_.onValueChange =
+        cutoffSlider_.onValueChange = resSlider_.onValueChange =
+        envAmtSlider_.onValueChange = attackSlider_.onValueChange =
+        decaySlider_.onValueChange  = sustainSlider_.onValueChange =
+        releaseSlider_.onValueChange = synthCb;
+
+        formatManager_.registerBasicFormats();
+    }
+
+    void setChannel(int ch, const juce::String& name, const juce::String& samplePath,
+                    const SynthParams& sp, float tuneSemitones)
+    {
+        selectedChannel_ = ch;
+        channelName_     = name;
+        samplePath_      = samplePath;
+        synthParams_     = sp;
+        tune_            = tuneSemitones;
+        loadWaveform(samplePath);
+        syncControls();
+        updateWaveBtnColors();
+        updateFiltBtnColors();
+        repaint();
+    }
+
+    int getNeededHeight() const
+    {
+        // header + top-pad + right-column total + bottom-pad
+        return kHeaderH + kPadV + rightColumnHeight() + kPadV;
+    }
+
+    // -------------------------------------------------------------------------
+    void paint(juce::Graphics& g) override
+    {
+        using LF = StudioLookAndFeel;
+        const int W = getWidth();
+
+        g.fillAll(juce::Colour(0xfff5f5f7u));
+
+        // Header bar
+        g.setColour(juce::Colour(0xffe4e4e8u));
+        g.fillRect(0, 0, W, kHeaderH);
+        g.setColour(juce::Colour(0xffccccd0u));
+        g.drawLine(0.f, (float)kHeaderH - 0.5f, (float)W, (float)kHeaderH - 0.5f, 1.f);
+
+        g.setFont(LF::monoFont(9.0f, juce::Font::bold));
+        g.setColour(juce::Colour(LF::kAccent));
+        g.drawText("INSTRUMENT", 10, 0, 90, kHeaderH, juce::Justification::centredLeft);
+
+        juce::String info = channelName_.toUpperCase();
+        if (samplePath_.isNotEmpty())
+            info += juce::String::fromUTF8("  \xe2\x80\x94  ") + juce::File(samplePath_).getFileName();
+        g.setFont(LF::monoFont(8.5f));
+        g.setColour(juce::Colour(0xff555560u));
+        g.drawText(info, 104, 0, W - 116, kHeaderH, juce::Justification::centredLeft, true);
+
+        // Waveform OSC frames (left column)
+        const int contentTopY = kHeaderH + kPadV;
+        juce::Rectangle<int> osc1(kPadH, contentTopY, kLeftW, kOscH);
+        juce::Rectangle<int> osc2(kPadH, contentTopY + kOscH + kOscGap, kLeftW, kOscH);
+
+        paintOscFrame(g, osc1, juce::String::fromUTF8("OSC 1  \xe2\x80\x94  ORIGINAL SAMPLE"));
+        paintSampleWaveform(g, osc1.reduced(3, 18));
+
+        paintOscFrame(g, osc2, juce::String::fromUTF8("OSC 2  \xe2\x80\x94  SYNTH SHAPE"));
+        paintSynthWaveform(g, osc2.reduced(3, 18));
+
+        // Right column section headers + param labels
+        const int rx = kPadH + kLeftW + kInnerGap;
+        const int rw = W - rx - kPadH;
+        if (rw < 60) return;
+
+        int ry = contentTopY;
+
+        // OSCILLATORS section
+        paintSectionHeader(g, rx, ry, rw, "OSCILLATORS", "DUAL VCO");
+        ry += kSecHeaderH;
+        // wave label row
+        g.setFont(LF::monoFont(7.5f, juce::Font::bold));
+        g.setColour(juce::Colour(0xff888898u));
+        g.drawText("WAVE", rx, ry + 2, kLblW - 4, kRowH - 2, juce::Justification::centredRight);
+        ry += kRowH + kRowGap;
+        paintSliderLabel(g, "TUNE",  0xff3a9ad9u, rx, ry);  ry += kRowH + kRowGap;
+        paintSliderLabel(g, "DET",   0xff27ae60u, rx, ry);  ry += kRowH + kRowGap;
+        paintSliderLabel(g, "DRIVE", 0xffe6b32bu, rx, ry);  ry += kRowH + kRowGap + kSecGap;
+
+        // FILTER section
+        paintSectionHeader(g, rx, ry, rw, "FILTER", "STATE-VARIABLE 24dB");
+        ry += kSecHeaderH;
+        paintSliderLabel(g, "CUT",  0xffcc6699u, rx + kFiltBtnW + kFiltGap, ry);  ry += kRowH + kRowGap;
+        paintSliderLabel(g, "RES",  0xff9977ccu, rx + kFiltBtnW + kFiltGap, ry);  ry += kRowH + kRowGap;
+        paintSliderLabel(g, "ENV",  0xff8899ccu, rx + kFiltBtnW + kFiltGap, ry);  ry += kRowH + kRowGap + kSecGap;
+
+        // ENVELOPE section
+        paintSectionHeader(g, rx, ry, rw, "ENVELOPE", "ADSR  \xc2\xb7  AMP");
+        ry += kSecHeaderH;
+        paintSliderLabel(g, "ATK", 0xff3a9ad9u, rx, ry);  ry += kRowH + kRowGap;
+        paintSliderLabel(g, "DEC", 0xff27ae60u, rx, ry);  ry += kRowH + kRowGap;
+        paintSliderLabel(g, "SUS", 0xffe6b32bu, rx, ry);  ry += kRowH + kRowGap;
+        paintSliderLabel(g, "REL", 0xffcc6699u, rx, ry);
+    }
+
+    void resized() override
+    {
+        const int W = getWidth();
+        if (W < 80) return;
+
+        const int rx  = kPadH + kLeftW + kInnerGap;
+        const int rw  = W - rx - kPadH;
+        if (rw < 60) return;
+
+        const int slW = rw - kLblW;
+        const int sx  = rx + kLblW;
+
+        // Filter-side slider starts after filter buttons
+        const int filtSlW = rw - kFiltBtnW - kFiltGap - kLblW;
+        const int filtSx  = rx + kFiltBtnW + kFiltGap + kLblW;
+
+        int ry = kHeaderH + kPadV;
+
+        // OSCILLATORS section
+        ry += kSecHeaderH;
+
+        // Wave buttons row
+        const int btnW = (rw - kLblW) / 5;
+        for (int i = 0; i < 5; ++i)
+            waveButtons_[i].setBounds(sx + i * btnW, ry, btnW - 2, kRowH);
+        ry += kRowH + kRowGap;
+
+        tuneSlider_ .setBounds(sx, ry, slW, kRowH);  ry += kRowH + kRowGap;
+        detSlider_  .setBounds(sx, ry, slW, kRowH);  ry += kRowH + kRowGap;
+        driveSlider_.setBounds(sx, ry, slW, kRowH);  ry += kRowH + kRowGap + kSecGap;
+
+        // FILTER section
+        ry += kSecHeaderH;
+
+        // LP/BP/HP buttons stacked vertically on the left
+        for (int i = 0; i < 3; ++i)
+            filtButtons_[i].setBounds(rx, ry + i * (kRowH + kRowGap), kFiltBtnW - 2, kRowH);
+
+        cutoffSlider_.setBounds(filtSx, ry, filtSlW, kRowH);  ry += kRowH + kRowGap;
+        resSlider_   .setBounds(filtSx, ry, filtSlW, kRowH);  ry += kRowH + kRowGap;
+        envAmtSlider_.setBounds(filtSx, ry, filtSlW, kRowH);  ry += kRowH + kRowGap + kSecGap;
+
+        // ENVELOPE section
+        ry += kSecHeaderH;
+        attackSlider_ .setBounds(sx, ry, slW, kRowH);  ry += kRowH + kRowGap;
+        decaySlider_  .setBounds(sx, ry, slW, kRowH);  ry += kRowH + kRowGap;
+        sustainSlider_.setBounds(sx, ry, slW, kRowH);  ry += kRowH + kRowGap;
+        releaseSlider_.setBounds(sx, ry, slW, kRowH);
+    }
+
+private:
+    // Layout constants
+    static constexpr int kHeaderH   = 26;
+    static constexpr int kPadH      = 10;
+    static constexpr int kPadV      = 8;
+    static constexpr int kLeftW     = 210;
+    static constexpr int kInnerGap  = 12;
+    static constexpr int kOscH      = 100;
+    static constexpr int kOscGap    = 8;
+    static constexpr int kRowH      = 22;
+    static constexpr int kRowGap    = 4;
+    static constexpr int kLblW      = 52;
+    static constexpr int kSecHeaderH= 22;
+    static constexpr int kSecGap    = 10;
+    static constexpr int kFiltBtnW  = 36;
+    static constexpr int kFiltGap   = 4;
+
+    int          selectedChannel_ = 0;
+    juce::String channelName_;
+    juce::String samplePath_;
+    SynthParams  synthParams_;
+    float        tune_ = 0.0f;
+
+    std::vector<float> wfMin_, wfMax_;
+
+    juce::TextButton waveButtons_[5];
+    juce::TextButton filtButtons_[3];
+
+    juce::Slider tuneSlider_, detSlider_, driveSlider_;
+    juce::Slider cutoffSlider_, resSlider_, envAmtSlider_;
+    juce::Slider attackSlider_, decaySlider_, sustainSlider_, releaseSlider_;
+
+    juce::AudioFormatManager formatManager_;
+
+    // ---- helpers ----
+
+    int rightColumnHeight() const
+    {
+        // OSCILLATORS: header + wave-row + 3 sliders + gap
+        const int oscSec  = kSecHeaderH + (kRowH + kRowGap) * 4 + kSecGap;
+        // FILTER: header + 3 sliders + gap
+        const int filtSec = kSecHeaderH + (kRowH + kRowGap) * 3 + kSecGap;
+        // ENVELOPE: header + 4 sliders
+        const int envSec  = kSecHeaderH + (kRowH + kRowGap) * 4;
+        return oscSec + filtSec + envSec;
+    }
+
+    void paintOscFrame(juce::Graphics& g, juce::Rectangle<int> r, const juce::String& label)
+    {
+        g.setColour(juce::Colour(0xff1a1a22u));
+        g.fillRoundedRectangle(r.toFloat(), 5.0f);
+        g.setColour(juce::Colour(0xff363644u));
+        g.drawRoundedRectangle(r.toFloat().reduced(0.5f), 5.0f, 1.0f);
+
+        g.setFont(StudioLookAndFeel::monoFont(7.5f, juce::Font::bold));
+        g.setColour(juce::Colour(0xff666672u));
+        g.drawText(label, r.getX() + 7, r.getY() + 4, r.getWidth() - 14, 13,
+                   juce::Justification::centredLeft);
+    }
+
+    void paintSampleWaveform(juce::Graphics& g, juce::Rectangle<int> r)
+    {
+        if (wfMin_.empty())
+        {
+            g.setFont(StudioLookAndFeel::monoFont(8.0f));
+            g.setColour(juce::Colour(0xff555560u));
+            g.drawText("NO SAMPLE LOADED", r, juce::Justification::centred);
+            return;
+        }
+        const int   numBins = (int)wfMin_.size();
+        const float cy      = r.getCentreY();
+        const float ampH    = r.getHeight() * 0.46f;
+        const float dx      = (float)r.getWidth() / (float)numBins;
+        g.setColour(juce::Colour(0xffb9ff66u).withAlpha(0.75f));
+        for (int i = 0; i < numBins; ++i)
+        {
+            const float x  = r.getX() + i * dx;
+            const float y1 = cy - wfMax_[i] * ampH;
+            const float y2 = cy - wfMin_[i] * ampH;
+            g.fillRect(x, y1, juce::jmax(1.0f, dx - 0.5f), juce::jmax(1.0f, y2 - y1));
+        }
+        g.setColour(juce::Colour(0xff4a4a5au));
+        g.drawLine((float)r.getX(), cy, (float)r.getRight(), cy, 0.5f);
+    }
+
+    void paintSynthWaveform(juce::Graphics& g, juce::Rectangle<int> r)
+    {
+        const float cy   = r.getCentreY();
+        const float ampH = r.getHeight() * 0.44f;
+        const int   N    = r.getWidth();
+        if (N < 2) return;
+        juce::Path p;
+        for (int i = 0; i < N; ++i)
+        {
+            const float t = (float)i / (float)N;
+            float y = 0.0f;
+            switch (synthParams_.waveform)
+            {
+                case 0: y = std::sin(t * juce::MathConstants<float>::twoPi); break;
+                case 1: y = 1.0f - 2.0f * t; break;
+                case 2: y = (t < 0.5f ? 1.0f : -1.0f); break;
+                case 3: y = (t < 0.25f ? 4.0f*t : t < 0.75f ? 2.0f - 4.0f*t : -4.0f + 4.0f*t); break;
+                case 5: y = juce::Random::getSystemRandom().nextFloat() * 2.0f - 1.0f; break;
+                case 6:
+                    for (int s = 0; s < 5; ++s) { float tt = std::fmod(t*(1.0f+(s-2)*0.04f),1.0f); y += (1.0f-2.0f*tt)*0.25f; }
+                    break;
+                default: break;
+            }
+            const float px = (float)(r.getX() + i);
+            const float py = cy - y * ampH;
+            if (i == 0) p.startNewSubPath(px, py); else p.lineTo(px, py);
+        }
+        g.setColour(juce::Colour(0xffb9ff66u));
+        g.strokePath(p, juce::PathStrokeType(1.5f));
+        g.setColour(juce::Colour(0xff4a4a5au));
+        g.drawLine((float)r.getX(), cy, (float)r.getRight(), cy, 0.5f);
+    }
+
+    void paintSectionHeader(juce::Graphics& g, int x, int y, int w,
+                            const char* title, const char* sub)
+    {
+        using LF = StudioLookAndFeel;
+        // Hairline + gradient pill background
+        g.setColour(juce::Colour(0xffdcdce0u));
+        g.drawLine((float)x, (float)y + (float)kSecHeaderH - 1.0f,
+                   (float)(x + w), (float)y + (float)kSecHeaderH - 1.0f, 0.8f);
+
+        g.setFont(LF::monoFont(8.5f, juce::Font::bold));
+        g.setColour(juce::Colour(0xff333340u));
+        g.drawText(title, x, y + 2, 130, kSecHeaderH - 4, juce::Justification::centredLeft);
+
+        g.setFont(LF::monoFont(7.5f));
+        g.setColour(juce::Colour(0xffaaaaB0u));
+        g.drawText(juce::String::fromUTF8(sub), x + 132, y + 2, w - 132, kSecHeaderH - 4,
+                   juce::Justification::centredLeft);
+    }
+
+    void paintSliderLabel(juce::Graphics& g, const char* txt, juce::uint32 col, int x, int y)
+    {
+        g.setFont(StudioLookAndFeel::monoFont(8.0f, juce::Font::bold));
+        g.setColour(juce::Colour(col));
+        g.drawText(txt, x, y + 2, kLblW - 4, kRowH - 2, juce::Justification::centredRight);
+    }
+
+    void setWaveform(int waveIdx)
+    {
+        synthParams_.waveform = waveIdx;
+        updateWaveBtnColors();
+        repaint();
+        if (onSynthParamsChanged) onSynthParamsChanged(synthParams_);
+    }
+
+    void setFilterType(int typeIdx)
+    {
+        synthParams_.filterType = typeIdx;
+        updateFiltBtnColors();
+        if (onSynthParamsChanged) onSynthParamsChanged(synthParams_);
+    }
+
+    void updateWaveBtnColors()
+    {
+        static const int kIdx[] = { 0, 1, 2, 3, 5 };
+        for (int i = 0; i < 5; ++i)
+        {
+            const bool on = (synthParams_.waveform == kIdx[i]);
+            waveButtons_[i].setColour(juce::TextButton::buttonColourId,
+                on ? juce::Colour(0xff3a3a4au) : juce::Colour(0xff252530u));
+            waveButtons_[i].setColour(juce::TextButton::textColourOffId,
+                on ? juce::Colour(0xffb9ff66u) : juce::Colour(0xff888890u));
+        }
+    }
+
+    void updateFiltBtnColors()
+    {
+        static const int kIdx[] = { 0, 2, 1 }; // LP=0, BP=2, HP=1
+        for (int i = 0; i < 3; ++i)
+        {
+            const bool on = (synthParams_.filterType == kIdx[i]);
+            filtButtons_[i].setColour(juce::TextButton::buttonColourId,
+                on ? juce::Colour(StudioLookAndFeel::kAccent) : juce::Colour(0xffe8e8ecu));
+            filtButtons_[i].setColour(juce::TextButton::textColourOffId,
+                on ? juce::Colours::white : juce::Colour(0xff444450u));
+        }
+    }
+
+    void pullSynthParams()
+    {
+        synthParams_.unisonDetune    = (float)detSlider_.getValue();
+        synthParams_.filterDrive     = (float)driveSlider_.getValue();
+        synthParams_.cutoff          = (float)cutoffSlider_.getValue();
+        synthParams_.resonance       = (float)resSlider_.getValue();
+        synthParams_.filterEnvAmount = (float)envAmtSlider_.getValue();
+        synthParams_.attack          = (float)attackSlider_.getValue();
+        synthParams_.decay           = (float)decaySlider_.getValue();
+        synthParams_.sustain         = (float)sustainSlider_.getValue();
+        synthParams_.release         = (float)releaseSlider_.getValue();
+    }
+
+    void syncControls()
+    {
+        tuneSlider_   .setValue(tune_,                        juce::dontSendNotification);
+        detSlider_    .setValue(synthParams_.unisonDetune,    juce::dontSendNotification);
+        driveSlider_  .setValue(synthParams_.filterDrive,     juce::dontSendNotification);
+        cutoffSlider_ .setValue(synthParams_.cutoff,          juce::dontSendNotification);
+        resSlider_    .setValue(synthParams_.resonance,       juce::dontSendNotification);
+        envAmtSlider_ .setValue(synthParams_.filterEnvAmount, juce::dontSendNotification);
+        attackSlider_ .setValue(synthParams_.attack,          juce::dontSendNotification);
+        decaySlider_  .setValue(synthParams_.decay,           juce::dontSendNotification);
+        sustainSlider_.setValue(synthParams_.sustain,         juce::dontSendNotification);
+        releaseSlider_.setValue(synthParams_.release,         juce::dontSendNotification);
+    }
+
+    void loadWaveform(const juce::String& path)
+    {
+        wfMin_.clear();
+        wfMax_.clear();
+        if (path.isEmpty()) return;
+        juce::File file(path);
+        if (!file.existsAsFile()) return;
+        std::unique_ptr<juce::AudioFormatReader> reader(formatManager_.createReaderFor(file));
+        if (!reader) return;
+        const int totalSamples = (int)juce::jmin(reader->lengthInSamples, (juce::int64)1000000);
+        if (totalSamples < 2) return;
+        constexpr int kBins = 240;
+        const int spb = juce::jmax(1, totalSamples / kBins);
+        juce::AudioBuffer<float> buf(1, spb);
+        wfMin_.resize(kBins, 0.0f);
+        wfMax_.resize(kBins, 0.0f);
+        for (int bin = 0; bin < kBins; ++bin)
+        {
+            const juce::int64 start = (juce::int64)bin * spb;
+            const int count = juce::jmin(spb, totalSamples - (int)start);
+            if (count <= 0) break;
+            buf.clear();
+            reader->read(&buf, 0, count, start, true, false);
+            float mn = 0.0f, mx = 0.0f;
+            for (int s = 0; s < count; ++s) { const float v = buf.getSample(0,s); mn=juce::jmin(mn,v); mx=juce::jmax(mx,v); }
+            wfMin_[bin] = mn;
+            wfMax_[bin] = mx;
+        }
+    }
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(InstrumentPanel)
+};
+
+// =========================================================================
 
 class MainComponent : public juce::Component,
                       public juce::Timer,
@@ -425,6 +886,8 @@ private:
     // Inspector tab bar (INSTRUMENT=0 / SEQUENCER=1 / MIXER=2)
     InspectorTabBar      inspectorTabBar_;
     StepInspectorStrip   stepInspector_;
+    InstrumentPanel      instrumentPanel_;
+    juce::Viewport       instrumentViewport_;
     int              inspectorTab_ = 1;   // default: SEQUENCER (channel rack)
     juce::Rectangle<int> rightPanelBounds_;        // cached in resized(), used in paint()
     juce::Rectangle<int> inspectorContentBounds_;  // area below tab bar (inspector content)
@@ -448,8 +911,9 @@ private:
     // M2 — pattern management state
     int activePatternId = 1;
 
-    // Pause/resume — saved bar position when Space-paused in Song mode (< 0 = no pause state)
-    double pausedBarSong = -1.0;
+    // Pause/resume — saved positions when stopped (< 0 = no saved state)
+    double pausedBarSong     = -1.0;
+    double pausedPatternBeat = -1.0;
     int patternStartStep = 0;
     int pianoRollStartStep = 0;
 

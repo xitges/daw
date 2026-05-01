@@ -369,7 +369,7 @@ public:
     // -----------------------------------------------------------------------
     void paint(juce::Graphics& g) override
     {
-        g.fillAll(juce::Colour(0xff1a1a2e));
+        g.fillAll(juce::Colour(0xfff2f2f5u));
         // Piano keys are drawn by KeyboardOverlay (fixed panel) — skip here
         drawGrid(g);
         drawHoverStep(g);
@@ -383,12 +383,12 @@ public:
 
     void paintKeyboardOverlay(juce::Graphics& g, int viewY, int overlayHeight)
     {
-        g.fillAll(juce::Colour(0xff1a1a2e));
+        g.fillAll(juce::Colour(0xfff2f2f5u));
         g.setColour(currentRecState == RecState::Armed
-                        ? juce::Colour(0xff2e1800)
+                        ? juce::Colour(0xffffe8d0u)
                         : recording_
-                            ? juce::Colour(0xff3a0a0a)
-                            : juce::Colour(0xff0f3460));
+                            ? juce::Colour(0xffffddddu)
+                            : juce::Colour(0xffe4e4e8u));
         g.fillRect(0, 0, keyWidth, headerH);
 
         g.saveState();
@@ -398,7 +398,7 @@ public:
         drawVelocityKeyStub(g);
         g.restoreState();
 
-        g.setColour(juce::Colour(0xff0f3460));
+        g.setColour(juce::Colour(0xffbbbbc0u));
         g.drawLine((float)keyWidth, 0.0f, (float)keyWidth, (float)overlayHeight, 1.0f);
     }
 
@@ -1281,8 +1281,8 @@ private:
     juce::Colour rowColourForPitch(int pitch) const
     {
         if (isScalePitch(pitch))
-            return isBlackKey(pitch) ? juce::Colour(0xff1a2140) : juce::Colour(0xff252f58);
-        return isBlackKey(pitch) ? juce::Colour(0xff161628) : juce::Colour(0xff1e1e3a);
+            return isBlackKey(pitch) ? juce::Colour(0xffe0e0e4u) : juce::Colour(0xfff0f0f4u);
+        return isBlackKey(pitch) ? juce::Colour(0xffd8d8dcu) : juce::Colour(0xffe8e8ecu);
     }
     juce::String pitchLabel(int pitch) const
     {
@@ -1834,27 +1834,27 @@ private:
 
             const bool hovered  = (pitch == hoverPitch);
             const bool kbActive = (pitch >= 0 && pitch < 128 && (keyboardHeldPitch[pitch] || externalMidiHeld[pitch]));
-            g.setColour(kbActive        ? juce::Colour(0xffff9500)
-                        : hovered       ? juce::Colour(0xff3498db)
-                        : inScale       ? (black ? juce::Colour(0xff2d3658)
-                                                  : juce::Colour(0xff465987))
-                        : black         ? juce::Colour(0xff2a2a2a)
-                                        : juce::Colour(0xff3a3a4a));
+            g.setColour(kbActive        ? juce::Colour(0xffff9500u)
+                        : hovered       ? juce::Colour(0xff3498dbu)
+                        : inScale       ? (black ? juce::Colour(0xff8090b8u)
+                                                  : juce::Colour(0xffb8c8e8u))
+                        : black         ? juce::Colour(0xff4a4a52u)
+                                        : juce::Colour(0xffe8e8ecu));
             g.fillRect(0, y, keyWidth, noteH);
 
-            g.setColour(juce::Colour(0xff111122));
+            g.setColour(juce::Colour(0xffccccD0u));
             g.drawLine(0.0f, (float)(y + noteH), (float)keyWidth, (float)(y + noteH), 0.5f);
 
             if (pitch % 12 == keySignature.tonic || pitch % 12 == 0)
             {
-                g.setColour(juce::Colours::white.withAlpha(0.7f));
+                g.setColour(juce::Colour(0xff333340u));
                 g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
                 g.drawText(pitchLabel(pitch),
                            2, y, keyWidth - 4, noteH, juce::Justification::centredLeft);
             }
         }
         // Right border
-        g.setColour(juce::Colour(0xff0f3460));
+        g.setColour(juce::Colour(0xffbbbbc0u));
         g.drawLine((float)keyWidth, 0.0f, (float)keyWidth, (float)getHeight(), 1.0f);
 
         // Keyboard range indicator strip
@@ -1911,9 +1911,9 @@ private:
     void drawVelocityKeyStub(juce::Graphics& g)
     {
         const int laneY = velLaneY();
-        g.setColour(juce::Colour(0xff888892));
+        g.setColour(juce::Colour(0xffe8e8ecu));
         g.fillRect(0, laneY, keyWidth, velLaneH);
-        g.setColour(juce::Colour(0xffb0b0b8));
+        g.setColour(juce::Colour(0xffddddDFu));
         g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         g.drawText("VELOCITY", 2, laneY + 2, keyWidth - 4, 11,
                    juce::Justification::centredLeft);
@@ -1943,19 +1943,19 @@ private:
             if (isBar)
             {
                 // Bar line: solid blue, 1px
-                g.setColour(juce::Colour(0xff3498db).withAlpha(0.55f));
+                g.setColour(juce::Colour(0xff8888aau).withAlpha(0.6f));
                 g.drawLine((float)x, (float)headerH, (float)x, (float)gridBottom, 1.0f);
             }
             else if (isBeat)
             {
                 // Beat line: white, moderate alpha, 0.7px
-                g.setColour(juce::Colour(0xffffffff).withAlpha(0.15f));
+                g.setColour(juce::Colour(0xff000000u).withAlpha(0.10f));
                 g.drawLine((float)x, (float)headerH, (float)x, (float)gridBottom, 0.7f);
             }
             else
             {
                 // Sub-beat (1/16 step) line: white, very faint, 0.5px
-                g.setColour(juce::Colour(0xffffffff).withAlpha(0.05f));
+                g.setColour(juce::Colour(0xff000000u).withAlpha(0.04f));
                 g.drawLine((float)x, (float)headerH, (float)x, (float)gridBottom, 0.5f);
             }
         }
@@ -1973,7 +1973,7 @@ private:
         const int w = (int)(0.25f * pixelsPerBeat);   // one 1/16-step wide
         const int gridBottom = velLaneY();
 
-        g.setColour(juce::Colour(0xffffffff).withAlpha(0.03f));
+        g.setColour(juce::Colour(0xff000000u).withAlpha(0.04f));
         g.fillRect(x, headerH, w, gridBottom - headerH);
     }
 
@@ -1981,10 +1981,10 @@ private:
     {
         // Background — colour by state: orange=Armed, red=Recording, blue=normal
         g.setColour(currentRecState == RecState::Armed
-                        ? juce::Colour(0xff2e1800)
+                        ? juce::Colour(0xffffe8d0u)
                         : recording_
-                            ? juce::Colour(0xff3a0a0a)
-                            : juce::Colour(0xff0f3460));
+                            ? juce::Colour(0xffffddddu)
+                            : juce::Colour(0xffe4e4e8u));
         g.fillRect(0, 0, getWidth(), headerH);
 
         // Hover step tick mark in the ruler
@@ -1992,7 +1992,7 @@ private:
         {
             const int hx = xFromBeat(hoverStepBeat);
             const int hw = (int)(0.25f * pixelsPerBeat);
-            g.setColour(juce::Colour(0xffffffff).withAlpha(0.08f));
+            g.setColour(juce::Colour(0xff000000u).withAlpha(0.06f));
             g.fillRect(hx, 0, hw, headerH);
         }
 
@@ -2139,9 +2139,9 @@ private:
                    (float)getWidth(), (float)laneY, 1.0f);
 
         // "VELOCITY" label on the left key stub
-        g.setColour(juce::Colour(0xff888892));
+        g.setColour(juce::Colour(0xffe8e8ecu));
         g.fillRect(0, laneY, keyWidth, velLaneH);
-        g.setColour(juce::Colour(0xffb0b0b8));
+        g.setColour(juce::Colour(0xffddddDFu));
         g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         g.drawText("VELOCITY", 2, laneY + 2, keyWidth - 4, 11,
                    juce::Justification::centredLeft);
@@ -3225,13 +3225,14 @@ public:
 
     PianoRollWindow()
         : juce::DocumentWindow("Piano Roll",
-                               juce::Colour(0xff16213e),
+                               juce::Colour(0xffe4e4e8u),
                                juce::DocumentWindow::allButtons)
     {
         setContentNonOwned(&content, false);
         setResizable(true, false);
         setResizeLimits(1280, 560, 4000, 4000);
         setSize(1520, 700);
+        setUsingNativeTitleBar(true);
     }
 
     void closeButtonPressed() override { setVisible(false); }

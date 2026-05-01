@@ -152,6 +152,38 @@ MainComponent::MainComponent()
     addAndMakeVisible(toolbar);
     addAndMakeVisible(inspectorTabBar_);
     addAndMakeVisible(stepInspector_);
+    instrumentViewport_.setViewedComponent(&instrumentPanel_, false);
+    instrumentViewport_.setScrollBarsShown(true, false);
+    instrumentViewport_.setScrollBarThickness(8);
+    addChildComponent(instrumentViewport_);
+
+    instrumentPanel_.onTuneChanged = [this](float semitones)
+    {
+        if (auto* pat = findPattern(activePatternId))
+        {
+            const int ch = audioEngine.getMidiTargetChannel();
+            if (ch >= 0 && ch < 16)
+            {
+                pat->channelPitch[(size_t)ch] = semitones;
+                audioEngine.setChannelPitch(ch, semitones);
+                markDirty();
+            }
+        }
+    };
+
+    instrumentPanel_.onSynthParamsChanged = [this](const SynthParams& sp)
+    {
+        if (auto* pat = findPattern(activePatternId))
+        {
+            const int ch = audioEngine.getMidiTargetChannel();
+            if (ch >= 0 && ch < 16)
+            {
+                pat->synthParams[(size_t)ch] = sp;
+                audioEngine.updatePatternSnapshot();
+                markDirty();
+            }
+        }
+    };
 
     inspectorTabBar_.onTabChanged = [this](int t)
     {
@@ -168,21 +200,55 @@ MainComponent::MainComponent()
         inspectorTabBar_.setSequencerSub(project.patterns[0].name);
     inspectorTabBar_.setInstrumentSub(0, channelRack.getChannelName(0));
 
+    // Initialise instrument panel with channel 0
+    if (!project.patterns.empty())
+        instrumentPanel_.setChannel(0, channelRack.getChannelName(0),
+                                    project.patterns[0].samplePaths[0],
+                                    project.patterns[0].synthParams[0],
+                                    project.patterns[0].channelPitch[0]);
+
     toolbar.onPlay = [this]
     {
-        pausedBarSong = -1.0;
         syncPatternToEngine();
         markDirty();
         project.bpm = toolbar.getBPM();
         audioEngine.setBPM(project.bpm);
         audioEngine.setPlayMode(toolbar.getPlayMode());
         project.patternStartStep = patternStartStep;
-        audioEngine.play(patternStartStep, project.songStartBar);
+
+        if (project.playMode == PlayMode::Song)
+        {
+            const double resumeBar = (pausedBarSong >= 0.0) ? pausedBarSong : project.songStartBar;
+            audioEngine.play(patternStartStep, project.songStartBar);
+            if (resumeBar > 0.0) audioEngine.seekSongToBar(resumeBar);
+        }
+        else
+        {
+            // Pattern mode: resume from saved beat position
+            const double resumeBeat = pausedPatternBeat;
+            if (resumeBeat > 0.0)
+            {
+                const int stepCount  = juce::jmax(1, channelRack.getStepCount());
+                const int resumeStep = juce::jlimit(0, stepCount - 1, (int)(resumeBeat / 0.25));
+                audioEngine.play(resumeStep, project.songStartBar);
+            }
+            else
+            {
+                audioEngine.play(patternStartStep, project.songStartBar);
+            }
+        }
+        pausedBarSong     = -1.0;
+        pausedPatternBeat = -1.0;
     };
 
     toolbar.onStop = [this]
     {
-        pausedBarSong = -1.0;
+        // Save current position for resume
+        if (audioEngine.isPlaying())
+        {
+            pausedBarSong     = audioEngine.getSongBeatPosition() / 4.0;
+            pausedPatternBeat = audioEngine.getPatternBeatPos();
+        }
 
         // Stop recording if active
         if (audioEngine.isRecording())
@@ -195,7 +261,7 @@ MainComponent::MainComponent()
         audioEngine.stop();
         audioEngine.allSynthNotesOff();
         channelRack.setPlaybackStep(-1);
-        playlist.setPlayheadBar(-1.0);
+        playlist.setPlayheadBar(pausedBarSong > 0.0 ? pausedBarSong : -1.0);
         if (pianoRollWindow != nullptr)
             pianoRollWindow->content.pianoRoll.setPlayheadBeat(-1.0);
     };
@@ -637,6 +703,14 @@ MainComponent::MainComponent()
         audioEngine.setMidiTargetChannel(ch);
         channelRack.setSelectedMidiChannel(ch);
         inspectorTabBar_.setInstrumentSub(ch, channelRack.getChannelName(ch));
+
+        if (auto* pat = findPattern(activePatternId))
+        {
+            const juce::String samplePath = pat->samplePaths[(size_t)ch];
+            instrumentPanel_.setChannel(ch, channelRack.getChannelName(ch),
+                                        samplePath, pat->synthParams[(size_t)ch],
+                                        pat->channelPitch[(size_t)ch]);
+        }
     };
 
     channelRack.onMuteChanged = [this](int ch, bool muted)
@@ -2369,7 +2443,12 @@ MainComponent::MainComponent()
         audioEngine.setMasterVolume((float)v);
     };
 
-    toolbar.onRewind      = [this] { audioEngine.stop(); };
+    toolbar.onRewind      = [this] {
+        pausedBarSong = -1.0; pausedPatternBeat = -1.0;
+        audioEngine.stop();
+        channelRack.setPlaybackStep(-1);
+        playlist.setPlayheadBar(-1.0);
+    };
     toolbar.onFastForward = [this] { /* fast-forward: stub */ };
     toolbar.onToggleLoop  = [this]
     {
@@ -2933,6 +3012,12 @@ void MainComponent::reloadProjectIntoUI()
     if (auto* pat = findPattern(activePatternId))
         inspectorTabBar_.setSequencerSub(pat->name);
     inspectorTabBar_.setInstrumentSub(0, channelRack.getChannelName(0));
+
+    // Refresh instrument panel (channel 0 default)
+    if (auto* pat = findPattern(activePatternId))
+        instrumentPanel_.setChannel(0, channelRack.getChannelName(0),
+                                    pat->samplePaths[0], pat->synthParams[0],
+                                    pat->channelPitch[0]);
 }
 
 void MainComponent::newProject()
@@ -3316,7 +3401,8 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
             if (doubleSpace)
             {
                 // Double-Space: stop and return to beginning (no auto-play)
-                pausedBarSong = -1.0;
+                pausedBarSong     = -1.0;
+                pausedPatternBeat = -1.0;
                 audioEngine.stop();
                 audioEngine.allSynthNotesOff();
                 channelRack.setPlaybackStep(-1);
@@ -3334,7 +3420,9 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
             }
             else
             {
-                pausedBarSong = -1.0;
+                // Pattern mode pause: save beat for resume
+                pausedPatternBeat = audioEngine.getPatternBeatPos();
+                pausedBarSong     = -1.0;
                 audioEngine.stop();
                 audioEngine.allSynthNotesOff();
                 channelRack.setPlaybackStep(-1);
@@ -3575,13 +3663,21 @@ void MainComponent::resized()
     inspectorContentBounds_ = area;
 
     // Inspector content — INSTRUMENT(0) / SEQUENCER(1) / MIXER(2)
-    const bool showSeq  = (inspectorTab_ == 1);
-    const bool showMix  = (inspectorTab_ == 2);
+    const bool showInstr = (inspectorTab_ == 0);
+    const bool showSeq   = (inspectorTab_ == 1);
+    const bool showMix   = (inspectorTab_ == 2);
 
+    instrumentViewport_.setVisible(showInstr);
     channelRackViewport.setVisible(showSeq);
     mixer.setVisible(showMix);
 
-    if (showSeq)
+    if (showInstr)
+    {
+        instrumentViewport_.setBounds(area);
+        instrumentPanel_.setSize(area.getWidth() - instrumentViewport_.getScrollBarThickness(),
+                                 instrumentPanel_.getNeededHeight());
+    }
+    else if (showSeq)
     {
         channelRackViewport.setBounds(area);
         const int viewW = area.getWidth();

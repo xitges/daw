@@ -504,6 +504,38 @@ public:
     int getDefaultScrollbarWidth() override { return 8; }
 
     // =========================================================================
+    // DocumentWindow title bar
+    // =========================================================================
+    void drawDocumentWindowTitleBar(juce::DocumentWindow& window,
+                                    juce::Graphics& g,
+                                    int w, int h,
+                                    int titleSpaceX, int titleSpaceW,
+                                    const juce::Image* /*icon*/,
+                                    bool drawTitleTextOnLeft) override
+    {
+        const bool isActive = window.isActiveWindow();
+
+        // Background gradient: light gray top → slightly darker bottom
+        juce::ColourGradient bg(juce::Colour(isActive ? 0xfff0f0f3u : 0xffe8e8ebu), 0.0f, 0.0f,
+                                juce::Colour(isActive ? 0xffe4e4e8u : 0xffdddde0u), 0.0f, (float)h, false);
+        g.setGradientFill(bg);
+        g.fillAll();
+
+        // Bottom separator line
+        g.setColour(juce::Colour(0xffccccd0u));
+        g.drawLine(0.0f, (float)h - 1.0f, (float)w, (float)h - 1.0f, 1.0f);
+
+        // Title text
+        g.setFont(monoFont(11.0f, juce::Font::bold));
+        g.setColour(juce::Colour(isActive ? 0xff1a1a22u : 0xff888890u));
+        g.drawText(window.getName(),
+                   titleSpaceX, 0, titleSpaceW, h,
+                   drawTitleTextOnLeft ? juce::Justification::centredLeft
+                                       : juce::Justification::centred,
+                   true);
+    }
+
+    // =========================================================================
     // ComboBox
     // =========================================================================
     void drawComboBox(juce::Graphics& g, int width, int height,

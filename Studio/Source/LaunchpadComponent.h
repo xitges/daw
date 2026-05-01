@@ -28,8 +28,8 @@ public:
     {
         setWantsKeyboardFocus(true);
 
-        recBtn.setColour(juce::TextButton::buttonColourId,  juce::Colour(0xff8b0000));
-        recBtn.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xffdd0000));
+        recBtn.setColour(juce::TextButton::buttonColourId,  juce::Colour(0xffe8e8ecu));
+        recBtn.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xffdd3030u));
         recBtn.setClickingTogglesState(true);
         recBtn.onClick = [this] { onRecButtonClicked(); };
         addAndMakeVisible(recBtn);
@@ -41,29 +41,29 @@ public:
         addAndMakeVisible(barsBox);
 
         convertBtn.setEnabled(false);
-        convertBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a4060));
+        convertBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffe8e8ecu));
         convertBtn.onClick = [this] { onConvertClicked(); };
         addAndMakeVisible(convertBtn);
 
-        saveDefaultBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a3a1a));
+        saveDefaultBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffe8e8ecu));
         saveDefaultBtn.onClick = [this] { saveDefaultPads(); };
         addAndMakeVisible(saveDefaultBtn);
 
-        loadDefaultBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a2a3a));
+        loadDefaultBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffe8e8ecu));
         loadDefaultBtn.onClick = [this] { loadDefaultPads(); };
         addAndMakeVisible(loadDefaultBtn);
 
-        stopAllBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff8b2020));
-        stopAllBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+        stopAllBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffe8e8ecu));
+        stopAllBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff303034u));
         stopAllBtn.onClick = [this] { if (onStopAll) onStopAll(); };
         addAndMakeVisible(stopAllBtn);
 
-        clearAllBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff4a1a1a));
-        clearAllBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+        clearAllBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffe8e8ecu));
+        clearAllBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff303034u));
         clearAllBtn.onClick = [this] { clearAllPads(); };
         addAndMakeVisible(clearAllBtn);
 
-        statusLabel.setColour(juce::Label::textColourId, juce::Colour(0xff888888));
+        statusLabel.setColour(juce::Label::textColourId, juce::Colour(0xff707078u));
         statusLabel.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
         statusLabel.setText("Drop samples onto pads", juce::dontSendNotification);
         addAndMakeVisible(statusLabel);
@@ -422,12 +422,12 @@ inline void LaunchpadPanel::resized()
 
 inline void LaunchpadPanel::paint(juce::Graphics& g)
 {
-    g.fillAll(juce::Colour(0xff0d0d1a));
+    g.fillAll(juce::Colour(0xfff2f2f4u));
 
     // Top bar background
-    g.setColour(juce::Colour(0xff16213e));
+    g.setColour(juce::Colour(0xffe4e4e8u));
     g.fillRect(0, 0, getWidth(), topBarHeight());
-    g.setColour(juce::Colour(0xff0f3460));
+    g.setColour(juce::Colour(0xffccccd0u));
     g.drawLine(0.0f, (float)topBarHeight(), (float)getWidth(), (float)topBarHeight(), 1.0f);
 
     // Subtle divider after keyboard rows (rows 0-3)
@@ -436,7 +436,7 @@ inline void LaunchpadPanel::paint(juce::Graphics& g)
         const int totalW = kCols * ps + (kCols - 1) * kGap;
         const int ox     = (getWidth() - totalW) / 2;
         const int divY   = padBounds(4 * kCols).getY() - kGap / 2;
-        g.setColour(juce::Colour(0xff3498db).withAlpha(0.15f));
+        g.setColour(juce::Colour(0xffb0b0b8u).withAlpha(0.5f));
         g.drawLine((float)ox, (float)divY, (float)(ox + totalW), (float)divY, 1.5f);
     }
 
@@ -449,42 +449,40 @@ inline void LaunchpadPanel::paint(juce::Graphics& g)
         const bool hover    = (i == hoveredPad);
         const bool dragOver = (i == dragOverPad);
 
-        // Colour: unique per-pad hue so all 64 look distinct
         juce::Colour col;
         if (hasFile)
         {
             const float hue = (float)(i % 16) / 16.0f;
-            col = juce::Colour::fromHSV(hue, 0.7f, 0.6f, 1.0f);
+            col = juce::Colour::fromHSV(hue, 0.55f, 0.78f, 1.0f);
         }
         else
         {
-            col = juce::Colour(0xff1a1a2e);
+            col = juce::Colour(0xffe8e8ecu);
         }
 
-        if (dragOver) col = juce::Colour(0xff3498db);
-        if (hover && !dragOver) col = col.brighter(0.18f);
+        if (dragOver) col = juce::Colour(0xff6ab0e0u);
+        if (hover && !dragOver) col = col.brighter(0.12f);
 
-        // Recording indicator on last-hit pad
         const bool justHit = (!recordedHits.empty() &&
                                recordedHits.back().padIdx == i &&
                                isRecording);
-        if (justHit) col = col.brighter(0.5f);
+        if (justHit) col = col.brighter(0.4f);
 
         g.setColour(col);
         g.fillRoundedRectangle(b, 6.0f);
 
-        const juce::Colour border = dragOver ? juce::Colour(0xff2980b9)
-                                             : (hasFile ? col.brighter(0.35f)
-                                                        : juce::Colour(0xff2c2c54));
+        const juce::Colour border = dragOver ? juce::Colour(0xff4a90c0u)
+                                             : (hasFile ? col.darker(0.15f)
+                                                        : juce::Colour(0xffd0d0d4u));
         g.setColour(border);
         g.drawRoundedRectangle(b.reduced(0.5f), 6.0f, 1.0f);
 
-        // Sample name (filename without extension)
+        // Sample name
         if (hasFile)
         {
             const auto fname = juce::File(project->launchpadPads[(size_t)i].filePath)
                                .getFileNameWithoutExtension();
-            g.setColour(juce::Colours::white.withAlpha(0.85f));
+            g.setColour(juce::Colours::white.withAlpha(0.92f));
             const int ps = padSize();
             g.setFont(juce::Font(juce::FontOptions().withHeight(
                                  (float)juce::jmax(8, juce::jmin(11, ps / 6)))));
@@ -493,7 +491,7 @@ inline void LaunchpadPanel::paint(juce::Graphics& g)
         }
         else if (dragOver)
         {
-            g.setColour(juce::Colours::white.withAlpha(0.8f));
+            g.setColour(juce::Colours::white.withAlpha(0.9f));
             g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
             g.drawFittedText("Drop", b.reduced(3.0f).toNearestInt(),
                              juce::Justification::centred, 1);
@@ -504,7 +502,7 @@ inline void LaunchpadPanel::paint(juce::Graphics& g)
         {
             const auto mode = project->launchpadPads[(size_t)i].playMode;
             const juce::String ml = (mode == PadPlayMode::Loop) ? "L" : "G";
-            g.setColour(juce::Colours::white.withAlpha(0.55f));
+            g.setColour(juce::Colours::white.withAlpha(0.65f));
             g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
             g.drawText(ml, (int)b.getRight() - 14, (int)b.getBottom() - 13, 11, 11,
                        juce::Justification::centredRight);
@@ -514,7 +512,7 @@ inline void LaunchpadPanel::paint(juce::Graphics& g)
         const juce::String kl = keyLabelForPad(i);
         if (kl.isNotEmpty())
         {
-            g.setColour(juce::Colours::white.withAlpha(hasFile ? 0.4f : 0.15f));
+            g.setColour(juce::Colour(0xff606068u).withAlpha(hasFile ? 0.5f : 0.35f));
             g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
             g.drawText(kl, (int)b.getX() + 3, (int)b.getY() + 2, 14, 10,
                        juce::Justification::centredLeft);
@@ -524,7 +522,7 @@ inline void LaunchpadPanel::paint(juce::Graphics& g)
     // Recording indicator overlay
     if (isRecording)
     {
-        g.setColour(juce::Colour(0xffdd0000).withAlpha(0.12f));
+        g.setColour(juce::Colour(0xffdd0000u).withAlpha(0.10f));
         g.fillRect(0, topBarHeight(), getWidth(), getHeight() - topBarHeight());
     }
 }

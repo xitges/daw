@@ -32,9 +32,9 @@ namespace SynthEditorHelper
 @font-face{font-family:'JBMono';font-weight:400;src:url('/font-regular.ttf') format('truetype');}
 @font-face{font-family:'JBMono';font-weight:700;src:url('/font-bold.ttf') format('truetype');}
 :root{
-  --chassis:#d6ebc4;--chassis2:#c8e0b4;--panel:#e6f3d8;--rim:#9ec882;
-  --accent:#4a9e3f;--ink:#1a2414;--ink-soft:#3a5230;--ink-faint:#6a8860;
-  --display-bg:#0d1a0a;--display-fg:#b9ff66;
+  --chassis:#efeff2;--chassis2:#e4e4e8;--panel:#f7f7f9;--rim:#ccccD0;
+  --accent:#d8412a;--ink:#1a1a1e;--ink-soft:#44444c;--ink-faint:#888890;
+  --display-bg:#1a1a22;--display-fg:#b9ff66;
 }
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:'JBMono',Monaco,'Courier New',monospace;background:linear-gradient(180deg,var(--chassis),var(--chassis2));color:var(--ink);padding:12px;}
@@ -954,12 +954,13 @@ public:
 
     SynthEditorWindow()
         : juce::DocumentWindow("Synth Editor",
-                               juce::Colour(0xff2a2218),
+                               juce::Colour(0xffe4e4e8u),
                                juce::DocumentWindow::closeButton)
     {
         setContentNonOwned(&panel, false);
         setResizable(true, false);
         setSize(470, 660);
+        setUsingNativeTitleBar(true);
     }
 
     void setChannelName(const juce::String& name) { setName(juce::String::fromUTF8("Synth  \xe2\x80\x94  ") + name); }

@@ -364,7 +364,7 @@ void ToolbarComponent::paint(juce::Graphics& g)
             g.setColour(juce::Colour(LF::kText));
             g.drawText("xitges", 14, 10, 84, 24, juce::Justification::centredLeft);
             g.setColour(juce::Colour(LF::kAccent));
-            g.drawText(".", 96, 10, 14, 24, juce::Justification::centredLeft);
+            g.drawText(".", 82, 10, 14, 24, juce::Justification::centredLeft);
 
             // Subtitle
             g.setFont(LF::monoFont(7.5f, juce::Font::bold));
@@ -495,12 +495,12 @@ void ToolbarComponent::paint(juce::Graphics& g)
 
         // ---- RIGHT: Status + MasterMeter + MASTER label ---------------------
         {
-            const int rightX = (int)W - 350;
+            const int rightX = 510;
 
-            // Dashed separator
-            g.setColour(juce::Colour(0x28000000));
-            for (float dy = 14.0f; dy < row1H - 14.0f; dy += 6.0f)
-                g.drawLine((float)rightX, dy, (float)rightX, dy + 3.0f, 1.0f);
+//            // Dashed separator
+//            g.setColour(juce::Colour(0x28000000));
+//            for (float dy = 14.0f; dy < row1H - 14.0f; dy += 6.0f)
+//                g.drawLine((float)rightX, dy, (float)rightX, dy + 3.0f, 1.0f);
 
             // LED row — inline: [LED] PLAY [LED] REC [LED] LOOP
             auto drawLed = [&](float cx, float cy, juce::uint32 col, bool on)
@@ -557,7 +557,7 @@ void ToolbarComponent::paint(juce::Graphics& g)
                 const float padX = 8.0f, padY = 6.0f;
                 const float contW = meterW + padX * 2;                    // 34px
                 const float contH = meterH + padY * 2;                    // ≈58px (fits in 84px)
-                const float contX = (float)rightX + 235.0f;
+                const float contX = (float)(W - 350) + 235.0f;
                 const float contY = ((float)row1H - contH) * 0.5f;
 
                 g.setColour(juce::Colour(LF::kDisplayBg));
