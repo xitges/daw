@@ -473,6 +473,7 @@ public:
         releaseSlider_.onValueChange = synthCb;
 
         formatManager_.registerBasicFormats();
+        
 
         // ---- SynthEditorPanel (MelSynth mode) ----
         synthPanel_.onParamsChanged = [this] {
@@ -504,10 +505,10 @@ public:
         tune_            = tuneSemitones;
         pluginName_      = pluginName;
 
-        if (chType == ChannelType::Drum)
-            mode_ = PanelMode::Drum;
-        else if (hasPlugin)
+        if (hasPlugin)
             mode_ = PanelMode::MelVst;
+        else if (chType == ChannelType::Drum)
+            mode_ = PanelMode::Drum;
         else
             mode_ = PanelMode::MelSynth;
 
@@ -527,10 +528,48 @@ public:
         repaint();
     }
 
+    void embedPluginEditor(juce::AudioPluginInstance* plugin)
+    {
+        clearEmbeddedEditor();
+        if (plugin == nullptr) return;
+        if (auto* ed = plugin->createEditorIfNeeded())
+        {
+            embeddedEditor_.reset(ed);
+            addAndMakeVisible(*embeddedEditor_);
+        }
+        resized();
+        repaint();
+    }
+
+    void clearEmbeddedEditor()
+    {
+        if (embeddedEditor_ != nullptr)
+        {
+            removeChildComponent(embeddedEditor_.get());
+            embeddedEditor_.reset();
+        }
+        resized();
+        repaint();
+    }
+
+    juce::Point<int> getEmbeddedEditorSize() const
+    {
+        if (embeddedEditor_ != nullptr)
+            return { embeddedEditor_->getWidth(), embeddedEditor_->getHeight() };
+        return {};
+    }
+
     int getNeededHeight() const
     {
         if (mode_ == PanelMode::MelSynth) return kHeaderH + 680;
-        return kHeaderH + kPadV + rightColumnHeight() + kPadV;
+        if (mode_ == PanelMode::MelVst)
+        {
+            const int edH = embeddedEditor_ != nullptr ? embeddedEditor_->getHeight() : 80;
+            return kHeaderH + kPadV + edH + kPadV;
+        }
+        const int leftH  = kPadV + kOscH + kOscGap + kOscH + kPadV;
+        const int rightH = kPadV + rightColumnHeight() + kPadV;
+        return kHeaderH + juce::jmax(leftH, rightH);
     }
 
     // -------------------------------------------------------------------------
@@ -581,8 +620,20 @@ public:
         g.drawText(sub, 52, kHeaderH / 2, W - 200, kHeaderH / 2,
                    juce::Justification::centredLeft, true);
 
-        // ---- OSC frames (left column) — Drum and MelVst only ----
-        // MelSynth uses the embedded SynthEditorPanel which draws its own waveform preview
+        // MelVst: 임베딩된 에디터가 직접 그림
+        if (mode_ == PanelMode::MelVst)
+        {
+            if (embeddedEditor_ == nullptr)
+            {
+                g.setFont(LF::monoFont(10.0f));
+                g.setColour(juce::Colour(0xff888898u));
+                g.drawText("No custom editor available", kPadH, kHeaderH + kPadV + 20,
+                           getWidth() - kPadH * 2, 30, juce::Justification::centred);
+            }
+            return;
+        }
+
+        // ---- OSC frames (left column) — Drum only ----
         if (mode_ != PanelMode::MelSynth)
         {
             const int contentTopY = kHeaderH + kPadV;
@@ -658,11 +709,9 @@ public:
 
         if (mode_ == PanelMode::MelVst)
         {
-            ry += kSecHeaderH;
-            openVstBtn_.setBounds(rx, ry + kVstCardH - kRowH - 2, rw, kRowH);
-            ry += kVstCardH + kSecGap;
-            ry += kSecHeaderH;
-            tuneSlider_.setBounds(sx, ry, slW, kRowH);
+            if (embeddedEditor_ != nullptr)
+                embeddedEditor_->setTopLeftPosition(kPadH, kHeaderH + kPadV);
+            return;
         }
         else  // Drum
         {
@@ -705,6 +754,7 @@ private:
     juce::TextButton waveButtons_[5];
     juce::TextButton filtButtons_[3];
     juce::TextButton openVstBtn_;
+    std::unique_ptr<juce::AudioProcessorEditor> embeddedEditor_;
 
     juce::Slider tuneSlider_, detSlider_, driveSlider_;
     juce::Slider cutoffSlider_, resSlider_, envAmtSlider_;
@@ -740,8 +790,8 @@ private:
 
         // Custom controls are hidden in MelSynth mode
         for (auto& b : waveButtons_) b.setVisible(false); // wave btns moved to SynthEditorPanel
-        openVstBtn_.setVisible(isMelVst);
-        tuneSlider_.setVisible(!isMelSynth);
+        openVstBtn_.setVisible(false);
+        tuneSlider_.setVisible(!isMelSynth && !isMelVst);
         detSlider_   .setVisible(false);  // covered by SynthEditorPanel
         driveSlider_ .setVisible(false);
         for (auto* f : { &filtButtons_[0], &filtButtons_[1], &filtButtons_[2] })

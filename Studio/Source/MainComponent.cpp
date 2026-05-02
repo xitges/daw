@@ -300,6 +300,17 @@ MainComponent::MainComponent()
                                     pat0.channelTypes[0],
                                     hp0,
                                     hp0 ? audioEngine.getPlugin(0)->getName() : juce::String{});
+        if (hp0)
+            instrumentPanel_.embedPluginEditor(audioEngine.getPlugin(0));
+        if (inspectorTab_ == 0)
+        {
+            const auto edSz = instrumentPanel_.getEmbeddedEditorSize();
+            const int scrollT = instrumentViewport_.getScrollBarThickness();
+            instrumentPanel_.setSize(
+                juce::jmax(instrumentViewport_.getWidth() - scrollT,
+                           edSz.x > 0 ? edSz.x + 20 : 0),
+                instrumentPanel_.getNeededHeight());
+        }
         if (pat0.channelTypes[0] == ChannelType::Melodic && !hp0)
             instrumentPanel_.setAvailablePresets(
                 SynthPresets::mergeFactoryAndCustom(project.customSynthPresets),
@@ -820,6 +831,10 @@ MainComponent::MainComponent()
                         pat->channelTypes[(size_t)ch],
                         hp,
                         hp ? audioEngine.getPlugin(ch)->getName() : juce::String{});
+                    if (inspectorTab_ == 0)
+                        instrumentPanel_.setSize(
+                            instrumentViewport_.getWidth() - instrumentViewport_.getScrollBarThickness(),
+                            instrumentPanel_.getNeededHeight());
                 }
             }
                 
@@ -845,6 +860,24 @@ MainComponent::MainComponent()
                                         pat->channelTypes[(size_t)ch],
                                         hp,
                                         hp ? audioEngine.getPlugin(ch)->getName() : juce::String{});
+            if (hp)
+            {
+                if (pluginEditorWindows[(size_t)ch] != nullptr)
+                    pluginEditorWindows[(size_t)ch].reset();
+                instrumentPanel_.embedPluginEditor(audioEngine.getPlugin(ch));
+            }
+            else
+                instrumentPanel_.clearEmbeddedEditor();
+
+            if (inspectorTab_ == 0)
+            {
+                const auto edSz = instrumentPanel_.getEmbeddedEditorSize();
+                const int scrollT = instrumentViewport_.getScrollBarThickness();
+                instrumentPanel_.setSize(
+                    juce::jmax(instrumentViewport_.getWidth() - scrollT,
+                               edSz.x > 0 ? edSz.x + 20 : 0),
+                    instrumentPanel_.getNeededHeight());
+            }
             if (pat->channelTypes[(size_t)ch] == ChannelType::Melodic && !hp)
                 instrumentPanel_.setAvailablePresets(
                     SynthPresets::mergeFactoryAndCustom(project.customSynthPresets),
@@ -1593,6 +1626,10 @@ MainComponent::MainComponent()
                                             t,
                                             hp,
                                             hp ? audioEngine.getPlugin(ch)->getName() : juce::String{});
+                if (inspectorTab_ == 0)
+                    instrumentPanel_.setSize(
+                        instrumentViewport_.getWidth() - instrumentViewport_.getScrollBarThickness(),
+                        instrumentPanel_.getNeededHeight());
                 if (t == ChannelType::Melodic && !hp)
                     instrumentPanel_.setAvailablePresets(
                         SynthPresets::mergeFactoryAndCustom(project.customSynthPresets),
@@ -1876,6 +1913,42 @@ MainComponent::MainComponent()
                 channelRack.setChannelHasPlugin(targetCh, true);
                 audioEngine.updatePatternSnapshot();
                 markDirty();
+                
+                const juce::String pluginChName = "Plugin " + juce::String(targetCh + 1);
+                if (auto* pat2 = findPattern(activePatternId))
+                    pat2->channelNames[targetCh] = pluginChName;
+                channelRack.setChannelName(targetCh, pluginChName);
+                inspectorTabBar_.setInstrumentSub(targetCh, pluginChName);
+                
+                if (auto* pat = findPattern(activePatternId))
+                {
+                    const bool hp = audioEngine.hasPlugin(targetCh);
+                    instrumentPanel_.setChannel(targetCh,
+                                                channelRack.getChannelName(targetCh),
+                                                pat->samplePaths[(size_t)targetCh],
+                                                pat->synthParams[(size_t)targetCh],
+                                                pat->channelPitch[(size_t)targetCh],
+                                                pat->channelTypes[(size_t)targetCh],
+                                                hp,
+                                                hp ? audioEngine.getPlugin(targetCh)->getName() : juce::String{});
+                    if (pluginEditorWindows[(size_t)targetCh] != nullptr)
+                        pluginEditorWindows[(size_t)targetCh].reset();
+                    instrumentPanel_.embedPluginEditor(audioEngine.getPlugin(targetCh));
+
+                    const auto edSz = instrumentPanel_.getEmbeddedEditorSize();
+                    const int scrollT = instrumentViewport_.getScrollBarThickness();
+                    if (inspectorTab_ == 0)
+                        instrumentPanel_.setSize(
+                            juce::jmax(instrumentViewport_.getWidth() - scrollT,
+                                       edSz.x > 0 ? edSz.x + 20 : 0),
+                            instrumentPanel_.getNeededHeight());
+                }
+
+                inspectorTabBar_.setTab(0);
+                if (inspectorTabBar_.onTabChanged)
+                    inspectorTabBar_.onTabChanged(0);
+                
+
             };
         }
 
@@ -1900,15 +1973,42 @@ MainComponent::MainComponent()
     };
 
     channelRack.onRemovePlugin = [this](int ch)
-    {
+        {
         if (pluginEditorWindows[(size_t)ch] != nullptr)
             pluginEditorWindows[(size_t)ch].reset();
+        instrumentPanel_.clearEmbeddedEditor();
 
         audioEngine.unloadPlugin(ch);
         project.channelInstrumentPlugins[(size_t)ch] = {};
         if (auto* pat = findPattern(activePatternId))
             pat->pluginSlots[(size_t)ch] = PluginSlot{};
         channelRack.setChannelHasPlugin(ch, false);
+
+        // 채널 이름 복구
+        const juce::String defaultName = "noname";
+        if (auto* pat = findPattern(activePatternId))
+            pat->channelNames[ch] = defaultName;
+        channelRack.setChannelName(ch, defaultName);
+        inspectorTabBar_.setInstrumentSub(ch, defaultName);
+
+        // InstrumentPanel을 MelSynth 모드로 복구
+        if (auto* pat = findPattern(activePatternId))
+        {
+            instrumentPanel_.setChannel(
+                ch,
+                defaultName,
+                pat->samplePaths[(size_t)ch],
+                pat->synthParams[(size_t)ch],
+                pat->channelPitch[(size_t)ch],
+                pat->channelTypes[(size_t)ch],
+                false,
+                {});
+            if (inspectorTab_ == 0)
+                instrumentPanel_.setSize(
+                    instrumentViewport_.getWidth() - instrumentViewport_.getScrollBarThickness(),
+                    instrumentPanel_.getNeededHeight());
+        }
+
         audioEngine.updatePatternSnapshot();
         markDirty();
     };
@@ -3172,6 +3272,7 @@ void MainComponent::reloadProjectIntoUI()
     {
         if (pluginEditorWindows[(size_t)ch] != nullptr)
             pluginEditorWindows[(size_t)ch].reset();
+        instrumentPanel_.clearEmbeddedEditor();
         audioEngine.unloadPlugin(ch);
         channelRack.setChannelHasPlugin(ch, false);
     }
@@ -3229,6 +3330,18 @@ void MainComponent::reloadProjectIntoUI()
                                     pat->channelTypes[0],
                                     hp0,
                                     hp0 ? audioEngine.getPlugin(0)->getName() : juce::String{});
+        instrumentPanel_.clearEmbeddedEditor();
+        if (hp0)
+            instrumentPanel_.embedPluginEditor(audioEngine.getPlugin(0));
+        if (inspectorTab_ == 0)
+        {
+            const auto edSz = instrumentPanel_.getEmbeddedEditorSize();
+            const int scrollT = instrumentViewport_.getScrollBarThickness();
+            instrumentPanel_.setSize(
+                juce::jmax(instrumentViewport_.getWidth() - scrollT,
+                           edSz.x > 0 ? edSz.x + 20 : 0),
+                instrumentPanel_.getNeededHeight());
+        }
         if (pat->channelTypes[0] == ChannelType::Melodic && !hp0)
             instrumentPanel_.setAvailablePresets(
                 SynthPresets::mergeFactoryAndCustom(project.customSynthPresets),
@@ -3889,9 +4002,13 @@ void MainComponent::resized()
 
     if (showInstr)
     {
+        instrumentViewport_.setScrollBarsShown(true, true);
         instrumentViewport_.setBounds(area);
-        instrumentPanel_.setSize(area.getWidth() - instrumentViewport_.getScrollBarThickness(),
-                                 instrumentPanel_.getNeededHeight());
+        const auto edSz = instrumentPanel_.getEmbeddedEditorSize();
+        const int scrollT = instrumentViewport_.getScrollBarThickness();
+        const int panelW = juce::jmax(area.getWidth() - scrollT,
+                                      edSz.x > 0 ? edSz.x + 20 : 0);
+        instrumentPanel_.setSize(panelW, instrumentPanel_.getNeededHeight());
     }
     else if (showSeq)
     {
