@@ -14,6 +14,6 @@
 <br>
 <img width="1920" height="1440" alt="9shots_so" src="https://github.com/user-attachments/assets/d2d83659-9f5f-4700-9b03-41a812afc473" />
 <br>
-
+<hr>
 
 
