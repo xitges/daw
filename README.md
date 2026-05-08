@@ -8,6 +8,8 @@
 <br>
 <img width="1920" height="1440" alt="926shots_so" src="https://github.com/user-attachments/assets/52274dc3-22bd-44d5-9290-a899fa84b235" />
 <br>
+<img width="400" height="232" alt="화면 기록 2026-05-08 오후 6 48 07" src="https://github.com/user-attachments/assets/af32abe7-9db4-4911-a01a-7476883b1727" />
+<br>
 <img width="1920" height="1440" alt="391shots_so" src="https://github.com/user-attachments/assets/6576b2a5-91e2-4042-905c-f30debe7dfe5" />
 <br>
 <img width="1920" height="1440" alt="162shots_so" src="https://github.com/user-attachments/assets/9e73d071-b4a1-433b-96ed-3fc0c934e413" />
