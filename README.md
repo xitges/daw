@@ -4,9 +4,8 @@
 **☩ built with C++ and JUCE**
 
 ## Preview
-<img width="1920" height="1440" alt="866shots_so" src="https://github.com/user-attachments/assets/9f6fb05e-a256-4cd1-9726-2b1bba591762" />
-<br>
 <img width="1920" height="1468" alt="화면 기록 2026-05-08 오후 6 58 28 (2)" src="https://github.com/user-attachments/assets/75911029-0b9a-4d32-9316-3d382a73449d" />
+<br>
 <br>
 <img width="1920" height="1440" alt="926shots_so" src="https://github.com/user-attachments/assets/52274dc3-22bd-44d5-9290-a899fa84b235" />
 <br>
