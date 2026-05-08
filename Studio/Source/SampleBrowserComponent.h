@@ -499,10 +499,12 @@ private:
                                    W - indent - 56, rh, juce::Justification::centredLeft, true);
 
                         // File count badge
-                        const int cnt = countAudioFiles(item.file);
-                        g.setFont(juce::Font(juce::FontOptions("JetBrains Mono", 7.5f, juce::Font::bold)));
-                        g.setColour(juce::Colour(LF::kTextFaint));
-                        g.drawText(juce::String(cnt), W - 30, y, 24, rh, juce::Justification::centredRight);
+                        
+//                        const int cnt = countAudioFiles(item.file);
+//                        g.setFont(juce::Font(juce::FontOptions("JetBrains Mono", 7.5f, juce::Font::bold)));
+//                        g.setColour(juce::Colour(LF::kTextFaint));
+//                        g.drawText(juce::String(cnt), W - 30, y, 24, rh, juce::Justification::centredRight);
+                
                     }
                     else
                     {
