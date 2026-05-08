@@ -1309,7 +1309,8 @@ private:
     SampleBrowserComponent sampleBrowser;
     juce::Viewport         browserViewport;
     juce::TextButton       browserCollapseBtn;   // always-visible collapse/expand tab
-    bool isBrowserOpen = true;                   // default: open on launch
+    bool  isBrowserOpen    = true;
+    float browserAnimFrac_ = 1.0f;  // 0=closed, 1=open; animated in timerCallback
 
     // M3 — floating piano roll window
     std::unique_ptr<PianoRollWindow> pianoRollWindow;

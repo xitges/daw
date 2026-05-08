@@ -79,6 +79,7 @@ public:
     std::function<void(const juce::String&)>  onAddChannel;         // add new channel
     std::function<void(int stepZeroBased)>    onPatternStartStepChanged;
     std::function<int()>                      getCurrentStep;
+    std::function<bool()>                     isEnginePlaying;
 
     // M8 — VST/AU plugin actions
     std::function<void(int ch)> onLoadPlugin;

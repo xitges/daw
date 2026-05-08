@@ -12,10 +12,12 @@
 class SampleBrowserComponent : public juce::Component
 {
 public:
-    std::function<void(juce::File)> onPreviewFile;
-    std::function<void()>           onStopPreview;
-    std::function<void()>           onCollapseClicked;
-    std::function<void(juce::File)> onDropToTrack;
+    std::function<void(juce::File)>      onPreviewFile;
+    std::function<void()>                onStopPreview;
+    std::function<void()>                onCollapseClicked;
+    std::function<void(juce::File)>      onDropToTrack;
+    std::function<void(juce::File, int)> onAssignToChannel;  // file, 0-based channel index
+    std::function<juce::StringArray()>   onGetChannelNames;  // optional: for popup labels
 
     SampleBrowserComponent()
     {
@@ -60,36 +62,55 @@ public:
         addAndMakeVisible(clearSearchBtn_);
 
         // ---- Search field ----
-        searchField_.setTextToShowWhenEmpty("search sounds...",
-                                            juce::Colour(LF::kDisplayFg).withAlpha(0.3f));
+        // No setTextToShowWhenEmpty — placeholder is drawn manually in paint() for precise y control
         searchField_.setColour(juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
         searchField_.setColour(juce::TextEditor::textColourId,       juce::Colour(LF::kDisplayFg));
         searchField_.setColour(juce::TextEditor::outlineColourId,    juce::Colours::transparentBlack);
         searchField_.setColour(juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
+        searchField_.setColour(juce::CaretComponent::caretColourId,   juce::Colour(LF::kDisplayFg).withAlpha(0.7f));
         searchField_.setFont(LF::displayFont(13.0f));
-        searchField_.onTextChange = [this] { rebuildList(); };
+        searchField_.onTextChange = [this] { rebuildList(); repaint(); };
+        searchField_.onFocusLost  = [this] { repaint(); };
         addAndMakeVisible(searchField_);
 
-        // ---- Footer: DRAG TO RACK ----
-        dropToTrackBtn_.setButtonText("DRAG TO RACK");
+        // ---- Footer: ASSIGN TO CHANNEL ----
+        dropToTrackBtn_.setButtonText("ASSIGN TO CHANNEL");
         dropToTrackBtn_.setColour(juce::TextButton::buttonColourId,  juce::Colour(LF::kAccent));
-        dropToTrackBtn_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+        dropToTrackBtn_.setColour(juce::TextButton::textColourOffId, juce::Colours::black);
         dropToTrackBtn_.onClick = [this]
         {
-            if (currentPreviewFile_.existsAsFile() && onDropToTrack)
-                onDropToTrack(currentPreviewFile_);
+            if (!currentPreviewFile_.existsAsFile())
+                return;
+
+            juce::StringArray names;
+            if (onGetChannelNames)
+                names = onGetChannelNames();
+
+            juce::PopupMenu menu;
+            for (int i = 0; i < names.size(); ++i)
+            {
+                const juce::String label = (names.size() > i && names[i].isNotEmpty())
+                    ? ("CH " + juce::String(i + 1).paddedLeft('0', 2) + "  " + names[i])
+                    : ("CH " + juce::String(i + 1).paddedLeft('0', 2));
+                menu.addItem(i + 1, label);
+            }
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&dropToTrackBtn_),
+                [this](int result)
+                {
+                    if (result > 0 && onAssignToChannel)
+                        onAssignToChannel(currentPreviewFile_, result - 1);
+                });
         };
         addAndMakeVisible(dropToTrackBtn_);
 
-        // ---- Footer: ▦ show in finder ----
-        footerGridBtn_.setButtonText(juce::String::fromUTF8("\xe2\x96\xa6")); // ▦
+        // ---- Footer: ■ stop preview ----
+        footerGridBtn_.setButtonText(juce::String::fromUTF8("\xe2\x96\xa0")); // ■
         footerGridBtn_.setColour(juce::TextButton::buttonColourId,  juce::Colours::transparentBlack);
         footerGridBtn_.setColour(juce::TextButton::textColourOffId, juce::Colour(LF::kTextDim));
-        footerGridBtn_.setTooltip("Reveal in Finder");
+        footerGridBtn_.setTooltip("Stop preview");
         footerGridBtn_.onClick = [this]
         {
-            if (currentPreviewFile_.existsAsFile())
-                currentPreviewFile_.revealToUser();
+            if (onStopPreview) onStopPreview();
         };
         addAndMakeVisible(footerGridBtn_);
 
@@ -177,7 +198,7 @@ public:
             g.drawText(juce::String(bookmarks.size()) + " BKM",
                        tag.reduced(2.0f, 0.0f).toNearestInt(), juce::Justification::centred);
 
-            // Search box bg
+            // Search box bg + manual placeholder
             if (searchBoxBounds_.getWidth() > 0)
             {
                 const juce::Rectangle<float> sb(searchBoxBounds_.toFloat());
@@ -187,6 +208,17 @@ public:
                 g.fillRoundedRectangle(sb.withHeight(4.0f), 3.0f);
                 g.setColour(juce::Colour(0x80000000));
                 g.drawRoundedRectangle(sb.reduced(0.5f), 3.0f, 1.0f);
+
+                if (searchField_.getText().isEmpty() && !searchField_.hasKeyboardFocus(false))
+                {
+                    // Draw placeholder at the exact same y as the searchField_ text baseline
+                    const auto sf = searchField_.getBounds();
+                    g.setFont(LF::displayFont(13.0f));
+                    g.setColour(juce::Colour(LF::kDisplayFg).withAlpha(0.3f));
+                    g.drawText("search sounds...",
+                               sf.getX(), sf.getY(), sf.getWidth(), sf.getHeight(),
+                               juce::Justification::centredLeft);
+                }
             }
         }
 
@@ -211,7 +243,7 @@ public:
             const juce::Colour ledCol = currentPreviewName_.isNotEmpty()
                 ? juce::Colour(LF::kLedGreen) : juce::Colour(LF::kLedOff);
             g.setColour(ledCol);
-            g.fillEllipse(W - 18.0f, (float)ry + 1.5f, 7.0f, 7.0f);
+            g.fillEllipse(W - 18.0f, (float)ry + 5.0f, 7.0f, 7.0f);
 
             ry += 13;
             g.setFont(LF::monoFont(10.0f, juce::Font::bold));
@@ -249,7 +281,7 @@ public:
             searchBoxBounds_ = { sx, sy, sw, sh };
             searchPrefix_   .setBounds(sx,           sy,     20,    sh);
             clearSearchBtn_ .setBounds(sx + sw - 22, sy + 2, 20,    sh - 4);
-            searchField_    .setBounds(sx + 20,      sy + 3, sw - 44, sh - 6);
+            searchField_    .setBounds(sx + 20,      sy + 2, sw - 44, sh - 6);
         }
 
         listViewport_.setBounds(0, kHdrH, W, H - kHdrH - kFtrH);

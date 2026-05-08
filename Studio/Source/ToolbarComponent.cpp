@@ -26,7 +26,9 @@ ToolbarComponent::ToolbarComponent()
 
     addAndMakeVisible(rewBtn_);
         setupTransportBtn(rewBtn_, LF::kTextDim);
-        rewBtn_.onClick = [this] { if (onRewind) onRewind(); };
+        rewBtn_.onClick = [this] {
+            if (playMode == PlayMode::Song && onRewind) onRewind();
+        };
 
         addAndMakeVisible(playButton);
         setupTransportBtn(playButton, LF::kTextDim); // 색상 통일 (원래: kLedGreen)
@@ -46,7 +48,9 @@ ToolbarComponent::ToolbarComponent()
 
         addAndMakeVisible(ffBtn_);
         setupTransportBtn(ffBtn_, LF::kTextDim);
-        ffBtn_.onClick = [this] { if (onFastForward) onFastForward(); };
+        ffBtn_.onClick = [this] {
+            if (playMode == PlayMode::Song && onFastForward) onFastForward();
+        };
 
         addAndMakeVisible(loopBtn_);
         setupTransportBtn(loopBtn_, LF::kTextDim); // 색상 통일 (원래: kLedAmber)
@@ -765,7 +769,7 @@ void ToolbarComponent::buttonClicked(juce::Button* btn)
         playing = false;
         playButton.setToggleState(false, juce::dontSendNotification);
         playButton.setButtonText("PLAY");
-        if (onStop) onStop();
+        if (onStopToStart) onStopToStart();
     }
 }
 

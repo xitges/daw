@@ -344,6 +344,7 @@ MainComponent::MainComponent()
         }
         pausedBarSong     = -1.0;
         pausedPatternBeat = -1.0;
+        toolbar.setPlaying(true);
     };
 
     toolbar.onStop = [this]
@@ -353,6 +354,18 @@ MainComponent::MainComponent()
         {
             pausedBarSong     = audioEngine.getSongBeatPosition() / 4.0;
             pausedPatternBeat = audioEngine.getPatternBeatPos();
+
+            // Pattern mode: move checkpoint to where playback stopped
+            if (project.playMode == PlayMode::Pattern)
+            {
+                const int    stepCount    = juce::jmax(1, channelRack.getStepCount());
+                const double patternBeats = stepCount * 0.25;
+                const double wrappedBeat  = std::fmod(pausedPatternBeat, patternBeats);
+                patternStartStep = juce::jlimit(0, stepCount - 1,
+                                                (int)(wrappedBeat / 0.25));
+                project.patternStartStep = patternStartStep;
+                channelRack.setPatternStartStep(patternStartStep);
+            }
         }
 
         // Stop recording if active
@@ -363,6 +376,7 @@ MainComponent::MainComponent()
             toolbar.setRecordingActive(false);
         }
 
+        toolbar.setPlaying(false);
         audioEngine.stop();
         audioEngine.allSynthNotesOff();
         channelRack.setPlaybackStep(-1);
@@ -724,16 +738,28 @@ MainComponent::MainComponent()
     {
         audioEngine.stopBrowserPreview();
     };
+    sampleBrowser.onAssignToChannel = [this](const juce::File& f, int ch)
+    {
+        if (channelRack.onSampleDropped)
+            channelRack.onSampleDropped(ch, f);
+    };
+    sampleBrowser.onGetChannelNames = [this]() -> juce::StringArray
+    {
+        juce::StringArray names;
+        if (auto* pat = findPattern(activePatternId))
+            for (int i = 0; i < project.channelCount; ++i)
+                names.add(pat->channelNames[i]);
+        return names;
+    };
     browserViewport.setViewedComponent(&sampleBrowser, false);
-    browserViewport.setScrollBarsShown(true, false);
-    browserViewport.setScrollBarThickness(6);
+    browserViewport.setScrollBarsShown(false, false);  // header/footer fixed; list scrolls internally
     addAndMakeVisible(browserViewport);
 
     // In-browser collapse handled by SampleBrowserComponent's own button
     sampleBrowser.onCollapseClicked = [this]
     {
         isBrowserOpen = false;
-        resized();
+        // timerCallback animates browserAnimFrac_ → 0
     };
 
     // Reopen tab -- shown only when browser is closed, at the left edge
@@ -743,7 +769,7 @@ MainComponent::MainComponent()
     browserCollapseBtn.onClick = [this]
     {
         isBrowserOpen = true;
-        resized();
+        // timerCallback animates browserAnimFrac_ → 1
     };
     addAndMakeVisible(browserCollapseBtn);
     playlistViewport.setScrollBarsShown(true, true);
@@ -792,6 +818,11 @@ MainComponent::MainComponent()
     channelRack.getCurrentStep = [this]()
     {
         return audioEngine.getSequencer().getCurrentStep();
+    };
+
+    channelRack.isEnginePlaying = [this]()
+    {
+        return audioEngine.isPlaying();
     };
 
     channelRack.onSampleDropped = [this](int ch, juce::File file)
@@ -2745,13 +2776,55 @@ MainComponent::MainComponent()
         audioEngine.setMasterVolume((float)v);
     };
 
-    toolbar.onRewind      = [this] {
-        pausedBarSong = -1.0; pausedPatternBeat = -1.0;
+    // Song mode: seek -1 bar (no-op in pattern mode — handled by toolbar)
+    toolbar.onRewind = [this] {
+        const double cur  = audioEngine.isPlaying()
+                          ? audioEngine.getSongBeatPosition() / 4.0
+                          : (pausedBarSong > 0.0 ? pausedBarSong : 0.0);
+        const double next = juce::jmax(0.0, std::floor(cur) - 1.0);
+        pausedBarSong = next;
+        if (audioEngine.isPlaying())
+            audioEngine.seekSongToBar(next);
+        else
+            playlist.setPlayheadBar(next > 0.0 ? next : -1.0);
+    };
+
+    // Song mode: seek +1 bar (no-op in pattern mode — handled by toolbar)
+    toolbar.onFastForward = [this] {
+        const double cur  = audioEngine.isPlaying()
+                          ? audioEngine.getSongBeatPosition() / 4.0
+                          : (pausedBarSong > 0.0 ? pausedBarSong : 0.0);
+        const double next = std::floor(cur) + 1.0;
+        pausedBarSong = next;
+        if (audioEngine.isPlaying())
+            audioEngine.seekSongToBar(next);
+        else
+            playlist.setPlayheadBar(next);
+    };
+
+    // Stop button: return to beginning (discard paused position)
+    toolbar.onStopToStart = [this] {
+        pausedBarSong     = -1.0;
+        pausedPatternBeat = -1.0;
+        patternStartStep  = 0;
+        project.patternStartStep = 0;
+        channelRack.setPatternStartStep(0);
+
+        if (audioEngine.isRecording())
+        {
+            audioEngine.setInputMonitoring(false);
+            audioEngine.stopRecording();
+            toolbar.setRecordingActive(false);
+        }
+
+        toolbar.setPlaying(false);
         audioEngine.stop();
+        audioEngine.allSynthNotesOff();
         channelRack.setPlaybackStep(-1);
         playlist.setPlayheadBar(-1.0);
+        if (pianoRollWindow != nullptr)
+            pianoRollWindow->content.pianoRoll.setPlayheadBeat(-1.0);
     };
-    toolbar.onFastForward = [this] { /* fast-forward: stub */ };
     toolbar.onToggleLoop  = [this]
     {
         loopRecordEnabled_ = !loopRecordEnabled_;
@@ -2759,7 +2832,7 @@ MainComponent::MainComponent()
     };
     // -------------------------------------------------------------------------
 
-    startTimerHz(30);
+    startTimerHz(60);
     setSize(1600, 900);
 }
 
@@ -3720,34 +3793,51 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
 
             if (doubleSpace)
             {
-                // Double-Space: stop and return to beginning (no auto-play)
+                // Double-Space: stop and return to beginning
                 pausedBarSong     = -1.0;
                 pausedPatternBeat = -1.0;
+                // Pattern mode: reset checkpoint and highlight to step 0
+                if (project.playMode == PlayMode::Pattern)
+                {
+                    patternStartStep = 0;
+                    project.patternStartStep = 0;
+                    channelRack.setPatternStartStep(0);
+                }
                 audioEngine.stop();
                 audioEngine.allSynthNotesOff();
-                channelRack.setPlaybackStep(-1);
+                channelRack.setPlaybackStep(project.playMode == PlayMode::Pattern ? 0 : -1);
                 playlist.setPlayheadBar(-1.0);
                 if (pianoRollWindow != nullptr)
                     pianoRollWindow->content.pianoRoll.setPlayheadBeat(-1.0);
+                toolbar.setPlaying(false);
             }
             else if (project.playMode == PlayMode::Song)
             {
-                // Normal pause -- save position, keep playhead visible
+                // Song mode pause -- save position, keep playhead visible
                 pausedBarSong = audioEngine.getSongBeatPosition() / 4.0;
                 audioEngine.stop();
                 audioEngine.allSynthNotesOff();
                 playlist.setPlayheadBar(pausedBarSong);
+                toolbar.setPlaying(false);
             }
             else
             {
-                // Pattern mode pause: save beat for resume
+                // Pattern mode pause: save beat and move checkpoint to paused step
                 pausedPatternBeat = audioEngine.getPatternBeatPos();
                 pausedBarSong     = -1.0;
+                const int stepCount = juce::jmax(1, channelRack.getStepCount());
+                const double patternBeats = stepCount * 0.25;
+                const double wrappedBeat  = std::fmod(pausedPatternBeat, patternBeats);
+                patternStartStep = juce::jlimit(0, stepCount - 1,
+                                               (int)(wrappedBeat / 0.25));
+                project.patternStartStep = patternStartStep;
+                channelRack.setPatternStartStep(patternStartStep);
                 audioEngine.stop();
                 audioEngine.allSynthNotesOff();
                 channelRack.setPlaybackStep(-1);
                 if (pianoRollWindow != nullptr)
                     pianoRollWindow->content.pianoRoll.setPlayheadBeat(-1.0);
+                toolbar.setPlaying(false);
             }
         }
         else if (pianoRollWindow != nullptr && pianoRollWindow->isVisible())
@@ -3756,12 +3846,10 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
 
             if (pr.getRecState() == PianoRollComponent::RecState::Armed)
             {
-                // Space again while Armed -> cancel; back to Idle
                 pr.setRecording(false);
             }
             else if (pr.isTriggerEnabled() && pianoRollWindow->content.recBtn.getToggleState())
             {
-                // Trigger ON + REC active -> enter Armed (do NOT start engine yet)
                 pr.setRecording(true);
             }
             else
@@ -3772,7 +3860,7 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
                     : pianoRollStartStep;
                 pianoRollStartStep = juce::jmax(0, startStep);
                 audioEngine.play(pianoRollStartStep, project.songStartBar);
-                // Note: piano roll path is pattern-mode only, no lastSpaceResumeTime needed
+                toolbar.setPlaying(true);
             }
         }
         else
@@ -3782,11 +3870,12 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
             project.patternStartStep = patternStartStep;
             audioEngine.play(patternStartStep, project.songStartBar);
 
-            // Song mode: seek to paused/clicked position (play() resets to 0, override it)
+            // Song mode: seek to paused position
             if (project.playMode == PlayMode::Song && pausedBarSong > 0.0)
                 audioEngine.seekSongToBar(pausedBarSong);
 
-            lastSpaceResumeTime = juce::Time::currentTimeMillis();  // arm double-Space detection
+            lastSpaceResumeTime = juce::Time::currentTimeMillis();
+            toolbar.setPlaying(true);
         }
         return true;
     }
@@ -3923,26 +4012,35 @@ void MainComponent::resized()
         launchpadPanel.setBounds(area.removeFromRight(padW));
     }
 
-    // M15 — sample browser: left panel, collapsible
-    constexpr int kBrowserW = 260;   // reference updated: 260px browser
+    // M15 — sample browser: left panel, collapsible (animated via browserAnimFrac_)
+    constexpr int kBrowserW = 260;
     constexpr int kReopenW  = 22;
     constexpr int kReopenH  = 32;
 
-    browserViewport.setVisible(isBrowserOpen);
-    if (isBrowserOpen)
+    const int animW      = (int)std::round(kBrowserW * browserAnimFrac_);
+    const int animGap    = (int)std::round(kGap * browserAnimFrac_);
+    const bool showPanel = (animW > 0);
+    const bool fullyDone = (browserAnimFrac_ == 0.0f && !isBrowserOpen);
+
+    browserViewport.setVisible(showPanel);
+    if (showPanel)
     {
         browserCollapseBtn.setVisible(false);
-        auto browserArea = area.removeFromLeft(kBrowserW);
+        auto browserArea = area.removeFromLeft(animW);
         browserViewport.setBounds(browserArea);
-        sampleBrowser.setSize(kBrowserW, juce::jmax(browserArea.getHeight(), 800));
-        area.removeFromLeft(kGap);
+        sampleBrowser.setSize(kBrowserW, browserArea.getHeight());
     }
     else
     {
-        browserCollapseBtn.setVisible(true);
-        browserCollapseBtn.setBounds(kPad, area.getY(), kReopenW, kReopenH);
-        browserCollapseBtn.toFront(false);
+        browserCollapseBtn.setVisible(fullyDone);
+        if (fullyDone)
+        {
+            browserCollapseBtn.setBounds(kPad, area.getY(), kReopenW, kReopenH);
+            browserCollapseBtn.toFront(false);
+        }
     }
+    // Gap is always proportional — prevents the sudden layout jump at animation end
+    area.removeFromLeft(animGap);
 
     // Cache right panel bounds (cream panel bg drawn in paint())
     rightPanelBounds_ = area;
@@ -4014,6 +4112,23 @@ void MainComponent::resized()
 
 void MainComponent::timerCallback()
 {
+    // -- Browser slide animation (60 Hz, ease-out → ~17 frames = ~280 ms) -------
+    {
+        const float target = isBrowserOpen ? 1.0f : 0.0f;
+        const float diff   = target - browserAnimFrac_;
+        if (std::abs(diff) > 0.005f)
+        {
+            browserAnimFrac_ += diff * 0.28f;
+            resized();
+        }
+        else if (browserAnimFrac_ != target)
+        {
+            browserAnimFrac_ = target;
+            resized();
+        }
+    }
+    // -------------------------------------------------------------------------
+
     // -- Live Performance: drain pad triggers -> ClipLauncher ------------------
     {
         ClipTriggerEvent ev;

@@ -146,6 +146,14 @@ public:
     void mouseDoubleClick(const juce::MouseEvent&) override;
 
     bool     isPlaying()   const { return playing; }
+
+    void setPlaying(bool shouldPlay)
+    {
+        playing = shouldPlay;
+        playButton.setToggleState(playing, juce::dontSendNotification);
+        playButton.setButtonText(playing ? "PAUSE" : "PLAY");
+    }
+
     PlayMode getPlayMode() const { return playMode; }
     double   getBPM()      const { return bpmSlider.getValue(); }
     
@@ -182,11 +190,12 @@ public:
 
     // Playback callbacks
     std::function<void()>           onPlay;
-    std::function<void()>           onStop;
+    std::function<void()>           onStop;          // play-button pause (saves position)
+    std::function<void()>           onStopToStart;   // stop button: return to beginning
     std::function<void(double)>     onBPMChanged;
     std::function<void(PlayMode)>   onPlayModeChanged;
-    std::function<void()>           onRewind;
-    std::function<void()>           onFastForward;
+    std::function<void()>           onRewind;        // song mode: -1 bar
+    std::function<void()>           onFastForward;   // song mode: +1 bar
     std::function<void()>           onToggleLoop;
     std::function<void(double)>     onMasterVolChanged;
 

@@ -56,8 +56,8 @@ ChannelRackComponent::ChannelRackComponent()
     stepCountSlider.setSliderStyle(juce::Slider::IncDecButtons);
     stepCountSlider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 40, 24);
     stepCountSlider.setColour(juce::Slider::textBoxTextColourId,       juce::Colour(StudioLookAndFeel::kText));
-    stepCountSlider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(StudioLookAndFeel::kChassis2));
-    stepCountSlider.setColour(juce::Slider::textBoxOutlineColourId,    juce::Colour(StudioLookAndFeel::kPanelRim));
+    stepCountSlider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xFFF2F2F2));
+    stepCountSlider.setColour(juce::Slider::textBoxOutlineColourId,    juce::Colour(0xFFA0A0A0));
     stepCountSlider.onValueChange = [this]
     {
         stepCount = (int)stepCountSlider.getValue();
@@ -504,8 +504,15 @@ void ChannelRackComponent::resetToChannelCount(int count, const juce::String* na
 
 void ChannelRackComponent::timerCallback()
 {
-    if (getCurrentStep)
-        setPlaybackStep(getCurrentStep());
+    if (isEnginePlaying && isEnginePlaying())
+    {
+        if (getCurrentStep)
+            setPlaybackStep(getCurrentStep());
+    }
+    else
+    {
+        setPlaybackStep(patternStartStep);
+    }
 }
 
 // ---------------------------------------------------------------------------
