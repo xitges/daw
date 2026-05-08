@@ -3925,7 +3925,7 @@ void MainComponent::paint(juce::Graphics& g)
     {
         const auto bounds = getLocalBounds().toFloat().reduced(0.5f);
         g.setColour(juce::Colour(0xffb9ad8c));
-        g.drawRoundedRectangle(bounds, 18.0f, 1.0f);
+        g.drawRoundedRectangle(bounds, 0.0f, 1.0f);
         // top inset highlight
         g.setColour(juce::Colour(0xffffffff).withAlpha(0.4f));
         g.drawLine(20.0f, 1.5f, bounds.getRight() - 20.0f, 1.5f, 1.5f);
