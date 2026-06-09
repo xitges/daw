@@ -32,6 +32,7 @@
 #include "ProjectModel.h"
 #include "PitchDetector.h"
 #include "PSOLAPitchShifter.h"
+#include <atomic>
 
 class AutoTuneProcessor
 {
@@ -39,20 +40,17 @@ public:
     AutoTuneProcessor();
     ~AutoTuneProcessor();
 
-    AutoTuneProcessor(AutoTuneProcessor&&) noexcept;
-    AutoTuneProcessor& operator=(AutoTuneProcessor&&) noexcept;
-
     void prepare(double sampleRate, int maxBlockSize);
     void processBlock(float* L, float* R, int numSamples, const AutoTuneParams& params);
     void reset();
 
     // --- UI metering accessors (read from message thread) ---
-    float getDetectedPitchHz() const { return detectedPitchHz_; }
-    float getTargetPitchHz()   const { return targetPitchHz_; }
-    float getInputRms()        const { return inputRms_; }
-    float getConfidence()      const { return confidence_; }
-    float getCorrectedPitchHz() const { return correctedPitchHz_; }
-    bool  isVoiced()           const { return voiced_; }
+    float getDetectedPitchHz() const { return detectedPitchHz_.load(std::memory_order_relaxed); }
+    float getTargetPitchHz()   const { return targetPitchHz_.load(std::memory_order_relaxed); }
+    float getInputRms()        const { return inputRms_.load(std::memory_order_relaxed); }
+    float getConfidence()      const { return confidence_.load(std::memory_order_relaxed); }
+    float getCorrectedPitchHz() const { return correctedPitchHz_.load(std::memory_order_relaxed); }
+    bool  isVoiced()           const { return voiced_.load(std::memory_order_relaxed); }
 
 private:
     double sampleRate_ = 44100.0;
@@ -113,12 +111,12 @@ private:
     float dcOut_ = 0.0f;
 
     // --- UI metering (relaxed read from message thread) ---
-    float detectedPitchHz_  = 0.0f;
-    float targetPitchHz_    = 0.0f;
-    float correctedPitchHz_ = 0.0f;
-    float inputRms_         = 0.0f;
-    float confidence_       = 0.0f;
-    bool  voiced_           = false;
+    std::atomic<float> detectedPitchHz_  { 0.0f };
+    std::atomic<float> targetPitchHz_    { 0.0f };
+    std::atomic<float> correctedPitchHz_ { 0.0f };
+    std::atomic<float> inputRms_         { 0.0f };
+    std::atomic<float> confidence_       { 0.0f };
+    std::atomic<bool>  voiced_           { false };
 
     // --- Internal methods ---
     float hzToMidi(float hz) const;

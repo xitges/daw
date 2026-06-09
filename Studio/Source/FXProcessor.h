@@ -75,10 +75,13 @@ private:
     // -------------------------------------------------------------------------
     void applyCompressor(float* L, float* R, int numSamples, const FXParams& p)
     {
-        const float thresh      = juce::Decibels::decibelsToGain(p.compThreshDB);
-        const float ratio       = juce::jmax(1.0f, p.compRatio);
-        const float attackCoef  = std::exp(-1.0f / juce::jmax(1.0f, p.compAttackMs  * 0.001f * (float)sampleRate_));
-        const float releaseCoef = std::exp(-1.0f / juce::jmax(1.0f, p.compReleaseMs * 0.001f * (float)sampleRate_));
+        const float threshDb    = juce::jlimit(-60.0f, 0.0f, p.compThreshDB);
+        const float thresh      = juce::Decibels::decibelsToGain(threshDb);
+        const float ratio       = juce::jlimit(1.0f, 20.0f, p.compRatio);
+        const float attackMs    = juce::jlimit(0.1f, 200.0f, p.compAttackMs);
+        const float releaseMs   = juce::jlimit(5.0f, 2000.0f, p.compReleaseMs);
+        const float attackCoef  = std::exp(-1.0f / juce::jmax(1.0f, attackMs  * 0.001f * (float)sampleRate_));
+        const float releaseCoef = std::exp(-1.0f / juce::jmax(1.0f, releaseMs * 0.001f * (float)sampleRate_));
 
         for (int i = 0; i < numSamples; ++i)
         {
@@ -96,7 +99,7 @@ private:
                 if (env > thresh && thresh > 0.0f)
                 {
                     const float dbIn  = juce::Decibels::gainToDecibels(env);
-                    const float dbOut = p.compThreshDB + (dbIn - p.compThreshDB) / ratio;
+                    const float dbOut = threshDb + (dbIn - threshDb) / ratio;
                     sample *= juce::Decibels::decibelsToGain(dbOut - dbIn);
                 }
             };
@@ -113,8 +116,11 @@ private:
         const int bufLen = (int)delayBufL_.size();
 
         const double samplesPerBeat = sampleRate_ * 60.0 / juce::jmax(1.0, bpm);
+        const float delayBeats = juce::jlimit(0.03125f, 8.0f, p.delayBeats);
+        const float feedback   = juce::jlimit(0.0f, 0.95f, p.delayFeedback);
+        const float mix        = juce::jlimit(0.0f, 1.0f, p.delayMix);
         const int delaySamples = juce::jlimit(1, bufLen - 1,
-                                              (int)(p.delayBeats * samplesPerBeat));
+                                              (int)(delayBeats * samplesPerBeat));
 
         for (int i = 0; i < numSamples; ++i)
         {
@@ -124,11 +130,11 @@ private:
             const float delL = delayBufL_[(size_t)readPos];
             const float delR = delayBufR_[(size_t)readPos];
 
-            delayBufL_[(size_t)delayWritePos_] = L[i] + delL * p.delayFeedback;
-            delayBufR_[(size_t)delayWritePos_] = R[i] + delR * p.delayFeedback;
+            delayBufL_[(size_t)delayWritePos_] = L[i] + delL * feedback;
+            delayBufR_[(size_t)delayWritePos_] = R[i] + delR * feedback;
 
-            L[i] = L[i] * (1.0f - p.delayMix) + delL * p.delayMix;
-            R[i] = R[i] * (1.0f - p.delayMix) + delR * p.delayMix;
+            L[i] = L[i] * (1.0f - mix) + delL * mix;
+            R[i] = R[i] * (1.0f - mix) + delR * mix;
 
             delayWritePos_ = (delayWritePos_ + 1) % bufLen;
         }
@@ -137,12 +143,13 @@ private:
     // -------------------------------------------------------------------------
     void applyReverb(float* L, float* R, int numSamples, const FXParams& p)
     {
+        const float wet = juce::jlimit(0.0f, 1.0f, p.reverbWet);
         juce::Reverb::Parameters rp;
-        rp.roomSize  = p.reverbRoom;
-        rp.damping   = p.reverbDamp;
-        rp.wetLevel  = p.reverbWet;
-        rp.dryLevel  = 1.0f - p.reverbWet;
-        rp.width     = p.reverbWidth;
+        rp.roomSize  = juce::jlimit(0.0f, 1.0f, p.reverbRoom);
+        rp.damping   = juce::jlimit(0.0f, 1.0f, p.reverbDamp);
+        rp.wetLevel  = wet;
+        rp.dryLevel  = 1.0f - wet;
+        rp.width     = juce::jlimit(0.0f, 1.0f, p.reverbWidth);
         reverb_.setParameters(rp);
         reverb_.processStereo(L, R, numSamples);
     }

@@ -95,7 +95,10 @@ public:
     void prepare(double sampleRate, int /*maxBlockSize*/)
     {
         sr_      = sampleRate;
-        enabled_ = false;
+        enabled_ = pendingEnabled_.load(std::memory_order_acquire);
+        const int currentIdx = activePendingParamsIdx_.load(std::memory_order_acquire);
+        for (int i = 0; i < kMaxBands; ++i)
+            params_[i] = pendingParams_[currentIdx][(size_t)i];
         for (int i = 0; i < kMaxBands; ++i)
             recomputeBand(i);
         reset();
@@ -113,20 +116,33 @@ public:
         }
     }
 
-    void setEnabled(bool e) { enabled_ = e; }
-    bool isEnabled()  const { return enabled_; }
+    void setEnabled(bool e)
+    {
+        pendingEnabled_.store(e, std::memory_order_release);
+        hasPendingParams_.store(true, std::memory_order_release);
+    }
+
+    bool isEnabled() const
+    {
+        return pendingEnabled_.load(std::memory_order_acquire);
+    }
 
     void setBand(int idx, const DynEQBandParams& p)
     {
         if (idx < 0 || idx >= kMaxBands) return;
-        params_[idx] = p;
-        recomputeBand(idx);
+        const int currentIdx = activePendingParamsIdx_.load(std::memory_order_relaxed);
+        const int nextIdx = 1 - currentIdx;
+        pendingParams_[nextIdx] = pendingParams_[currentIdx];
+        pendingParams_[nextIdx][idx] = p;
+        activePendingParamsIdx_.store(nextIdx, std::memory_order_release);
+        hasPendingParams_.store(true, std::memory_order_release);
     }
 
     const DynEQBandParams& getBand(int idx) const
     {
         jassert(idx >= 0 && idx < kMaxBands);
-        return params_[idx];
+        const int currentIdx = activePendingParamsIdx_.load(std::memory_order_acquire);
+        return pendingParams_[currentIdx][idx];
     }
 
     // Positive = gain was reduced (dB). Safe to poll from UI thread.
@@ -140,6 +156,8 @@ public:
 
     void processBlock(float* L, float* R, int numSamples)
     {
+        applyPendingParamsIfNeeded();
+
         if (!enabled_) return;
 
         for (int i = 0; i < kMaxBands; ++i)
@@ -212,6 +230,11 @@ private:
 
     DynEQBandParams params_[kMaxBands];
     DynEQBandState  state_ [kMaxBands];
+
+    std::array<DynEQBandParams, kMaxBands> pendingParams_[2] = {};
+    std::atomic<int>  activePendingParamsIdx_ { 0 };
+    std::atomic<bool> pendingEnabled_ { false };
+    std::atomic<bool> hasPendingParams_ { false };
 
     // ---- DSP primitives ---------------------------------------------------
 
@@ -391,5 +414,21 @@ private:
 
         // Gain smoother (~10ms)
         s.gainSmoothCoef = std::exp(-1.0f / (0.010f * (float)sr_));
+    }
+
+    void applyPendingParamsIfNeeded()
+    {
+        if (!hasPendingParams_.exchange(false, std::memory_order_acq_rel))
+            return;
+
+        enabled_ = pendingEnabled_.load(std::memory_order_acquire);
+
+        const int currentIdx = activePendingParamsIdx_.load(std::memory_order_acquire);
+        const auto& pending = pendingParams_[currentIdx];
+        for (int i = 0; i < kMaxBands; ++i)
+        {
+            params_[i] = pending[(size_t)i];
+            recomputeBand(i);
+        }
     }
 };

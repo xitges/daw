@@ -9,6 +9,14 @@
 
 #include "ProjectSerializer.h"
 
+namespace
+{
+    float clampFloat(float value, float minValue, float maxValue)
+    {
+        return juce::jlimit(minValue, maxValue, value);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Save
 // ---------------------------------------------------------------------------
@@ -741,19 +749,19 @@ bool ProjectSerializer::load(juce::File& file, Project& projectOut)
             if (t < 0 || t >= 8) continue;
             auto& fp          = loaded.fxParams[(size_t)t];
             fp.compEnabled    = fEl->getIntAttribute("compEnabled",   0) != 0;
-            fp.compThreshDB   = (float)fEl->getDoubleAttribute("compThreshDB",  -12.0);
-            fp.compRatio      = (float)fEl->getDoubleAttribute("compRatio",       4.0);
-            fp.compAttackMs   = (float)fEl->getDoubleAttribute("compAttackMs",   10.0);
-            fp.compReleaseMs  = (float)fEl->getDoubleAttribute("compReleaseMs", 100.0);
+            fp.compThreshDB   = clampFloat((float)fEl->getDoubleAttribute("compThreshDB",  -12.0), -60.0f, 0.0f);
+            fp.compRatio      = clampFloat((float)fEl->getDoubleAttribute("compRatio",       4.0),   1.0f, 20.0f);
+            fp.compAttackMs   = clampFloat((float)fEl->getDoubleAttribute("compAttackMs",   10.0),   0.1f, 200.0f);
+            fp.compReleaseMs  = clampFloat((float)fEl->getDoubleAttribute("compReleaseMs", 100.0),   5.0f, 2000.0f);
             fp.delayEnabled   = fEl->getIntAttribute("delayEnabled",  0) != 0;
-            fp.delayBeats     = (float)fEl->getDoubleAttribute("delayBeats",    0.5);
-            fp.delayFeedback  = (float)fEl->getDoubleAttribute("delayFeedback", 0.3);
-            fp.delayMix       = (float)fEl->getDoubleAttribute("delayMix",      0.25);
+            fp.delayBeats     = clampFloat((float)fEl->getDoubleAttribute("delayBeats",    0.5),  0.03125f, 8.0f);
+            fp.delayFeedback  = clampFloat((float)fEl->getDoubleAttribute("delayFeedback", 0.3),  0.0f, 0.95f);
+            fp.delayMix       = clampFloat((float)fEl->getDoubleAttribute("delayMix",      0.25), 0.0f, 1.0f);
             fp.reverbEnabled  = fEl->getIntAttribute("reverbEnabled", 0) != 0;
-            fp.reverbRoom     = (float)fEl->getDoubleAttribute("reverbRoom",    0.5);
-            fp.reverbDamp     = (float)fEl->getDoubleAttribute("reverbDamp",    0.5);
-            fp.reverbWet      = (float)fEl->getDoubleAttribute("reverbWet",     0.25);
-            fp.reverbWidth    = (float)fEl->getDoubleAttribute("reverbWidth",   1.0);
+            fp.reverbRoom     = clampFloat((float)fEl->getDoubleAttribute("reverbRoom",    0.5),  0.0f, 1.0f);
+            fp.reverbDamp     = clampFloat((float)fEl->getDoubleAttribute("reverbDamp",    0.5),  0.0f, 1.0f);
+            fp.reverbWet      = clampFloat((float)fEl->getDoubleAttribute("reverbWet",     0.25), 0.0f, 1.0f);
+            fp.reverbWidth    = clampFloat((float)fEl->getDoubleAttribute("reverbWidth",   1.0),  0.0f, 1.0f);
         }
     }
 

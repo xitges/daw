@@ -145,6 +145,13 @@ MainComponent::MainComponent()
 
     activePatternId = 1;
 
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    audioEngine.onPluginsAboutToBeReleased = [safeThis]
+    {
+        if (safeThis != nullptr)
+            safeThis->clearAllPluginUi();
+    };
+
     audioEngine.initialise();
     audioEngine.setProject(&project);
 
@@ -2451,6 +2458,7 @@ MainComponent::MainComponent()
         fxEditorWindow->panel.onParamsChanged = [this, t]
         {
             fxEditorWindow->panel.applyToParams(project.fxParams[(size_t)t]);
+            audioEngine.rebuildRuntimeStateFromProject();
             markDirty();
         };
 
@@ -2972,7 +2980,7 @@ MainComponent::~MainComponent()
     // Explicitly destroy all floating windows before engine shutdown.
     // They may hold lambdas that reference engine/project data; destroying
     // them first avoids dangling-reference crashes and JUCE leak false-positives.
-    for (auto& w : pluginEditorWindows) w.reset();
+    clearAllPluginUi();
     for (auto& w : dynEQWindows)        w.reset();
     pluginBrowserWindow.reset();
     audioDeviceWindow.reset();
@@ -2984,6 +2992,7 @@ MainComponent::~MainComponent()
     liveLoopWindow_.reset();
 
     juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+    audioEngine.onPluginsAboutToBeReleased = nullptr;
     audioEngine.shutdown();
 }
 

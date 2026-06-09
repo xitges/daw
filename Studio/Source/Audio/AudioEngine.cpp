@@ -2264,6 +2264,36 @@ void AudioEngine::audioDeviceStopped()
             pluginsToRelease[(size_t)ch] = std::move(instrumentPlugins[(size_t)ch]);
         }
     }
+
+    auto releasePluginResources = [](std::array<std::unique_ptr<juce::AudioPluginInstance>, 16>& plugins)
+    {
+        for (auto& plugin : plugins)
+            if (plugin != nullptr)
+                plugin->releaseResources();
+    };
+
+    if (onPluginsAboutToBeReleased)
+    {
+        auto closePluginUi = onPluginsAboutToBeReleased;
+        if (juce::MessageManager::getInstance()->isThisTheMessageThread())
+        {
+            closePluginUi();
+            releasePluginResources(pluginsToRelease);
+            return;
+        }
+
+        auto plugins = std::make_shared<std::array<std::unique_ptr<juce::AudioPluginInstance>, 16>>(
+            std::move(pluginsToRelease));
+        juce::MessageManager::callAsync([closePluginUi = std::move(closePluginUi), plugins]() mutable
+        {
+            closePluginUi();
+            for (auto& plugin : *plugins)
+                if (plugin != nullptr)
+                    plugin->releaseResources();
+        });
+        return;
+    }
+
     for (auto& plugin : pluginsToRelease)
         if (plugin != nullptr)
             plugin->releaseResources();
@@ -2779,6 +2809,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                 inst.fileReadStart      = std::fmod(localSample, (double)playLen);
                 inst.fileTotalSamples   = playLen;
                 inst.pitchRatio         = pitchRatio;
+                inst.mixerTrack         = juce::jlimit(0, 7, clip->trackIndex);
 
                 // Fade envelope fields (proportional clamp applied here)
                 inst.localBeatAtBlockStart = localBeat;
@@ -3262,12 +3293,16 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
                 const int    startS  = inst.startOffsetInBlock;
                 const int    fileLen = inst.fileTotalSamples;
                 const double pitch   = inst.pitchRatio;
+                const int    track   = juce::jlimit(0, 7, inst.mixerTrack);
                 double       filePos = inst.fileReadStart;
+                ++routedSourcesPerTrack[(size_t)track];
 
                 for (int s = startS; s < safe; ++s)
                 {
-                    // Stop at end of file — no looping for one-shot audio clips
-                    if (filePos >= (double)fileLen || filePos < 0.0) break;
+                    if (filePos < 0.0)
+                        filePos = 0.0;
+                    else if (filePos >= (double)fileLen)
+                        filePos = std::fmod(filePos, (double)fileLen);
 
                     const double wp = filePos;
 
@@ -3302,8 +3337,8 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
                         sR *= gain;
                     }
 
-                    mixerTrackBufs[0].addSample(0, s, sL);
-                    mixerTrackBufs[0].addSample(1, s, sR);
+                    mixerTrackBufs[(size_t)track].addSample(0, s, sL);
+                    mixerTrackBufs[(size_t)track].addSample(1, s, sR);
 
                     filePos += pitch;
                 }

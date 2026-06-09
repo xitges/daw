@@ -111,6 +111,9 @@ public:
     double getBPM() const { return bpm.load(std::memory_order_relaxed); }
     // Fired on the message thread when the Song-mode sample cache is ready
     std::function<void()> onSongCacheReady;
+    // Fired before loaded plugin instances are released, so UI/editor objects can
+    // drop raw plugin pointers first.
+    std::function<void()> onPluginsAboutToBeReleased;
 
     // Seek song playback to an arbitrary bar position
     void seekSongToBar(double bar)
@@ -570,6 +573,7 @@ private:
         double fileReadStart      = 0.0;
         int    fileTotalSamples   = 0;      // = pitchedBuffer (if set) or buffer size
         double pitchRatio         = 1.0;    // 1.0 for Stretch/Elastique (tempo-preserving)
+        int    mixerTrack         = 0;
 
         // Fade envelope parameters -- set each block
         double localBeatAtBlockStart = 0.0; // clip-local beat at startOffsetInBlock

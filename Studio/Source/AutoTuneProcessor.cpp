@@ -22,9 +22,6 @@
 AutoTuneProcessor::AutoTuneProcessor() = default;
 AutoTuneProcessor::~AutoTuneProcessor() = default;
 
-AutoTuneProcessor::AutoTuneProcessor(AutoTuneProcessor&&) noexcept = default;
-AutoTuneProcessor& AutoTuneProcessor::operator=(AutoTuneProcessor&&) noexcept = default;
-
 // ---------------------------------------------------------------------------
 // prepare / reset
 // ---------------------------------------------------------------------------
@@ -74,12 +71,12 @@ void AutoTuneProcessor::reset()
     correctedMidi_     = 0.0f;
     prevTargetMidi_    = 0.0f;
     glideProgress_     = 1.0f;
-    detectedPitchHz_   = 0.0f;
-    targetPitchHz_     = 0.0f;
-    correctedPitchHz_  = 0.0f;
-    inputRms_          = 0.0f;
-    confidence_        = 0.0f;
-    voiced_            = false;
+    detectedPitchHz_.store(0.0f, std::memory_order_relaxed);
+    targetPitchHz_.store(0.0f, std::memory_order_relaxed);
+    correctedPitchHz_.store(0.0f, std::memory_order_relaxed);
+    inputRms_.store(0.0f, std::memory_order_relaxed);
+    confidence_.store(0.0f, std::memory_order_relaxed);
+    voiced_.store(false, std::memory_order_relaxed);
     dcIn_  = 0.0f;
     dcOut_ = 0.0f;
 
@@ -363,7 +360,7 @@ void AutoTuneProcessor::processBlock(float* L, float* R, int numSamples,
         monoBuf_[(size_t)i] = mono;
         energy += mono * mono;
     }
-    inputRms_ = std::sqrt(energy / (float)numSamples);
+    inputRms_.store(std::sqrt(energy / (float)numSamples), std::memory_order_relaxed);
 
     // === STAGE 2: Pitch Detection ===
     pitchDetector_.processBlock(monoBuf_.data(), numSamples);
@@ -372,9 +369,9 @@ void AutoTuneProcessor::processBlock(float* L, float* R, int numSamples,
     const bool  isOnset     = pitchDetector_.isOnset();
     const bool  isVoicedNow = pitchDetector_.isVoiced();
 
-    detectedPitchHz_ = detectedHz;
-    confidence_      = rawConf;
-    voiced_          = isVoicedNow;
+    detectedPitchHz_.store(detectedHz, std::memory_order_relaxed);
+    confidence_.store(rawConf, std::memory_order_relaxed);
+    voiced_.store(isVoicedNow, std::memory_order_relaxed);
 
     // === STAGES 3-6: Note targeting + Correction ===
     bool doCorrection = false;
@@ -409,7 +406,7 @@ void AutoTuneProcessor::processBlock(float* L, float* R, int numSamples,
                 effectiveTarget = prevTargetMidi_ + (noteTarget_.targetMidi - prevTargetMidi_) * t;
             }
 
-            targetPitchHz_ = midiToHz(effectiveTarget);
+            targetPitchHz_.store(midiToHz(effectiveTarget), std::memory_order_relaxed);
 
             // Stage 4: Vibrato detection
             updateVibratoDetector(detectedMidi, effectiveTarget);
@@ -420,7 +417,7 @@ void AutoTuneProcessor::processBlock(float* L, float* R, int numSamples,
             // Stage 6: Vibrato handling
             corrected = applyVibratoHandling(detectedMidi, corrected, params.vibratoPreserve);
 
-            correctedPitchHz_ = midiToHz(corrected);
+            correctedPitchHz_.store(midiToHz(corrected), std::memory_order_relaxed);
 
             // Update corrected MIDI (retune speed is now applied via per-sample
             // ratio smoothing in Stage 7 — here we just set the target directly)
@@ -434,15 +431,15 @@ void AutoTuneProcessor::processBlock(float* L, float* R, int numSamples,
         }
         else
         {
-            targetPitchHz_ = 0.0f;
+            targetPitchHz_.store(0.0f, std::memory_order_relaxed);
             targetPitchRatio_ = 1.0f;
         }
     }
     else
     {
         // Unvoiced
-        targetPitchHz_ = 0.0f;
-        correctedPitchHz_ = 0.0f;
+        targetPitchHz_.store(0.0f, std::memory_order_relaxed);
+        correctedPitchHz_.store(0.0f, std::memory_order_relaxed);
         targetPitchRatio_ = 1.0f;
 
         noteTarget_.locked = false;
