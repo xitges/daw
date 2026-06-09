@@ -55,8 +55,22 @@ private:
     float  swingAmount      = 0.0f;   // 0.0 = straight, 0.5 = dotted swing
     float  stepTimingOffset[MAX_STEPS] = {}; // per-step timing offset (-0.5..+0.5)
 
-    void advanceStep(int offsetInBuffer);
-    void triggerCurrentStep(int offsetInBuffer);
+    struct PendingTrigger
+    {
+        int channel = 0;
+        int step = 0;
+        int samplesUntilFire = 0;
+    };
+
+    static constexpr int MAX_PENDING_TRIGGERS = CHANNEL_COUNT * 4;
+    std::array<PendingTrigger, MAX_PENDING_TRIGGERS> pendingTriggers {};
+    int pendingTriggerCount = 0;
+
+    void clearPendingTriggers();
+    void drainPendingTriggers(int numSamples);
+    void enqueuePendingTrigger(int channel, int step, int samplesUntilFire);
+    void advanceStep(int offsetInBuffer, int numSamples);
+    void triggerCurrentStep(int offsetInBuffer, int numSamples);
     void recalcSamplesPerStep();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Sequencer)

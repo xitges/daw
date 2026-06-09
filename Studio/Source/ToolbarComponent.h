@@ -161,7 +161,7 @@ public:
     void setBPM(double bpm)
     {
         bpmSlider.setValue(bpm, juce::dontSendNotification);
-        bpmLabel.setText(juce::String(bpm, 1), juce::dontSendNotification);
+        bpmLabel.setText(juce::String(bpmSlider.getValue(), 1), juce::dontSendNotification);
     }
     
     // [수정됨] 기존 버튼 대신 SegmentedControl을 업데이트합니다.

@@ -28,16 +28,18 @@ void Sequencer::start(int startStep)
     sampleCounter = 0.0;
     playing       = true;
     fireStepZeroOnNextBlock = true;
+    clearPendingTriggers();
 }
 
 void Sequencer::stop()
 {
     playing = false;
+    clearPendingTriggers();
 }
 
 void Sequencer::setBPM(double newBpm)
 {
-    bpm = newBpm;
+    bpm = juce::jmax(1.0, newBpm);
     recalcSamplesPerStep();
 }
 
@@ -72,11 +74,14 @@ void Sequencer::recalcSamplesPerStep()
 void Sequencer::processBlock(int numSamples)
 {
     if (!playing) return;
+    if (numSamples <= 0) return;
+
+    drainPendingTriggers(numSamples);
 
     if (fireStepZeroOnNextBlock)
     {
         fireStepZeroOnNextBlock = false;
-        triggerCurrentStep(0);
+        triggerCurrentStep(0, numSamples);
     }
 
     const double prevCounter = sampleCounter;
@@ -92,21 +97,21 @@ void Sequencer::processBlock(int numSamples)
         // Compute base offset in buffer
         int baseOffset = juce::jlimit(0, numSamples - 1, (int)std::round(timeToFire));
 
-        advanceStep(baseOffset);
+        advanceStep(baseOffset, numSamples);
         timeToFire += samplesPerStep;
     }
 }
 
-void Sequencer::advanceStep(int offsetInBuffer)
+void Sequencer::advanceStep(int offsetInBuffer, int numSamples)
 {
     if (stepCount <= 0)
         return;
 
     currentStep = (currentStep + 1) % stepCount;
-    triggerCurrentStep(offsetInBuffer);
+    triggerCurrentStep(offsetInBuffer, numSamples);
 }
 
-void Sequencer::triggerCurrentStep(int offsetInBuffer)
+void Sequencer::triggerCurrentStep(int offsetInBuffer, int numSamples)
 {
     // === Apply swing ===
     // Swing shifts even-numbered steps (1, 3, 5, ...) — the "off-beat" 16th notes.
@@ -127,16 +132,51 @@ void Sequencer::triggerCurrentStep(int offsetInBuffer)
         adjustedOffset += (int)std::round((double)perStepOffset * samplesPerStep);
     }
 
-    // Note: adjustedOffset may go beyond current buffer boundaries.
-    // This is acceptable — the AudioEngine's trigger dispatch handles
-    // sample-accurate scheduling. Negative offsets get clamped to 0
-    // (trigger fires at buffer start, slightly early).
-    // Positive overflow means the trigger fires in the next buffer.
-    // For simplicity, clamp to valid range for this buffer.
-    // TODO: proper cross-buffer scheduling for perfect timing.
-    adjustedOffset = juce::jlimit(0, juce::jmax(0, (int)(samplesPerStep) - 1), adjustedOffset);
+    adjustedOffset = juce::jmax(0, adjustedOffset);
 
     for (int ch = 0; ch < CHANNEL_COUNT; ++ch)
         if (pattern[ch][currentStep])
-            onTrigger(ch, currentStep, adjustedOffset);
+        {
+            if (adjustedOffset < numSamples)
+                onTrigger(ch, currentStep, adjustedOffset);
+            else
+                enqueuePendingTrigger(ch, currentStep, adjustedOffset - numSamples);
+        }
+}
+
+void Sequencer::clearPendingTriggers()
+{
+    pendingTriggerCount = 0;
+}
+
+void Sequencer::drainPendingTriggers(int numSamples)
+{
+    int write = 0;
+
+    for (int i = 0; i < pendingTriggerCount; ++i)
+    {
+        auto trigger = pendingTriggers[(size_t)i];
+        if (trigger.samplesUntilFire < numSamples)
+        {
+            onTrigger(trigger.channel, trigger.step, trigger.samplesUntilFire);
+        }
+        else
+        {
+            trigger.samplesUntilFire -= numSamples;
+            pendingTriggers[(size_t)write++] = trigger;
+        }
+    }
+
+    pendingTriggerCount = write;
+}
+
+void Sequencer::enqueuePendingTrigger(int channel, int step, int samplesUntilFire)
+{
+    if (pendingTriggerCount >= MAX_PENDING_TRIGGERS)
+        return;
+
+    auto& trigger = pendingTriggers[(size_t)pendingTriggerCount++];
+    trigger.channel = channel;
+    trigger.step = step;
+    trigger.samplesUntilFire = juce::jmax(0, samplesUntilFire);
 }

@@ -971,7 +971,8 @@ void AudioEngine::dispatchVoiceNote(int ch, int midiPitch, float velocity,
                                     int mixerTrack,
                                     const SynthParams& sp, ChannelSourceType srcType,
                                     const SamplerParams& samplerParams,
-                                    std::shared_ptr<const juce::AudioBuffer<float>> samplerBuf)
+                                    std::shared_ptr<const juce::AudioBuffer<float>> samplerBuf,
+                                    int startOffsetSamples)
 {
     // Sampler channels always play through the voice engine (source type is authoritative).
     // Synth channels require sp.enabled (preserves legacy opt-in behaviour).
@@ -991,7 +992,8 @@ void AudioEngine::dispatchVoiceNote(int ch, int midiPitch, float velocity,
             polySynths[(size_t)ch].noteOnSampler(midiPitch, velocity, sampleRate,
                                                  noteParams, samplerParams,
                                                  std::move(samplerBuf), noteLen,
-                                                 outputGain, outputPan, mixerTrack);
+                                                 outputGain, outputPan, mixerTrack,
+                                                 startOffsetSamples);
             return;
         }
         // No sampler buffer loaded -- only fall through to raw synth if explicitly enabled
@@ -999,7 +1001,7 @@ void AudioEngine::dispatchVoiceNote(int ch, int midiPitch, float velocity,
     }
 
     polySynths[(size_t)ch].noteOn(midiPitch, velocity, sampleRate, noteParams, noteLen,
-                                  outputGain, outputPan, mixerTrack);
+                                  outputGain, outputPan, mixerTrack, startOffsetSamples);
 }
 
 void AudioEngine::previewNote(int ch, int midiPitch)
@@ -1205,12 +1207,13 @@ void AudioEngine::setMasterPan(float pan)
 
 void AudioEngine::setBPM(double newBpm)
 {
-    bpm.store(newBpm, std::memory_order_relaxed);
-    sequencer.setBPM(newBpm);
+    const double safeBpm = juce::jmax(1.0, newBpm);
+    bpm.store(safeBpm, std::memory_order_relaxed);
+    sequencer.setBPM(safeBpm);
 
-    updateRuntimeState([newBpm](RuntimePlaybackState& state)
+    updateRuntimeState([safeBpm](RuntimePlaybackState& state)
     {
-        state.projectBpm = newBpm;
+        state.projectBpm = safeBpm;
     });
 }
 
@@ -1411,7 +1414,8 @@ void AudioEngine::triggerChannel(int channelIndex, int step, int offsetInBuffer)
                 polySynths[(size_t)channelIndex].noteOnSampler(
                     midiPitch, stepVel, sampleRate,
                     noteParams, samplerP,
-                    std::move(buf), noteLen, 1.0f, 0.0f, mixerTrack);
+                    std::move(buf), noteLen, 1.0f, 0.0f, mixerTrack,
+                    offsetInBuffer);
                 return;
             }
             // No sampler buffer loaded -- fall through to raw sample trigger
@@ -1420,7 +1424,8 @@ void AudioEngine::triggerChannel(int channelIndex, int step, int offsetInBuffer)
         {
             polySynths[(size_t)channelIndex].noteOn(
                 midiPitch, stepVel, sampleRate,
-                noteParams, noteLen, 1.0f, 0.0f, mixerTrack);
+                noteParams, noteLen, 1.0f, 0.0f, mixerTrack,
+                offsetInBuffer);
             return;
         }
     }
@@ -2044,7 +2049,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                         const SynthParams& midiSp   = midiSnap.patternId >= 0 ? midiSnap.synthParams[(size_t)ch]   : SynthParams{};
                         const SamplerParams& midiSamp = midiSnap.patternId >= 0 ? midiSnap.samplerParams[(size_t)ch] : SamplerParams{};
                         dispatchVoiceNote(ch, pitch, vel, 0, midiVol, midiPan, midiMixer,
-                                          midiSp, srcType, midiSamp, std::move(samplerBuf2));
+                                          midiSp, srcType, midiSamp, std::move(samplerBuf2),
+                                          meta.samplePosition);
                     }
                     else
                     {
@@ -2062,7 +2068,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                             SynthParams sp;
                             sp.enabled = true;
                             dispatchVoiceNote(ch, pitch, vel, 0, midiVol, midiPan, midiMixer,
-                                              sp, ChannelSourceType::Synth, SamplerParams{}, nullptr);
+                                              sp, ChannelSourceType::Synth, SamplerParams{}, nullptr,
+                                              meta.samplePosition);
                         }
                     }
                 }
@@ -2550,11 +2557,11 @@ void AudioEngine::processPatternMode(juce::AudioBuffer<float>& buffer,
                         // M8 -- VST/AU plugin path
                         const int tp = juce::jlimit(0, 127,
                             note.pitch + (int)std::round(channelBasePitch[(size_t)ch].load(std::memory_order_relaxed)));
+                        const double onBeatFromStart = beatsFromBlockStart(ns);
+                        const int noteOnOffset = juce::jlimit(0, juce::jmax(0, numSamples - 1),
+                                                               (int)std::round(onBeatFromStart * samplesPerBeat));
                         if (patPluginActive)
                         {
-                            const double onBeatFromStart = beatsFromBlockStart(ns);
-                            const int noteOnOffset = juce::jlimit(0, juce::jmax(0, numSamples - 1),
-                                                                   (int)std::round(onBeatFromStart * samplesPerBeat));
                             instrumentMidiBuffers[ch].addEvent(
                                 juce::MidiMessage::noteOn(1, tp, note.velocity), noteOnOffset);
                             // Schedule note-off at endBeat
@@ -2575,13 +2582,13 @@ void AudioEngine::processPatternMode(juce::AudioBuffer<float>& buffer,
                                 dispatchVoiceNote(ch, tp, note.velocity, noteLenSamples,
                                                   1.0f, 0.0f, mixerTrack,
                                                   sp, srcType, snap.samplerParams[(size_t)ch],
-                                                  std::move(samplerBuf));
+                                                  std::move(samplerBuf), noteOnOffset);
                             }
                             else
                             {
                                 // Raw sample fallback -- no synth/sampler, play via sample trigger
                                 auto sourceBuffer = getChannelSourceBufferShared(ch);
-                                scheduleSampleTrigger(ch, 0, mixerTrack,
+                                scheduleSampleTrigger(ch, noteOnOffset, mixerTrack,
                                                       sourceBuffer.get(), sourceBuffer,
                                                       snap.channelVolume[(size_t)ch] * note.velocity,
                                                       snap.channelPan[(size_t)ch],
@@ -2875,14 +2882,14 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                                 midiPitch, songStepVel, sampleRate, noteParams,
                                 songSamplerP,
                                 std::move(samplerBuf), noteLenSamples,
-                                outVol, outPan, mixerTrack);
+                                outVol, outPan, mixerTrack, offsetInBuf);
                         }
                     }
                     else
                     {
                         polySynths[(size_t)ch].noteOn(midiPitch, songStepVel, sampleRate,
                                                       noteParams, noteLenSamples,
-                                                      outVol, outPan, mixerTrack);
+                                                      outVol, outPan, mixerTrack, offsetInBuf);
                     }
                 }
                 else
@@ -3006,7 +3013,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                                               songChannelVolume_[(size_t)ch] * noteFadeGain,
                                               songChannelPan_[(size_t)ch], mixerTrack,
                                               sp, srcType, pat->samplerParams[(size_t)ch],
-                                              std::move(samplerBuf));
+                                              std::move(samplerBuf), noteOnOffset);
                         }
                         else
                         {

@@ -756,7 +756,8 @@ private:
                            float outputGain, float outputPan, int mixerTrack,
                            const SynthParams& sp, ChannelSourceType srcType,
                            const SamplerParams& samplerParams,
-                           std::shared_ptr<const juce::AudioBuffer<float>> samplerBuf);
+                           std::shared_ptr<const juce::AudioBuffer<float>> samplerBuf,
+                           int startOffsetSamples = 0);
 
     double sampleRate = 44100.0;
     int    bufferSize = 512;

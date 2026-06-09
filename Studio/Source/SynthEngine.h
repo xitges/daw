@@ -498,7 +498,8 @@ class SynthVoice
 public:
     // Trigger a note. noteLenSamples: auto-release after this many samples.
     void noteOn(int midiPitch, float velocity, double sr, const SynthParams& p, int noteLenSamples,
-                int voiceSlot = 0, float outputGain = 1.0f, float outputPan = 0.0f, int mixerTrack = 0)
+                int voiceSlot = 0, float outputGain = 1.0f, float outputPan = 0.0f,
+                int mixerTrack = 0, int startOffsetSamples = 0)
     {
         useSamplerSource_ = false;  // reset to waveform mode; noteOnSampler re-enables
         isPreviewVoice_   = false;  // reset; setAsPreviewVoice() opts in explicitly
@@ -593,6 +594,7 @@ public:
         outputGain_ = juce::jlimit(0.0f, 1.25f, outputGain);
         outputPan_ = juce::jlimit(-1.0f, 1.0f, outputPan);
         mixerTrack_ = juce::jlimit(0, 7, mixerTrack);
+        startOffsetRemaining_ = juce::jmax(0, startOffsetSamples);
 
         envState_ = Env::Attack;
         envLevel_ = 0.0f;
@@ -769,14 +771,15 @@ public:
                        std::shared_ptr<const juce::AudioBuffer<float>> bufOwner,
                        int noteLenSamples,
                        int voiceSlot = 0, float outputGain = 1.0f,
-                       float outputPan = 0.0f, int mixerTrack = 0)
+                       float outputPan = 0.0f, int mixerTrack = 0,
+                       int startOffsetSamples = 0)
     {
         // Reuse the full synth noteOn for ADSR / filter / LFO / drift setup.
         // Pass a non-zero noteLenSamples only if !oneShot; for one-shot
         // voices the sample end itself terminates the voice.
         noteOn(midiPitch, velocity, sr, p,
                sp.oneShot ? 0 : noteLenSamples,
-               voiceSlot, outputGain, outputPan, mixerTrack);
+               voiceSlot, outputGain, outputPan, mixerTrack, startOffsetSamples);
 
         // Switch to sampler source mode
         useSamplerSource_ = true;
@@ -812,6 +815,17 @@ public:
     {
         if (envState_ == Env::Idle && residualFadeRemaining_ <= 0) return;
 
+        int startIndex = 0;
+        if (startOffsetRemaining_ > 0)
+        {
+            const int silentSamples = juce::jmin(numSamples, startOffsetRemaining_);
+            startOffsetRemaining_ -= silentSamples;
+            if (silentSamples >= numSamples)
+                return;
+
+            startIndex = silentSamples;
+        }
+
         // Biquad coefficients — only used when Ladder mode + HP/BP (filterType 1,2).
         // SVF handles all topologies internally; Ladder is LP-only.
         float b0 = 0.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
@@ -821,7 +835,7 @@ public:
 
         const double lfoInc = params_.lfoRate / sr;
 
-        for (int i = 0; i < numSamples; ++i)
+        for (int i = startIndex; i < numSamples; ++i)
         {
             float outL = 0.0f;
             float outR = 0.0f;
@@ -1285,6 +1299,7 @@ private:
     int    voiceSlot_         = 0;
 
     int    noteLenRemaining_  = 0;
+    int    startOffsetRemaining_ = 0;
 
     // Ladder filter instances — one per stereo channel (LP path)
     std::unique_ptr<IFilter> filterL_;
@@ -1495,7 +1510,8 @@ public:
 
     // Trigger a note with an automatic note-length (in samples).
     void noteOn(int pitch, float velocity, double sr, const SynthParams& p, int noteLenSamples,
-                float outputGain = 1.0f, float outputPan = 0.0f, int mixerTrack = 0)
+                float outputGain = 1.0f, float outputPan = 0.0f, int mixerTrack = 0,
+                int startOffsetSamples = 0)
     {
         if (!p.enabled) return;
 
@@ -1522,7 +1538,8 @@ public:
             }
         }
 
-        voices_[voiceIdx].noteOn(pitch, velocity, sr, p, noteLenSamples, voiceIdx, outputGain, outputPan, mixerTrack);
+        voices_[voiceIdx].noteOn(pitch, velocity, sr, p, noteLenSamples, voiceIdx,
+                                  outputGain, outputPan, mixerTrack, startOffsetSamples);
         lastUsedVoice_ = voiceIdx;
     }
 
@@ -1530,7 +1547,8 @@ public:
                        const SynthParams& p, const SamplerParams& sp,
                        std::shared_ptr<const juce::AudioBuffer<float>> bufOwner,
                        int noteLenSamples,
-                       float outputGain = 1.0f, float outputPan = 0.0f, int mixerTrack = 0)
+                       float outputGain = 1.0f, float outputPan = 0.0f, int mixerTrack = 0,
+                       int startOffsetSamples = 0)
     {
         // No p.enabled guard here — callers (dispatchVoiceNote / direct routes) are
         // already authoritative about whether a Sampler channel should fire.
@@ -1559,7 +1577,8 @@ public:
 
         voices_[voiceIdx].noteOnSampler(pitch, velocity, sr, p, sp,
                                         std::move(bufOwner), noteLenSamples,
-                                        voiceIdx, outputGain, outputPan, mixerTrack);
+                                        voiceIdx, outputGain, outputPan, mixerTrack,
+                                        startOffsetSamples);
         lastUsedVoice_ = voiceIdx;
     }
 
