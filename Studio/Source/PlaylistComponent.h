@@ -145,6 +145,9 @@ public:
     // Clip mute toggle
     std::function<void(int clipId, bool muted)> onClipMuteToggled;
 
+    // Clip variation changed -- host updates Project and runtime snapshot.
+    std::function<void(int clipId, int oldVariation, int newVariation)> onClipVariationChanged;
+
     // Automation undo callbacks
     std::function<void(int laneIdx, int ptIdx, AutomationPoint pt)>                          onAutomationPointAdded;
     std::function<void(int laneIdx, int ptIdx, AutomationPoint before, AutomationPoint after)> onAutomationPointMoved;
@@ -1921,6 +1924,44 @@ inline void PlaylistComponent::showContextMenu(int clipId)
                     clipB.startBar      = splitBar;
                     clipB.lengthBars    = newBLen;
 
+                    const float splitDeltaBars = splitBar - c->startBar;
+                    if (clipB.clipType == ClipType::Pattern)
+                    {
+                        float patternBars = 0.0f;
+                        if (project != nullptr)
+                            for (const auto& p : project->patterns)
+                                if (p.id == clipB.patternId) { patternBars = (float)p.stepCount / 16.0f; break; }
+
+                        const float rawOffset = clipB.patternStartOffsetBars + splitDeltaBars;
+                        clipB.patternStartOffsetBars = (patternBars > 0.0f)
+                            ? std::fmod(std::fmod(rawOffset, patternBars) + patternBars, patternBars)
+                            : juce::jmax(0.0f, rawOffset);
+                        clipB.originalPatternStartOffsetBars = clipB.patternStartOffsetBars;
+                    }
+                    else
+                    {
+                        const double bpmLocal = (project != nullptr) ? juce::jmax(1.0, project->bpm) : 120.0;
+                        const double samplesPerBar = 44100.0 * 60.0 / bpmLocal * 4.0;
+                        const double pitchRatio = (clipB.audioClipMode == AudioClipMode::Resample)
+                            ? std::pow(2.0, (double)clipB.pitchSemitone / 12.0)
+                            : 1.0;
+                        const float rawOffset = clipB.sourceOffsetSamples
+                                              + (float)(splitDeltaBars * samplesPerBar * pitchRatio);
+
+                        float fileLen = 0.0f;
+                        if (getAudioBuffer)
+                        {
+                            auto buf = getAudioBuffer(clipB.audioFilePath);
+                            if (buf != nullptr && buf->getNumSamples() > 0)
+                                fileLen = (float)buf->getNumSamples();
+                        }
+
+                        clipB.sourceOffsetSamples = (fileLen > 0.0f)
+                            ? std::fmod(std::fmod(rawOffset, fileLen) + fileLen, fileLen)
+                            : juce::jmax(0.0f, rawOffset);
+                        clipB.originalSourceOffsetSamples = clipB.sourceOffsetSamples;
+                    }
+
                     // Shorten clip A (direct mutation; undo is handled by the host
                     // via the existing onClipResized path if needed)
                     const float oldLen = c->lengthBars;
@@ -1965,7 +2006,12 @@ inline void PlaylistComponent::showContextMenu(int clipId)
             {
                 if (auto* c = findClipById(clipId))
                 {
-                    c->variationIdx = result - 201;
+                    const int oldVariation = c->variationIdx;
+                    const int newVariation = result - 201;
+                    if (onClipVariationChanged)
+                        onClipVariationChanged(clipId, oldVariation, newVariation);
+                    else
+                        c->variationIdx = newVariation;
                     repaint();
                 }
             }

@@ -145,6 +145,7 @@ AudioEngine::AudioEngine()
         channelBasePitch[(size_t)i].store(0.0f, std::memory_order_relaxed);
         channelMuted[(size_t)i].store(false, std::memory_order_relaxed);
         channelSoloed[(size_t)i].store(false, std::memory_order_relaxed);
+        songPluginPatternIds_[(size_t)i].store(-1, std::memory_order_relaxed);
         channelPatternOverride_  [i] = -1;
         channelVariationOverride_[i] = 0;
         // CC real-time params: volume = 1.0 (no attenuation), pan = 0.5 (centre)
@@ -1339,6 +1340,16 @@ const AudioEngine::SongSampleCacheMap& AudioEngine::getSongSamplerCache() const
     return songSamplerCaches_[activeSongSamplerCacheIdx_.load(std::memory_order_acquire)];
 }
 
+bool AudioEngine::isSongPluginActiveForPattern(const Pattern& pattern, int ch) const noexcept
+{
+    if (ch < 0 || ch >= Pattern::kMaxChannels)
+        return false;
+
+    return pattern.pluginSlots[(size_t)ch].enabled
+        && pluginLoaded_[(size_t)ch].load(std::memory_order_acquire)
+        && songPluginPatternIds_[(size_t)ch].load(std::memory_order_acquire) == pattern.id;
+}
+
 void AudioEngine::triggerChannel(int channelIndex, int step, int offsetInBuffer)
 {
     if (channelIndex < 0 || channelIndex >= 16) return;
@@ -2440,6 +2451,8 @@ void AudioEngine::ensureSongPluginsLoaded()
 
     // Build a merged set of plugin slots from all patterns referenced by playlist clips
     std::array<PluginSlot, 16> needed {};
+    std::array<int, 16> neededPatternIds {};
+    neededPatternIds.fill(-1);
 
     for (const auto& clip : project->playlistClips)
     {
@@ -2452,7 +2465,10 @@ void AudioEngine::ensureSongPluginsLoaded()
         {
             // First pattern with a plugin on this channel wins
             if (!needed[(size_t)ch].enabled && pat->pluginSlots[(size_t)ch].enabled)
+            {
                 needed[(size_t)ch] = pat->pluginSlots[(size_t)ch];
+                neededPatternIds[(size_t)ch] = pat->id;
+            }
         }
     }
 
@@ -2462,13 +2478,20 @@ void AudioEngine::ensureSongPluginsLoaded()
         if (p.id == project->activePatternId)
         {
             for (int ch = 0; ch < 16; ++ch)
+            {
                 if (!needed[(size_t)ch].enabled && p.pluginSlots[(size_t)ch].enabled)
+                {
                     needed[(size_t)ch] = p.pluginSlots[(size_t)ch];
+                    neededPatternIds[(size_t)ch] = p.id;
+                }
+            }
             break;
         }
     }
 
     restorePluginsFromSlots(needed);
+    for (int ch = 0; ch < 16; ++ch)
+        songPluginPatternIds_[(size_t)ch].store(neededPatternIds[(size_t)ch], std::memory_order_release);
 }
 
 // ---- Render helpers ----------------------------------------------------
@@ -2647,7 +2670,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
         {
             if (lane.paramId != "bpm") continue;
 
-            currentBpm = (double)lane.evaluate(startBeat);
+            currentBpm = juce::jmax(1.0, (double)lane.evaluate(startBeat));
             bpm.store(currentBpm, std::memory_order_relaxed);
             sequencer.setBPM(currentBpm);
 
@@ -2659,7 +2682,6 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
     }
 
     const double samplesPerBeat = sampleRate * 60.0 / currentBpm;
-    const double samplesPerBar  = samplesPerBeat * 4.0;
     const double beatsThisBlock = numSamples / samplesPerBeat;
     const double endBeat   = startBeat + beatsThisBlock;
     const double startBar  = startBeat / 4.0;
@@ -2783,8 +2805,8 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
     {
     const auto& songSampleCache = getSongSampleCache();
     const int timelineStepsPerBar = 16;
-    const int startStep = (int)std::floor(startBar * timelineStepsPerBar);
-    const int endStep   = (int)std::floor(endBar   * timelineStepsPerBar);
+    const int startStep = (int)std::floor(startBar * timelineStepsPerBar) - 2;
+    const int endStep   = (int)std::floor(endBar   * timelineStepsPerBar) + 2;
     const auto updateSongMixState = [this, &automatedChannelVolumes](const Pattern& pattern, int ch)
     {
         if (ch < 0 || ch >= Pattern::kMaxChannels)
@@ -2802,9 +2824,6 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
         const double stepBarPos  = (double)stepIndex / (double)timelineStepsPerBar;
         const double stepBeat    = stepBarPos * 4.0;
         const int    offsetInBuf = (int)((stepBeat - startBeat) * samplesPerBeat);
-
-        if (offsetInBuf < 0 || offsetInBuf >= numSamples)
-            continue;
 
         for (const auto& clip : runtime.playlistClips)
         {
@@ -2837,6 +2856,15 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
 
                 // --- Per-step params ---
                 const StepParams& songSP = pattern->variations[clip.variationIdx].stepParams[ch][localStep];
+                const double samplesPerStep = samplesPerBeat * 0.25;
+                int adjustedOffset = offsetInBuf;
+                if (pattern->swingAmount > 0.001f && (localStep % 2 == 1))
+                    adjustedOffset += (int)std::round((double)pattern->swingAmount * samplesPerStep);
+                if (std::abs(songSP.timingOffset) > 0.001f)
+                    adjustedOffset += (int)std::round((double)songSP.timingOffset * samplesPerStep);
+
+                if (adjustedOffset < 0 || adjustedOffset >= numSamples)
+                    continue;
 
                 // Probability gate
                 if (songSP.probability < 1.0f && stepParamRng_.nextFloat() > songSP.probability)
@@ -2846,7 +2874,23 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
 
                 const bool useSynth = pattern->synthParams[(size_t)ch].enabled
                                    || pattern->channelSourceTypes[(size_t)ch] == ChannelSourceType::Sampler;
-                if (useSynth)
+                const bool pluginRequested = pattern->pluginSlots[(size_t)ch].enabled;
+                const bool songPluginActive = isSongPluginActiveForPattern(*pattern, ch);
+                if (songPluginActive)
+                {
+                    const int midiPitch = juce::jlimit(0, 127,
+                        60 + (int)std::round(pattern->channelPitch[ch]) + songSP.pitchOffset);
+                    instrumentMidiBuffers[ch].addEvent(
+                        juce::MidiMessage::noteOn(1, midiPitch, songStepVel), adjustedOffset);
+                    const double noteEndBeat = startBeat + (double)adjustedOffset / samplesPerBeat
+                                             + songSP.gate * 0.25;
+                    activePluginNotes[ch].push({ noteEndBeat, midiPitch });
+                }
+                else if (pluginRequested)
+                {
+                    continue;
+                }
+                else if (useSynth)
                 {
                     const int midiPitch = juce::jlimit(0, 127,
                         60 + (int)std::round(pattern->channelPitch[ch]) + songSP.pitchOffset);
@@ -2882,14 +2926,14 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                                 midiPitch, songStepVel, sampleRate, noteParams,
                                 songSamplerP,
                                 std::move(samplerBuf), noteLenSamples,
-                                outVol, outPan, mixerTrack, offsetInBuf);
+                                outVol, outPan, mixerTrack, adjustedOffset);
                         }
                     }
                     else
                     {
                         polySynths[(size_t)ch].noteOn(midiPitch, songStepVel, sampleRate,
                                                       noteParams, noteLenSamples,
-                                                      outVol, outPan, mixerTrack, offsetInBuf);
+                                                      outVol, outPan, mixerTrack, adjustedOffset);
                     }
                 }
                 else
@@ -2903,7 +2947,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                     if (songSP.startOffsetFrac > 0.0f && songBuffer && songBuffer->getNumSamples() > 0)
                         songRawStartOff = songSP.startOffsetFrac * (double)songBuffer->getNumSamples();
 
-                    scheduleSampleTrigger(ch, offsetInBuf, juce::jlimit(0, 7, pattern->channelMixerRouting[ch]), songBuffer.get(), songBuffer,
+                    scheduleSampleTrigger(ch, adjustedOffset, juce::jlimit(0, 7, pattern->channelMixerRouting[ch]), songBuffer.get(), songBuffer,
                                           songChannelVolume_[(size_t)ch] * stepFadeGain * songSP.velocity,
                                           songChannelPan_[(size_t)ch],
                                           pattern->channelPitch[ch] + (float)songSP.pitchOffset,
@@ -2988,12 +3032,19 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                         const int noteOnOffset = juce::jlimit(0, juce::jmax(0, numSamples - 1),
                                                                (int)((fireBeat - startBeatSong) * samplesPerBeat));
 
+                        const bool pluginRequested = pat->pluginSlots[(size_t)ch].enabled;
+                        const bool songPluginActive = isSongPluginActiveForPattern(*pat, ch);
+
                         // M8 -- VST/AU plugin path (song mode)
-                        if (pluginLoaded_[(size_t)ch].load(std::memory_order_acquire))
+                        if (songPluginActive)
                         {
                             instrumentMidiBuffers[ch].addEvent(
                                 juce::MidiMessage::noteOn(1, tp2, note.velocity), noteOnOffset);
                             activePluginNotes[ch].push({ fireBeat + note.lengthBeats, tp2 });
+                        }
+                        else if (pluginRequested)
+                        {
+                            continue;
                         }
                         else if (sp.enabled || srcType == ChannelSourceType::Sampler)
                         {

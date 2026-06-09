@@ -233,6 +233,7 @@ public:
     void refreshSongCacheAsync()
     {
         rebuildRuntimeStateFromProject();
+        ensureSongPluginsLoaded();
         if (cacheLoader_ != nullptr && cacheLoader_->isThreadRunning())
         {
             cacheLoader_->signalThreadShouldExit();
@@ -747,6 +748,7 @@ private:
 
     // Sampler Synth helpers
     const SongSampleCacheMap& getSongSamplerCache() const;
+    bool isSongPluginActiveForPattern(const Pattern& pattern, int ch) const noexcept;
 
     // Unified voice dispatch -- routes to noteOnSampler or noteOn based on source type.
     // Sampler channels play regardless of synthParams.enabled; Synth channels require it.
@@ -784,6 +786,7 @@ private:
     mutable juce::CriticalSection pluginLock;
     std::array<std::unique_ptr<juce::AudioPluginInstance>, 16> instrumentPlugins;
     std::array<std::atomic<bool>, 16> pluginLoaded_ {};
+    std::array<std::atomic<int>, 16> songPluginPatternIds_ {};
 
     // Per-channel MIDI buffers -- cleared at audio callback start,
     // populated by NoteEvent / live-MIDI sections, consumed in mixToOutput.

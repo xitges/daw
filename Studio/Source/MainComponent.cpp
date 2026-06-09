@@ -1122,6 +1122,7 @@ MainComponent::MainComponent()
                 for (auto& c : project.playlistClips)
                     if (c.id == clipId) { c.patternId = newPatId; break; }
                 toolbar.updatePatternList(project.patterns, activePatternId);
+                audioEngine.refreshSongCacheAsync();
                 playlist.repaint(); markDirty(); return true;
             },
             [this, clipId, oldPatternId, newPatId]() -> bool {
@@ -1133,10 +1134,10 @@ MainComponent::MainComponent()
                 pats.erase(std::remove_if(pats.begin(), pats.end(),
                     [newPatId](const Pattern& p) { return p.id == newPatId; }), pats.end());
                 toolbar.updatePatternList(project.patterns, activePatternId);
+                audioEngine.refreshSongCacheAsync();
                 playlist.repaint(); markDirty(); return true;
             }
         ));
-        audioEngine.refreshSongCacheAsync();
     };
 
     playlist.onClipAdded = [this](PlaylistClip clip)
@@ -1150,6 +1151,7 @@ MainComponent::MainComponent()
                 for (const auto& c : project.playlistClips)
                     if (c.id == clipState->id) { found = true; break; }
                 if (!found) project.playlistClips.push_back(*clipState);
+                audioEngine.refreshSongCacheAsync();
                 playlist.repaint(); markDirty(); return true;
             },
             [this, clipId, clipState]() -> bool {
@@ -1159,10 +1161,10 @@ MainComponent::MainComponent()
                 auto& list = project.playlistClips;
                 list.erase(std::remove_if(list.begin(), list.end(),
                     [clipId](const PlaylistClip& c){ return c.id == clipId; }), list.end());
+                audioEngine.refreshSongCacheAsync();
                 playlist.repaint(); markDirty(); return true;
             }
         ));
-        audioEngine.refreshSongCacheAsync();
     };
 
     playlist.onClipDeleted = [this](PlaylistClip clip)
@@ -1178,13 +1180,14 @@ MainComponent::MainComponent()
                 auto& list = project.playlistClips;
                 list.erase(std::remove_if(list.begin(), list.end(),
                     [clipId](const PlaylistClip& c){ return c.id == clipId; }), list.end());
+                audioEngine.refreshSongCacheAsync();
                 playlist.repaint(); markDirty(); return true;
             },
             [this, clipState]() -> bool {
                 project.playlistClips.push_back(*clipState);
+                audioEngine.refreshSongCacheAsync();
                 playlist.repaint(); markDirty(); return true;
             }));
-        audioEngine.refreshSongCacheAsync();
     };
 
     playlist.onClipMoved = [this](int id, float oldBar, int oldTrack, float newBar, int newTrack)
@@ -1250,14 +1253,32 @@ MainComponent::MainComponent()
             [this, clipId, newPatternId]() -> bool {
                 for (auto& c : project.playlistClips)
                     if (c.id == clipId) { c.patternId = newPatternId; break; }
+                audioEngine.refreshSongCacheAsync();
                 playlist.repaint(); markDirty(); return true;
             },
             [this, clipId, oldPatternId]() -> bool {
                 for (auto& c : project.playlistClips)
                     if (c.id == clipId) { c.patternId = oldPatternId; break; }
+                audioEngine.refreshSongCacheAsync();
                 playlist.repaint(); markDirty(); return true;
             }));
-        audioEngine.refreshSongCacheAsync();
+    };
+
+    playlist.onClipVariationChanged = [this](int clipId, int oldVariation, int newVariation)
+    {
+        undoManager.perform(new LambdaAction(
+            [this, clipId, newVariation]() -> bool {
+                for (auto& c : project.playlistClips)
+                    if (c.id == clipId) { c.variationIdx = juce::jlimit(0, Pattern::kMaxVariations - 1, newVariation); break; }
+                audioEngine.rebuildRuntimeStateFromProject();
+                playlist.repaint(); markDirty(); return true;
+            },
+            [this, clipId, oldVariation]() -> bool {
+                for (auto& c : project.playlistClips)
+                    if (c.id == clipId) { c.variationIdx = juce::jlimit(0, Pattern::kMaxVariations - 1, oldVariation); break; }
+                audioEngine.rebuildRuntimeStateFromProject();
+                playlist.repaint(); markDirty(); return true;
+            }));
     };
 
     // Phase 4 -- undoable clip rename
