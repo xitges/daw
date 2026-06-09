@@ -85,6 +85,7 @@ public:
     std::function<void(int ch)> onLoadPlugin;
     std::function<void(int ch)> onOpenPluginEditor;
     std::function<void(int ch)> onRemovePlugin;
+    std::function<void(int ch)> onReloadPlugin;
 
     // M-Phase3 — mixer routing
     std::function<void(int ch, int trackIdx)> onChannelRoutingChanged;

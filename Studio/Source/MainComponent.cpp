@@ -851,21 +851,21 @@ MainComponent::MainComponent()
         if (auto* pat = findPattern(activePatternId))
         {
             pat->samplePaths[ch] = file.getFullPathName();
-            
+
             // 1. 샘플 파일명으로 패턴 데이터 업데이트
             juce::String newName = file.getFileNameWithoutExtension();
             pat->channelNames[ch] = newName;
-            
+
             // 2. 채널랙 새로고침
             channelRack.resetToChannelCount(project.channelCount, pat->channelNames);
             channelRack.loadPattern(*pat);
-            
+
             // 3. 인스펙터 탭 바 (글자) 즉시 새로고침
             if (audioEngine.getMidiTargetChannel() == ch)
             {
                 inspectorTabBar_.setInstrumentSub(ch, newName);
                 inspectorTabBar_.repaint();
-                
+
                 // 4. 메인 화면의 인스트러먼트 패널 (파형 및 헤더) 즉시 새로고침
                 {
                     const bool hp = audioEngine.hasPlugin(ch);
@@ -883,8 +883,8 @@ MainComponent::MainComponent()
                             instrumentPanel_.getNeededHeight());
                 }
             }
-                
-        
+
+
         }
         markDirty();
         audioEngine.refreshSongCacheAsync();
@@ -1925,6 +1925,8 @@ MainComponent::MainComponent()
             pluginBrowserWindow->onPluginSelected = [this](int targetCh,
                                                              const juce::PluginDescription& desc)
             {
+                clearPluginUiForChannel(targetCh);
+
                 juce::String errorMsg;
                 audioEngine.loadPlugin(targetCh, desc, errorMsg);
 
@@ -1966,13 +1968,13 @@ MainComponent::MainComponent()
                 channelRack.setChannelHasPlugin(targetCh, true);
                 audioEngine.updatePatternSnapshot();
                 markDirty();
-                
+
                 const juce::String pluginChName = "Plugin " + juce::String(targetCh + 1);
                 if (auto* pat2 = findPattern(activePatternId))
                     pat2->channelNames[targetCh] = pluginChName;
                 channelRack.setChannelName(targetCh, pluginChName);
                 inspectorTabBar_.setInstrumentSub(targetCh, pluginChName);
-                
+
                 if (auto* pat = findPattern(activePatternId))
                 {
                     const bool hp = audioEngine.hasPlugin(targetCh);
@@ -1994,7 +1996,7 @@ MainComponent::MainComponent()
                 inspectorTabBar_.setTab(0);
                 if (inspectorTabBar_.onTabChanged)
                     inspectorTabBar_.onTabChanged(0);
-                
+
 
             };
         }
@@ -2021,9 +2023,7 @@ MainComponent::MainComponent()
 
     channelRack.onRemovePlugin = [this](int ch)
         {
-        if (pluginEditorWindows[(size_t)ch] != nullptr)
-            pluginEditorWindows[(size_t)ch].reset();
-        instrumentPanel_.clearVstKnobs();
+        clearPluginUiForChannel(ch);
 
         audioEngine.unloadPlugin(ch);
         project.channelInstrumentPlugins[(size_t)ch] = {};
@@ -2058,6 +2058,89 @@ MainComponent::MainComponent()
 
         audioEngine.updatePatternSnapshot();
         markDirty();
+    };
+
+    channelRack.onReloadPlugin = [this](int ch)
+    {
+        auto* currentPlugin = audioEngine.getPlugin(ch);
+        if (currentPlugin == nullptr) return;
+
+        // 1. 현재 파일 경로 + 상태 백업
+        const juce::String filePath = currentPlugin->getPluginDescription().fileOrIdentifier;
+        juce::MemoryBlock savedState;
+        audioEngine.getPluginState(ch, savedState);
+        const bool editorWasOpen = pluginEditorWindows[(size_t)ch] != nullptr
+                                   && pluginEditorWindows[(size_t)ch]->isVisible();
+
+        // 2. 에디터 창 닫기
+        clearPluginUiForChannel(ch);
+
+        // 3. KnownPluginList에서 같은 경로의 최신 desc 탐색
+        juce::PluginDescription newDesc;
+        bool found = false;
+        for (const auto& desc : PluginManager::getInstance().getKnownPlugins().getTypes())
+        {
+            if (desc.fileOrIdentifier == filePath)
+            {
+                newDesc = desc;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            juce::AlertWindow::showMessageBoxAsync(
+                juce::MessageBoxIconType::WarningIcon, "Reload Plugin",
+                "Plugin not found in scan list.\nRun 'Rescan Plugins' in the Plugin Browser first.");
+            return;
+        }
+
+        // 4. 새 버전 로드
+        juce::String errorMsg;
+        audioEngine.loadPlugin(ch, newDesc, errorMsg);
+        if (errorMsg.isNotEmpty())
+        {
+            juce::AlertWindow::showMessageBoxAsync(
+                juce::MessageBoxIconType::WarningIcon, "Reload Plugin", errorMsg);
+            return;
+        }
+
+        // 5. 상태 복원 (버전 간 호환 여부는 플러그인에 달림)
+        if (savedState.getSize() > 0)
+        {
+            audioEngine.setPluginState(ch, savedState.getData(), (int)savedState.getSize());
+        }
+
+        // 6. 에디터 창 재오픈
+        if (editorWasOpen)
+        {
+            if (auto* newPlugin = audioEngine.getPlugin(ch))
+            {
+                pluginEditorWindows[(size_t)ch] =
+                    std::make_unique<PluginEditorWindow>(*newPlugin, ch);
+                pluginEditorWindows[(size_t)ch]->setVisible(true);
+            }
+        }
+
+        // 7. InstrumentPanel 갱신
+        if (auto* pat = findPattern(activePatternId))
+        {
+            const bool hp = audioEngine.hasPlugin(ch);
+            instrumentPanel_.setChannel(ch,
+                                        channelRack.getChannelName(ch),
+                                        pat->samplePaths[(size_t)ch],
+                                        pat->synthParams[(size_t)ch],
+                                        pat->channelPitch[(size_t)ch],
+                                        pat->channelTypes[(size_t)ch],
+                                        hp,
+                                        hp ? audioEngine.getPlugin(ch)->getName() : juce::String{});
+            instrumentPanel_.buildVstKnobs(audioEngine.getPlugin(ch));
+            if (inspectorTab_ == 0)
+                instrumentPanel_.setSize(
+                    instrumentViewport_.getWidth() - instrumentViewport_.getScrollBarThickness(),
+                    instrumentPanel_.getNeededHeight());
+        }
     };
 
     // Instrument panel "Open VST Editor" button
@@ -2902,6 +2985,22 @@ int MainComponent::nextPatternId() const
     return maxId + 1;
 }
 
+void MainComponent::clearPluginUiForChannel(int ch)
+{
+    if (ch < 0 || ch >= (int)pluginEditorWindows.size()) return;
+
+    pluginEditorWindows[(size_t)ch].reset();
+    instrumentPanel_.clearVstKnobs();
+}
+
+void MainComponent::clearAllPluginUi()
+{
+    for (auto& w : pluginEditorWindows)
+        w.reset();
+
+    instrumentPanel_.clearVstKnobs();
+}
+
 void MainComponent::selectPattern(int id)
 {
     // Save current channel rack steps + plugin states into the currently active pattern
@@ -2915,8 +3014,8 @@ void MainComponent::selectPattern(int id)
     project.activePatternId = id;
     markDirty();
 
-    // Close all plugin editor windows before swapping plugins
-    for (auto& w : pluginEditorWindows) w.reset();
+    // Close plugin UI before swapping plugin instances.
+    clearAllPluginUi();
 
     // Load new pattern into channel rack, samples, and sync steps to engine immediately
     if (auto* newPat = findPattern(activePatternId))
@@ -2932,9 +3031,15 @@ void MainComponent::selectPattern(int id)
         // patterns doesn't kill song playback).  In pattern mode, load only the
         // new pattern's plugins.
         if (toolbar.getPlayMode() == PlayMode::Song)
+        {
+            clearAllPluginUi();
             audioEngine.ensureSongPluginsLoaded();
+        }
         else
+        {
+            clearAllPluginUi();
             audioEngine.restorePluginsFromSlots(newPat->pluginSlots);
+        }
 
         // Badge reflects what the current pattern has, not the audio engine union
         for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
@@ -3020,11 +3125,11 @@ void MainComponent::syncPatternToEngine()
 void MainComponent::markDirty()
 {
     projectDirty = true;
-    
+
     juce::String title = "Untitled";
     if (currentFile != juce::File())
         title = currentFile.getFileNameWithoutExtension();
-        
+
     toolbar.setProjectTitle(title, true);
 }
 
@@ -3357,11 +3462,9 @@ void MainComponent::reloadProjectIntoUI()
     // M3 -- channel types are now per-pattern; loadPattern (above) already applied them
 
     // M8 -- unload any previously active plugins, then reload from project
+    clearAllPluginUi();
     for (int ch = 0; ch < 16; ++ch)
     {
-        if (pluginEditorWindows[(size_t)ch] != nullptr)
-            pluginEditorWindows[(size_t)ch].reset();
-        instrumentPanel_.clearVstKnobs();
         audioEngine.unloadPlugin(ch);
         channelRack.setChannelHasPlugin(ch, false);
     }
@@ -3369,6 +3472,7 @@ void MainComponent::reloadProjectIntoUI()
     // Restore plugins from the active pattern's per-pattern slots
     if (auto* activePat = findPattern(activePatternId))
     {
+        clearAllPluginUi();
         audioEngine.restorePluginsFromSlots(activePat->pluginSlots);
         for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
             channelRack.setChannelHasPlugin(ch, audioEngine.hasPlugin(ch));
@@ -3915,7 +4019,7 @@ void MainComponent::paint(juce::Graphics& g)
 //                                  juce::Colour(LF::kChassis2), 0.0f, (float)getHeight(), false);
     juce::Colour lightGreyWhite (0xfff2f2f2); // 아주 밝은 회색
     juce::Colour softWhite (0xfffafafa);      // 거의 하얀색
-    
+
     juce::ColourGradient bodyGrad(softWhite, 0.0f, 0.0f,
                                   lightGreyWhite, 0.0f, (float)getHeight(), false);
     g.setGradientFill(bodyGrad);

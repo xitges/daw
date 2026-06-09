@@ -30,6 +30,78 @@ namespace
         return juce::jlimit(0.42f, 1.0f, sourceComp * peakComp);
     }
 
+    bool prepareInstrumentPlugin(juce::AudioPluginInstance& plugin,
+                                 double sampleRate,
+                                 int bufferSize,
+                                 juce::String& errorMsg)
+    {
+        errorMsg.clear();
+
+        if (sampleRate <= 0.0 || bufferSize <= 0)
+        {
+            errorMsg = "Audio device is not ready.";
+            return false;
+        }
+
+        const int inputBuses  = plugin.getBusCount(true);
+        const int outputBuses = plugin.getBusCount(false);
+
+        if (outputBuses > 0)
+        {
+            juce::AudioProcessor::BusesLayout stereoLayout;
+
+            for (int i = 0; i < inputBuses; ++i)
+                stereoLayout.inputBuses.add(juce::AudioChannelSet::disabled());
+
+            for (int i = 0; i < outputBuses; ++i)
+                stereoLayout.outputBuses.add(i == 0 ? juce::AudioChannelSet::stereo()
+                                                    : juce::AudioChannelSet::disabled());
+
+            bool layoutOk = plugin.setBusesLayout(stereoLayout);
+
+            if (!layoutOk)
+            {
+                juce::AudioProcessor::BusesLayout monoLayout;
+
+                for (int i = 0; i < inputBuses; ++i)
+                    monoLayout.inputBuses.add(juce::AudioChannelSet::disabled());
+
+                for (int i = 0; i < outputBuses; ++i)
+                    monoLayout.outputBuses.add(i == 0 ? juce::AudioChannelSet::mono()
+                                                      : juce::AudioChannelSet::disabled());
+
+                layoutOk = plugin.setBusesLayout(monoLayout);
+            }
+
+            if (!layoutOk)
+            {
+                errorMsg = "Plugin does not support a mono/stereo instrument output layout.";
+                return false;
+            }
+        }
+
+        const int configuredOutputs = juce::jlimit(1, 2, plugin.getTotalNumOutputChannels());
+        plugin.setPlayConfigDetails(0, configuredOutputs, sampleRate, bufferSize);
+        plugin.prepareToPlay(sampleRate, bufferSize);
+
+        if (plugin.getTotalNumOutputChannels() <= 0)
+        {
+            plugin.releaseResources();
+            errorMsg = "Plugin has no enabled audio output bus.";
+            return false;
+        }
+
+        DBG("Loaded plugin: " << plugin.getName()
+            << " inputs=" << plugin.getTotalNumInputChannels()
+            << " outputs=" << plugin.getTotalNumOutputChannels()
+            << " inputBuses=" << plugin.getBusCount(true)
+            << " outputBuses=" << plugin.getBusCount(false)
+            << " sr=" << sampleRate
+            << " block=" << bufferSize);
+
+        return true;
+    }
+
     // Fade gain for a clip at localBars position within the clip.
     // Handles proportional clamping when fade-in + fade-out > clip length.
     inline float computeClipFadeGain(const PlaylistClip& clip, float localBars)
@@ -94,7 +166,8 @@ AudioEngine::AudioEngine()
         const PlaybackSnapshot& snap = snapshots_[activeSnapshotIdx_.load(std::memory_order_acquire)];
 
         // Plugin path: inject NoteOn into plugin MIDI buffer
-        if (snap.pluginSlotEnabled[(size_t)ch] && instrumentPlugins[(size_t)ch] != nullptr)
+        if (snap.pluginSlotEnabled[(size_t)ch]
+            && pluginLoaded_[(size_t)ch].load(std::memory_order_acquire))
         {
             const int v = juce::jlimit(0, 127, (int)(vel * 127.0f));
             instrumentMidiBuffers[ch].addEvent(
@@ -183,7 +256,8 @@ AudioEngine::AudioEngine()
         const PlaybackSnapshot& snap = snapshots_[activeSnapshotIdx_.load(std::memory_order_acquire)];
 
         // Plugin path: inject NoteOff into plugin MIDI buffer
-        if (snap.pluginSlotEnabled[(size_t)ch] && instrumentPlugins[(size_t)ch] != nullptr)
+        if (snap.pluginSlotEnabled[(size_t)ch]
+            && pluginLoaded_[(size_t)ch].load(std::memory_order_acquire))
         {
             instrumentMidiBuffers[ch].addEvent(juce::MidiMessage::noteOff(1, pitch), 0);
             return;
@@ -300,8 +374,9 @@ void AudioEngine::shutdown()
 
 void AudioEngine::play(int patternStartStep, double songStartBar)
 {
-    // Clear stale note-off entries from previous playback
-    for (auto& q : activePluginNotes) q.clear();
+    // Clear stale plugin note-off entries on the audio thread.
+    for (auto& pending : pendingPluginNoteStateReset_)
+        pending.store(true, std::memory_order_release);
 
     if (playMode == PlayMode::Pattern)
     {
@@ -345,8 +420,9 @@ void AudioEngine::play(int patternStartStep, double songStartBar)
 
 void AudioEngine::stop()
 {
-    // Clear scheduled note-offs so they don't fire on next play
-    for (auto& q : activePluginNotes) q.clear();
+    // Clear scheduled plugin note-offs on the audio thread.
+    for (auto& pending : pendingPluginNoteStateReset_)
+        pending.store(true, std::memory_order_release);
 
     if (playMode == PlayMode::Pattern)
         sequencer.stop();
@@ -718,8 +794,8 @@ void AudioEngine::updatePatternSnapshot()
 
     const Pattern* pat = (project != nullptr)
                          ? findPatternById(activePatternId) : nullptr;
-                         
-    if (pat == nullptr) 
+
+    if (pat == nullptr)
     {
         snap.patternId = -1;
         activeSnapshotIdx_.store(nextIdx, std::memory_order_release);
@@ -858,7 +934,7 @@ void AudioEngine::allSynthNotesOff()
     // unreliable -- they are cleared at the start of each audio callback)
     for (int ch = 0; ch < 16; ++ch)
     {
-        activePluginNotes[ch].clear();
+        pendingPluginNoteStateReset_[ch].store(true, std::memory_order_release);
         pendingPluginAllNotesOff_[ch].store(true, std::memory_order_release);
     }
 }
@@ -946,7 +1022,8 @@ void AudioEngine::previewNote(int ch, int midiPitch)
     const float  pan             = snap.patternId >= 0 ? snap.channelPan[(size_t)ch]
                                                        : sampleChannelPan_[(size_t)ch].load(std::memory_order_relaxed);
     // M8 -- route to plugin if loaded AND enabled for this pattern (via midiCollector for thread safety)
-    if (snap.pluginSlotEnabled[ch] && instrumentPlugins[(size_t)ch] != nullptr)
+    if (snap.pluginSlotEnabled[ch]
+        && pluginLoaded_[(size_t)ch].load(std::memory_order_acquire))
     {
         const int safePitch = juce::jlimit(0, 127, midiPitch);
         // Encode target channel in MIDI channel (1-based: ch+1) so the audio
@@ -1283,7 +1360,7 @@ void AudioEngine::triggerChannel(int channelIndex, int step, int offsetInBuffer)
     {
         const PlaybackSnapshot& trigSnap = snapshots_[activeSnapshotIdx_.load(std::memory_order_acquire)];
         const bool trigPluginActive = trigSnap.pluginSlotEnabled[channelIndex]
-                                   && instrumentPlugins[(size_t)channelIndex] != nullptr;
+                                   && pluginLoaded_[(size_t)channelIndex].load(std::memory_order_acquire);
         if (trigPluginActive)
         {
             const int midiPitch = juce::jlimit(0, 127,
@@ -1667,7 +1744,7 @@ void AudioEngine::commitHangingNotes()
 
             // Stop the sound at loop boundary
             polySynths[(size_t)ch].noteOff(pitch);
-            if (instrumentPlugins[(size_t)ch] != nullptr)
+            if (pluginLoaded_[(size_t)ch].load(std::memory_order_acquire))
                 pendingPluginAllNotesOff_[ch].store(true, std::memory_order_release);
         }
     }
@@ -1711,10 +1788,15 @@ juce::String AudioEngine::getLiveChannelInstrumentName(int ch) const
 
     // Plugin?
     const PlaybackSnapshot& snap = snapshots_[activeSnapshotIdx_.load(std::memory_order_acquire)];
-    if (snap.pluginSlotEnabled[(size_t)ch] && instrumentPlugins[(size_t)ch] != nullptr)
+    if (snap.pluginSlotEnabled[(size_t)ch]
+        && pluginLoaded_[(size_t)ch].load(std::memory_order_acquire))
     {
-        const auto desc = instrumentPlugins[(size_t)ch]->getPluginDescription();
-        return desc.name.isEmpty() ? "Plugin" : desc.name;
+        juce::ScopedLock sl(pluginLock);
+        if (instrumentPlugins[(size_t)ch] != nullptr)
+        {
+            const auto desc = instrumentPlugins[(size_t)ch]->getPluginDescription();
+            return desc.name.isEmpty() ? "Plugin" : desc.name;
+        }
     }
 
     // Sampler source with stored filename?
@@ -1834,10 +1916,16 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     // Flush pending all-notes-off from message thread (set by allSynthNotesOff)
     for (int ch = 0; ch < 16; ++ch)
     {
+        if (pendingPluginNoteStateReset_[ch].exchange(false, std::memory_order_acq_rel))
+            activePluginNotes[ch].clear();
+
         if (pendingPluginAllNotesOff_[ch].exchange(false, std::memory_order_acq_rel))
         {
-            instrumentMidiBuffers[ch].addEvent(juce::MidiMessage::allNotesOff(1), 0);
-            instrumentMidiBuffers[ch].addEvent(juce::MidiMessage::allSoundOff(1), 0);
+            if (pluginLoaded_[(size_t)ch].load(std::memory_order_acquire))
+            {
+                instrumentMidiBuffers[ch].addEvent(juce::MidiMessage::allNotesOff(1), 0);
+                instrumentMidiBuffers[ch].addEvent(juce::MidiMessage::allSoundOff(1), 0);
+            }
         }
     }
 
@@ -1933,7 +2021,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 // M8 -- route to VST/AU plugin if one is loaded AND enabled for current pattern
                 const PlaybackSnapshot& midiSnap = snapshots_[activeSnapshotIdx_.load(std::memory_order_acquire)];
                 const bool midiPluginActive = midiSnap.pluginSlotEnabled[ch]
-                                           && instrumentPlugins[(size_t)ch] != nullptr;
+                                           && pluginLoaded_[(size_t)ch].load(std::memory_order_acquire);
                 if (midiPluginActive)
                 {
                     instrumentMidiBuffers[ch].addEvent(
@@ -1990,7 +2078,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 // M8 -- route note-off to plugin if loaded AND enabled for current pattern
                 const PlaybackSnapshot& offSnap = snapshots_[activeSnapshotIdx_.load(std::memory_order_acquire)];
                 const bool offPluginActive = offSnap.pluginSlotEnabled[ch]
-                                          && instrumentPlugins[(size_t)ch] != nullptr;
+                                          && pluginLoaded_[(size_t)ch].load(std::memory_order_acquire);
                 if (offPluginActive)
                 {
                     instrumentMidiBuffers[ch].addEvent(
@@ -2008,7 +2096,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                     n.store(0, std::memory_order_relaxed);
 
                 const PlaybackSnapshot& allSnap = snapshots_[activeSnapshotIdx_.load(std::memory_order_acquire)];
-                if (allSnap.pluginSlotEnabled[ch] && instrumentPlugins[(size_t)ch] != nullptr)
+                if (allSnap.pluginSlotEnabled[ch]
+                    && pluginLoaded_[(size_t)ch].load(std::memory_order_acquire))
                     instrumentMidiBuffers[ch].addEvent(
                         juce::MidiMessage::allNotesOff(1), 0);
                 else
@@ -2120,12 +2209,19 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     // M8 -- re-prepare any already-loaded instrument plugins
     {
         juce::ScopedLock sl(pluginLock);
-        for (auto& plugin : instrumentPlugins)
+        for (int ch = 0; ch < 16; ++ch)
         {
+            auto& plugin = instrumentPlugins[(size_t)ch];
             if (plugin != nullptr)
             {
-                plugin->setPlayConfigDetails(0, 2, sampleRate, bufferSize);
-                plugin->prepareToPlay(sampleRate, bufferSize);
+                juce::String prepareError;
+                pluginLoaded_[(size_t)ch].store(prepareInstrumentPlugin(*plugin,
+                                                                          sampleRate,
+                                                                          bufferSize,
+                                                                          prepareError),
+                                                 std::memory_order_release);
+                if (prepareError.isNotEmpty())
+                    DBG("Plugin prepare failed: " << plugin->getName() << " - " << prepareError);
             }
         }
     }
@@ -2145,7 +2241,10 @@ void AudioEngine::audioDeviceStopped()
     {
         juce::ScopedLock sl(pluginLock);
         for (int ch = 0; ch < 16; ++ch)
+        {
+            pluginLoaded_[(size_t)ch].store(false, std::memory_order_release);
             pluginsToRelease[(size_t)ch] = std::move(instrumentPlugins[(size_t)ch]);
+        }
     }
     for (auto& plugin : pluginsToRelease)
         if (plugin != nullptr)
@@ -2158,22 +2257,25 @@ void AudioEngine::loadPlugin(int ch, const juce::PluginDescription& desc,
                               juce::String& errorMsg)
 {
     if (ch < 0 || ch >= 16) return;
+    errorMsg.clear();
 
     // Create the instance on the message thread (may take a moment -- that's OK)
     auto instance = PluginManager::getInstance().createPlugin(desc, sampleRate,
                                                                bufferSize, errorMsg);
     if (instance == nullptr) return;
 
-    // Configure I/O: 0 audio inputs, 2 audio outputs (stereo instrument)
-    instance->setPlayConfigDetails(0, 2, sampleRate, bufferSize);
-    instance->prepareToPlay(sampleRate, bufferSize);
+    if (!prepareInstrumentPlugin(*instance, sampleRate, bufferSize, errorMsg))
+        return;
 
     std::unique_ptr<juce::AudioPluginInstance> oldPlugin;
     {
         juce::ScopedLock sl(pluginLock);
+        pluginLoaded_[(size_t)ch].store(false, std::memory_order_release);
         oldPlugin = std::move(instrumentPlugins[(size_t)ch]);
         instrumentPlugins[(size_t)ch] = std::move(instance);
-        activePluginNotes[ch].clear();
+        pluginLoaded_[(size_t)ch].store(true, std::memory_order_release);
+        pendingPluginNoteStateReset_[(size_t)ch].store(true, std::memory_order_release);
+        pendingPluginAllNotesOff_[(size_t)ch].store(true, std::memory_order_release);
     }
     if (oldPlugin != nullptr)
         oldPlugin->releaseResources();
@@ -2185,8 +2287,9 @@ void AudioEngine::unloadPlugin(int ch)
     std::unique_ptr<juce::AudioPluginInstance> pluginToRelease;
     {
         juce::ScopedLock sl(pluginLock);
+        pluginLoaded_[(size_t)ch].store(false, std::memory_order_release);
         pluginToRelease = std::move(instrumentPlugins[(size_t)ch]);
-        activePluginNotes[ch].clear();
+        pendingPluginNoteStateReset_[(size_t)ch].store(true, std::memory_order_release);
     }
     if (pluginToRelease != nullptr)
         pluginToRelease->releaseResources();
@@ -2195,25 +2298,41 @@ void AudioEngine::unloadPlugin(int ch)
 bool AudioEngine::hasPlugin(int ch) const
 {
     if (ch < 0 || ch >= 16) return false;
-    return instrumentPlugins[(size_t)ch] != nullptr;
+    return pluginLoaded_[(size_t)ch].load(std::memory_order_acquire);
 }
 
 juce::AudioPluginInstance* AudioEngine::getPlugin(int ch)
 {
     if (ch < 0 || ch >= 16) return nullptr;
+    juce::ScopedLock sl(pluginLock);
     return instrumentPlugins[(size_t)ch].get();
 }
 
 bool AudioEngine::getPluginState(int ch, juce::MemoryBlock& stateOut) const
 {
     if (ch < 0 || ch >= 16) return false;
+    juce::ScopedLock sl(pluginLock);
     if (instrumentPlugins[(size_t)ch] == nullptr) return false;
     instrumentPlugins[(size_t)ch]->getStateInformation(stateOut);
     return true;
 }
 
+bool AudioEngine::setPluginState(int ch, const void* data, int sizeInBytes)
+{
+    if (ch < 0 || ch >= 16 || data == nullptr || sizeInBytes <= 0) return false;
+
+    juce::ScopedLock sl(pluginLock);
+    if (instrumentPlugins[(size_t)ch] == nullptr) return false;
+
+    instrumentPlugins[(size_t)ch]->setStateInformation(data, sizeInBytes);
+    pendingPluginNoteStateReset_[(size_t)ch].store(true, std::memory_order_release);
+    pendingPluginAllNotesOff_[(size_t)ch].store(true, std::memory_order_release);
+    return true;
+}
+
 void AudioEngine::savePluginStatesToSlots(std::array<PluginSlot, 16>& slots)
 {
+    juce::ScopedLock sl(pluginLock);
     for (int ch = 0; ch < 16; ++ch)
     {
         auto& slot = slots[(size_t)ch];
@@ -2238,7 +2357,15 @@ void AudioEngine::restorePluginsFromSlots(const std::array<PluginSlot, 16>& slot
     for (int ch = 0; ch < 16; ++ch)
     {
         const auto& slot = slots[(size_t)ch];
-        const bool currentHasPlugin = (instrumentPlugins[(size_t)ch] != nullptr);
+        bool currentHasPlugin = false;
+        juce::String currentId;
+        {
+            juce::ScopedLock sl(pluginLock);
+            currentHasPlugin = (instrumentPlugins[(size_t)ch] != nullptr);
+            if (currentHasPlugin)
+                currentId = instrumentPlugins[(size_t)ch]->getPluginDescription()
+                                .createIdentifierString();
+        }
 
         if (!slot.enabled || slot.pluginId.isEmpty())
         {
@@ -2251,8 +2378,6 @@ void AudioEngine::restorePluginsFromSlots(const std::array<PluginSlot, 16>& slot
         // Check if same plugin is already loaded
         if (currentHasPlugin)
         {
-            const auto currentId = instrumentPlugins[(size_t)ch]->getPluginDescription()
-                                       .createIdentifierString();
             if (currentId == slot.pluginId)
             {
                 // Same plugin -- just restore state
@@ -2260,8 +2385,14 @@ void AudioEngine::restorePluginsFromSlots(const std::array<PluginSlot, 16>& slot
                 {
                     juce::MemoryBlock stateData;
                     stateData.fromBase64Encoding(slot.pluginStateBase64);
-                    instrumentPlugins[(size_t)ch]->setStateInformation(
-                        stateData.getData(), (int)stateData.getSize());
+                    juce::ScopedLock sl(pluginLock);
+                    if (instrumentPlugins[(size_t)ch] != nullptr)
+                    {
+                        instrumentPlugins[(size_t)ch]->setStateInformation(
+                            stateData.getData(), (int)stateData.getSize());
+                        pendingPluginNoteStateReset_[(size_t)ch].store(true, std::memory_order_release);
+                        pendingPluginAllNotesOff_[(size_t)ch].store(true, std::memory_order_release);
+                    }
                 }
                 continue;
             }
@@ -2281,9 +2412,14 @@ void AudioEngine::restorePluginsFromSlots(const std::array<PluginSlot, 16>& slot
                 {
                     juce::MemoryBlock stateData;
                     stateData.fromBase64Encoding(slot.pluginStateBase64);
+                    juce::ScopedLock sl(pluginLock);
                     if (instrumentPlugins[(size_t)ch] != nullptr)
+                    {
                         instrumentPlugins[(size_t)ch]->setStateInformation(
                             stateData.getData(), (int)stateData.getSize());
+                        pendingPluginNoteStateReset_[(size_t)ch].store(true, std::memory_order_release);
+                        pendingPluginAllNotesOff_[(size_t)ch].store(true, std::memory_order_release);
+                    }
                 }
                 break;
             }
@@ -2381,7 +2517,7 @@ void AudioEngine::processPatternMode(juce::AudioBuffer<float>& buffer,
                 // M8 -- flush pending note-offs for plugin channels
                 // Only process plugin path if the CURRENT pattern has plugin enabled
                 const bool patPluginActive = snap.pluginSlotEnabled[ch]
-                                          && instrumentPlugins[(size_t)ch] != nullptr;
+                                          && pluginLoaded_[(size_t)ch].load(std::memory_order_acquire);
                 if (patPluginActive)
                 {
                     auto& notes = activePluginNotes[ch];
@@ -2780,7 +2916,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
         // that were missed in a previous block are still sent immediately.
         for (int ch = 0; ch < Pattern::kMaxChannels; ++ch)
         {
-            if (instrumentPlugins[(size_t)ch] == nullptr) continue;
+            if (! pluginLoaded_[(size_t)ch].load(std::memory_order_acquire)) continue;
             auto& notes = activePluginNotes[ch];
             for (int i = 0; i < notes.count; )
             {
@@ -2846,7 +2982,7 @@ void AudioEngine::processSongMode(juce::AudioBuffer<float>& buffer,
                                                                (int)((fireBeat - startBeatSong) * samplesPerBeat));
 
                         // M8 -- VST/AU plugin path (song mode)
-                        if (instrumentPlugins[(size_t)ch] != nullptr)
+                        if (pluginLoaded_[(size_t)ch].load(std::memory_order_acquire))
                         {
                             instrumentMidiBuffers[ch].addEvent(
                                 juce::MidiMessage::noteOn(1, tp2, note.velocity), noteOnOffset);
@@ -2946,7 +3082,7 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
 
         // In pattern mode, only use plugin if the current pattern has it enabled.
         // In song mode, plugin usage is determined by ensureSongPluginsLoaded().
-        const bool usePlugin = (instrumentPlugins[(size_t)ch] != nullptr)
+        const bool usePlugin = pluginLoaded_[(size_t)ch].load(std::memory_order_acquire)
                             && (playMode == PlayMode::Song || mixSnap.pluginSlotEnabled[ch]);
         // Song mode synth voices are rendered exclusively via renderNextBlockRouted()
         // below, which uses per-voice mixer track routing.  Calling renderNextBlock()
@@ -2964,16 +3100,29 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
         {
             // Try-lock: if the message thread is loading/unloading, skip this block
             const juce::ScopedTryLock sl(pluginLock);
-            if (sl.isLocked() && instrumentPlugins[(size_t)ch] != nullptr)
+            if (sl.isLocked())
             {
+                auto* plugin = instrumentPlugins[(size_t)ch].get();
+                if (plugin == nullptr || plugin->getTotalNumOutputChannels() <= 0)
+                    continue;
+
                 // Build a sub-buffer view sized to `safe` samples (no allocation)
                 juce::AudioBuffer<float> plugBuf(stagingBuf.getArrayOfWritePointers(),
                                                   2, safe);
-                instrumentPlugins[(size_t)ch]->processBlock(plugBuf,
-                                                             instrumentMidiBuffers[ch]);
+                try
+                {
+                    plugin->processBlock(plugBuf, instrumentMidiBuffers[ch]);
+                }
+                catch (...)
+                {
+                    pluginLoaded_[(size_t)ch].store(false, std::memory_order_release);
+                    pendingPluginNoteStateReset_[(size_t)ch].store(true, std::memory_order_release);
+                    DBG("Plugin processBlock threw an exception on channel " << ch);
+                    continue;
+                }
 
                 // If the plugin is mono, duplicate L -> R
-                const int plugOuts = instrumentPlugins[(size_t)ch]->getTotalNumOutputChannels();
+                const int plugOuts = plugin->getTotalNumOutputChannels();
                 if (plugOuts == 1 && stagingBuf.getNumChannels() > 1)
                     stagingBuf.copyFrom(1, 0, stagingBuf, 0, 0, safe);
             }

@@ -922,6 +922,7 @@ void ChannelRackComponent::mouseDown(const juce::MouseEvent& e)
         if (hasPlug)
         {
             menu.addItem(6, "Open Plugin Editor");
+            menu.addItem(9, "Reload Plugin");
             menu.addItem(7, "Remove Plugin");
         }
         menu.addSeparator();
@@ -979,6 +980,10 @@ void ChannelRackComponent::mouseDown(const juce::MouseEvent& e)
                 else if (result == 7)
                 {
                     if (onRemovePlugin) onRemovePlugin(ch);
+                }
+                else if (result == 9)
+                {
+                    if (onReloadPlugin) onReloadPlugin(ch);
                 }
                 else if (result == 8)
                 {

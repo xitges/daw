@@ -98,8 +98,20 @@ juce::int64 PluginManager::computeDirectoryFingerprint() const
             for (const auto& f : dir.findChildFiles(juce::File::findFilesAndDirectories, false))
             {
                 const auto ext = f.getFileExtension().toLowerCase();
-                if (ext == ".vst3" || ext == ".component" || ext == ".vst")
-                    fp += f.getLastModificationTime().toMilliseconds();
+                if (ext != ".vst3" && ext != ".component" && ext != ".vst") continue;
+
+                // Check bundle's own mod time
+                fp += f.getLastModificationTime().toMilliseconds();
+
+                // Also check the actual binary inside the bundle (macOS bundle layout:
+                // PluginName.vst3/Contents/MacOS/PluginName). Some installers update only
+                // the inner binary without touching the top-level bundle directory.
+                const auto macosBin = f.getChildFile("Contents/MacOS");
+                if (macosBin.isDirectory())
+                {
+                    for (const auto& bin : macosBin.findChildFiles(juce::File::findFiles, false))
+                        fp += bin.getLastModificationTime().toMilliseconds();
+                }
             }
         }
     }

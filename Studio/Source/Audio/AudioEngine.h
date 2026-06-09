@@ -400,10 +400,11 @@ public:
     void loadPlugin  (int ch, const juce::PluginDescription& desc, juce::String& errorMsg);
     void unloadPlugin(int ch);
     bool hasPlugin   (int ch) const;
-    juce::AudioPluginInstance* getPlugin(int ch);   // message thread only -- do not hold
+    juce::AudioPluginInstance* getPlugin(int ch);   // message thread only -- do not hold across load/unload
 
     // Save plugin state into a MemoryBlock (for project serialisation).
     bool getPluginState(int ch, juce::MemoryBlock& stateOut) const;
+    bool setPluginState(int ch, const void* data, int sizeInBytes);
 
     // Save all channel plugin states into PluginSlot array (for pattern switch)
     void savePluginStatesToSlots(std::array<PluginSlot, 16>& slots);
@@ -756,7 +757,7 @@ private:
                            const SynthParams& sp, ChannelSourceType srcType,
                            const SamplerParams& samplerParams,
                            std::shared_ptr<const juce::AudioBuffer<float>> samplerBuf);
-    
+
     double sampleRate = 44100.0;
     int    bufferSize = 512;
 
@@ -779,8 +780,9 @@ private:
     // M8 -- VST/AU instrument plugin hosting
     // Lock held by message thread (ScopedLock) on load/unload,
     // and by audio thread (ScopedTryLock) in mixToOutput.
-    juce::CriticalSection pluginLock;
+    mutable juce::CriticalSection pluginLock;
     std::array<std::unique_ptr<juce::AudioPluginInstance>, 16> instrumentPlugins;
+    std::array<std::atomic<bool>, 16> pluginLoaded_ {};
 
     // Per-channel MIDI buffers -- cleared at audio callback start,
     // populated by NoteEvent / live-MIDI sections, consumed in mixToOutput.
@@ -816,6 +818,7 @@ private:
     };
     std::array<ActivePluginNoteQueue, 16> activePluginNotes;
     std::array<std::atomic<bool>, 16>    pendingPluginAllNotesOff_ {};
+    std::array<std::atomic<bool>, 16>    pendingPluginNoteStateReset_ {};
 
     // Loop Recording -- audio-thread state (all accessed only on audio thread)
     LoopMarkers loopMarkers_;

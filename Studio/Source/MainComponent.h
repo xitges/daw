@@ -473,7 +473,7 @@ public:
         releaseSlider_.onValueChange = synthCb;
 
         formatManager_.registerBasicFormats();
-        
+
 
         // ---- SynthEditorPanel (MelSynth mode) ----
         synthPanel_.onParamsChanged = [this] {
@@ -1410,6 +1410,8 @@ private:
     void     exportCurrentPianoRollToMidi();
     void     importCurrentPianoRollFromMidi();
     void     refreshSynthEditorPresetList(const juce::String& selectPresetName = {});
+    void     clearPluginUiForChannel(int ch);
+    void     clearAllPluginUi();
 
     // M6 — undo/redo
     juce::UndoManager undoManager;

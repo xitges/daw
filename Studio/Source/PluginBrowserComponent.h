@@ -33,7 +33,7 @@ public:
                              juce::Colour(0xff1a1a20));
         addAndMakeVisible(pluginList);
 
-        scanBtn.setButtonText("Scan for Plugins");
+        scanBtn.setButtonText("Rescan Plugins");
         scanBtn.onClick = [this] { startScan(); };
         addAndMakeVisible(scanBtn);
 
@@ -130,6 +130,9 @@ private:
     {
         if (PluginManager::getInstance().isScanning()) return;
 
+        // Clear the existing list so updated plugins are fully re-detected
+        PluginManager::getInstance().clearList();
+
         scanBtn.setEnabled(false);
         scanBtn.setButtonText("Scanning...");
 
@@ -142,7 +145,7 @@ private:
             [this]()
             {
                 scanBtn.setEnabled(true);
-                scanBtn.setButtonText("Scan for Plugins");
+                scanBtn.setButtonText("Rescan Plugins");
                 refreshList();
             });
     }

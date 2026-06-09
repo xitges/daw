@@ -42,6 +42,9 @@ public:
     void saveList();
     void loadList();
 
+    // Clear the in-memory plugin list (does not touch disk cache).
+    void clearList() { knownPlugins.clear(); }
+
     // Check if plugin directories changed since last scan; rescan if needed.
     // Returns true if a background rescan was started.
     bool autoRescanIfNeeded(std::function<void()> completeCb = nullptr);
