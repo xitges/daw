@@ -427,28 +427,30 @@ public:
 
     void previewPitchAtVisibleY(int visibleY, int viewY)
     {
-        if (visibleY < headerH)
+        if (visibleY < rulerH)
                 return;
 
-        const int internalY = visibleY + viewY - headerH;
+        // The overlay paints keys translated by (rulerH - viewY), so the inverse
+        // mapping back to content coordinates must subtract rulerH — not headerH.
+        const int internalY = visibleY + viewY - rulerH;
         const int pitch = pitchFromY(internalY);
-        
+
         if (pitch >= minPitch && pitch <= maxPitch && onKeyPreview)
             onKeyPreview(pitch);
     }
 
     void setKeyboardHoverVisibleY(int visibleY, int viewY)
     {
-        if (visibleY < headerH)
+        if (visibleY < rulerH)
             {
                 clearKeyboardHover();
                 return;
             }
 
-            // 핵심: 위와 동일하게 좌표계 보정 (- headerH)
-        const int internalY = visibleY + viewY - headerH;
+        // Same inverse mapping as previewPitchAtVisibleY (paint transform = rulerH - viewY)
+        const int internalY = visibleY + viewY - rulerH;
         const int pitch = pitchFromY(internalY);
-        
+
         const int newHover = (pitch >= minPitch && pitch <= maxPitch) ? pitch : -1;
         if (hoverPitch != newHover)
         {
@@ -606,6 +608,7 @@ public:
             if (! selectToolEnabled)
             {
                 const int newIndex = appendNote(pendingEmptyPitch, pendingEmptyBeat, snapBeats, 0.8f);
+                if (onKeyPreview) onKeyPreview(pendingEmptyPitch);  // audition the placed note
                 selectSingleNote(newIndex);
                 draggingIdx = newIndex;
                 resizingNote = true;
@@ -693,6 +696,7 @@ public:
             else if (! pendingEmptyGestureAdditive)
             {
                 const int newIndex = appendNote(pendingEmptyPitch, pendingEmptyBeat, snapBeats, 0.8f);
+                if (onKeyPreview) onKeyPreview(pendingEmptyPitch);  // audition the placed note
                 selectSingleNote(newIndex);
             }
             resetInteractionState();

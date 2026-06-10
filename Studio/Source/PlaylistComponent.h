@@ -700,12 +700,12 @@ inline void PlaylistComponent::drawTimeRuler(juce::Graphics& g)
         g.fillRect(0, (int)ry, trackHeaderWidth, (int)rh);
 
         g.setFont(juce::Font(juce::FontOptions("VT323", 12.0f, juce::Font::plain)));
-        g.setColour(juce::Colour(LF::kDisplayFg).withAlpha(0.7f));
+        g.setColour(juce::Colour(0xFFFFFF).withAlpha(0.7f));
         g.drawText("TRK / " + juce::String(getTrackCount()), 8, (int)ry, 80, (int)rh, juce::Justification::centredLeft);
 
         // ＋ add track button
         g.setFont(juce::Font(juce::FontOptions("VT323", 14.0f, juce::Font::plain)));
-        g.setColour(juce::Colour(LF::kDisplayFg));
+        g.setColour(juce::Colour(0xFFFFFF).withAlpha(0.7f));
         g.drawText(juce::String::fromUTF8("\xef\xbc\x8b"), // ＋
                    trackHeaderWidth - 22, (int)ry, 18, (int)rh, juce::Justification::centred);
 
@@ -747,11 +747,11 @@ inline void PlaylistComponent::drawTimeRuler(juce::Graphics& g)
             const juce::String barNum = juce::String(bar + 1).paddedLeft('0', 3);
             g.setFont(juce::Font(juce::FontOptions("VT323", 13.0f, juce::Font::plain)));
             // Glow pass
-            g.setColour(juce::Colour(LF::kDisplayFg).withAlpha(0.28f));
+            g.setColour(juce::Colour(0xFFFFFF).withAlpha(0.7f));
             g.drawText(barNum, (int)x + 3, (int)ry + 2, barWidth - 4, (int)rh - 4,
                        juce::Justification::centredLeft);
             // Main text
-            g.setColour(juce::Colour(LF::kDisplayFg));
+            g.setColour(juce::Colour(0xFFFFFF).withAlpha(0.7f));
             g.drawText(barNum, (int)x + 4, (int)ry + 3, barWidth - 4, (int)rh - 4,
                        juce::Justification::centredLeft);
         }

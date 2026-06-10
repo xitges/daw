@@ -80,8 +80,10 @@ namespace
             }
         }
 
-        const int configuredOutputs = juce::jlimit(1, 2, plugin.getTotalNumOutputChannels());
-        plugin.setPlayConfigDetails(0, configuredOutputs, sampleRate, bufferSize);
+        // Do NOT call setPlayConfigDetails here: it re-negotiates the main buses
+        // and can fight the layout agreed via setBusesLayout above, leaving the
+        // VST3 wrapper's channel mapping out of sync with the actual arrangement.
+        plugin.setRateAndBufferSizeDetails(sampleRate, bufferSize);
         plugin.prepareToPlay(sampleRate, bufferSize);
 
         if (plugin.getTotalNumOutputChannels() <= 0)
@@ -2240,6 +2242,14 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
                                                  std::memory_order_release);
                 if (prepareError.isNotEmpty())
                     DBG("Plugin prepare failed: " << plugin->getName() << " - " << prepareError);
+
+                // Resize multi-out scratch for the (possibly new) buffer size
+                const int needCh = juce::jmax(plugin->getTotalNumInputChannels(),
+                                              plugin->getTotalNumOutputChannels());
+                if (needCh > 2)
+                    pluginScratchBufs_[(size_t)ch].setSize(needCh, juce::jmax(1, bufferSize));
+                else
+                    pluginScratchBufs_[(size_t)ch].setSize(0, 0);
             }
         }
     }
@@ -2320,6 +2330,17 @@ void AudioEngine::loadPlugin(int ch, const juce::PluginDescription& desc,
         juce::ScopedLock sl(pluginLock);
         pluginLoaded_[(size_t)ch].store(false, std::memory_order_release);
         oldPlugin = std::move(instrumentPlugins[(size_t)ch]);
+
+        // Multi-out safety: if the plugin kept more channels enabled than our
+        // 2-channel staging buffer, pre-allocate a scratch buffer here (message
+        // thread) so the audio thread can pass a correctly-sized buffer view.
+        const int needCh = juce::jmax(instance->getTotalNumInputChannels(),
+                                      instance->getTotalNumOutputChannels());
+        if (needCh > 2)
+            pluginScratchBufs_[(size_t)ch].setSize(needCh, juce::jmax(1, bufferSize));
+        else
+            pluginScratchBufs_[(size_t)ch].setSize(0, 0);
+
         instrumentPlugins[(size_t)ch] = std::move(instance);
         pluginLoaded_[(size_t)ch].store(true, std::memory_order_release);
         pendingPluginNoteStateReset_[(size_t)ch].store(true, std::memory_order_release);
@@ -3192,28 +3213,67 @@ void AudioEngine::mixToOutput(juce::AudioBuffer<float>& output, int numSamples,
             if (sl.isLocked())
             {
                 auto* plugin = instrumentPlugins[(size_t)ch].get();
-                if (plugin == nullptr || plugin->getTotalNumOutputChannels() <= 0)
+                if (plugin == nullptr || plugin->getTotalNumOutputChannels() <= 0
+                    || safe <= 0)
                     continue;
 
-                // Build a sub-buffer view sized to `safe` samples (no allocation)
-                juce::AudioBuffer<float> plugBuf(stagingBuf.getArrayOfWritePointers(),
-                                                  2, safe);
-                try
-                {
-                    plugin->processBlock(plugBuf, instrumentMidiBuffers[ch]);
-                }
-                catch (...)
-                {
-                    pluginLoaded_[(size_t)ch].store(false, std::memory_order_release);
-                    pendingPluginNoteStateReset_[(size_t)ch].store(true, std::memory_order_release);
-                    DBG("Plugin processBlock threw an exception on channel " << ch);
-                    continue;
-                }
+                // JUCE hosting contract: the buffer passed to processBlock must
+                // have at least max(totalIns, totalOuts) channels. Multi-out
+                // instruments can keep aux buses enabled even after the stereo
+                // negotiation in prepareInstrumentPlugin — handing them a
+                // 2-channel buffer makes the VST3 wrapper map nonexistent
+                // channels and crashes inside the plugin's process().
+                const int needCh = juce::jmax(plugin->getTotalNumInputChannels(),
+                                              plugin->getTotalNumOutputChannels());
 
-                // If the plugin is mono, duplicate L -> R
-                const int plugOuts = plugin->getTotalNumOutputChannels();
-                if (plugOuts == 1 && stagingBuf.getNumChannels() > 1)
-                    stagingBuf.copyFrom(1, 0, stagingBuf, 0, 0, safe);
+                if (needCh <= 2)
+                {
+                    // Build a sub-buffer view sized to `safe` samples (no allocation)
+                    juce::AudioBuffer<float> plugBuf(stagingBuf.getArrayOfWritePointers(),
+                                                      2, safe);
+                    try
+                    {
+                        plugin->processBlock(plugBuf, instrumentMidiBuffers[ch]);
+                    }
+                    catch (...)
+                    {
+                        pluginLoaded_[(size_t)ch].store(false, std::memory_order_release);
+                        pendingPluginNoteStateReset_[(size_t)ch].store(true, std::memory_order_release);
+                        DBG("Plugin processBlock threw an exception on channel " << ch);
+                        continue;
+                    }
+
+                    // If the plugin is mono, duplicate L -> R
+                    const int plugOuts = plugin->getTotalNumOutputChannels();
+                    if (plugOuts == 1 && stagingBuf.getNumChannels() > 1)
+                        stagingBuf.copyFrom(1, 0, stagingBuf, 0, 0, safe);
+                }
+                else
+                {
+                    // Multi-out path: render into the pre-allocated scratch buffer
+                    auto& scratch = pluginScratchBufs_[(size_t)ch];
+                    if (scratch.getNumChannels() < needCh || scratch.getNumSamples() < safe)
+                        continue;   // not sized yet (load in progress) — skip this block
+
+                    juce::AudioBuffer<float> plugBuf(scratch.getArrayOfWritePointers(),
+                                                      needCh, safe);
+                    plugBuf.clear();
+                    try
+                    {
+                        plugin->processBlock(plugBuf, instrumentMidiBuffers[ch]);
+                    }
+                    catch (...)
+                    {
+                        pluginLoaded_[(size_t)ch].store(false, std::memory_order_release);
+                        pendingPluginNoteStateReset_[(size_t)ch].store(true, std::memory_order_release);
+                        DBG("Plugin processBlock threw an exception on channel " << ch);
+                        continue;
+                    }
+
+                    // Take the main stereo pair (bus 0) into the staging buffer
+                    stagingBuf.copyFrom(0, 0, plugBuf, 0, 0, safe);
+                    stagingBuf.copyFrom(1, 0, plugBuf, needCh > 1 ? 1 : 0, 0, safe);
+                }
             }
         }
         if (useSynth)

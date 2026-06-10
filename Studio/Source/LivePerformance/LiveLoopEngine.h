@@ -274,10 +274,11 @@ public:
         for (int c = 0; c < kMaxChannels; ++c)
         {
             if (!s.tracks[c].hasLoop || s.tracks[c].noteCount <= 0) continue;
-            ch_[c].loopLength    = s.tracks[c].loopLength;
-            ch_[c].loopPhase     = 0.0;
-            ch_[c].noteCount     = s.tracks[c].noteCount;
-            ch_[c].undoNoteCount = 0;
+            ch_[c].loopLength      = s.tracks[c].loopLength;
+            ch_[c].loopPhase       = 0.0;
+            ch_[c].recordStartBeat = globalBeat_;  // phase anchor (UI-thread read; benign race)
+            ch_[c].noteCount       = s.tracks[c].noteCount;
+            ch_[c].undoNoteCount   = 0;
             for (int n = 0; n < s.tracks[c].noteCount; ++n)
             {
                 const auto& src = s.tracks[c].notes[n];
@@ -334,8 +335,8 @@ private:
     struct Channel
     {
         double loopLength      = 4.0;
-        double loopPhase       = 0.0;
-        double recordStartBeat = 0.0;
+        double loopPhase       = 0.0;   // cached for UI display; derived from globalBeat_
+        double recordStartBeat = 0.0;   // phase anchor: loop phase = (globalBeat_ - this) mod loopLength
 
         RecordedNote notes[kMaxNotes];
         int          noteCount     = 0;
@@ -343,11 +344,21 @@ private:
 
         HeldNote held[128];
 
+        // Currently-sounding playback notes (set on onNoteOn, cleared on onNoteOff).
+        // Guarantees a matching noteOff on stop / mute / undo / half-loop / recall —
+        // without this, a voice started with a long sustain hangs when its
+        // recorded noteOff is skipped or deleted.
+        uint64_t soundingLo = 0;   // pitches 0-63
+        uint64_t soundingHi = 0;   // pitches 64-127
+        bool     wasMuted   = false;  // audio-thread mute edge detection
+
         void reset() noexcept
         {
             loopPhase      = 0.0;
             noteCount      = 0;
             undoNoteCount  = 0;
+            soundingLo     = 0;
+            soundingHi     = 0;
             for (auto& h : held) h = {};
         }
     };
@@ -422,7 +433,16 @@ private:
     void firePlayback(int ch, double prevPhase, double nextPhase) noexcept;
     void finalizeHeldNotes(int ch) noexcept;
     double snapToGrid(double beat, double loopLength) const noexcept;
-    void executeRecallScene(int sceneIdx) noexcept;  // called on audio thread only
+    void executeRecallScene(int sceneIdx, double anchorBeat) noexcept;  // audio thread only
+
+    // Phase helper: wrap x into [0, len)
+    static double wrapPhase(double x, double len) noexcept;
+
+    // Sounding-note bookkeeping (audio thread only)
+    static void markSounding (Channel& cd, int pitch) noexcept;
+    static void clearSounding(Channel& cd, int pitch) noexcept;
+    static bool isSounding   (const Channel& cd, int pitch) noexcept;
+    void killSoundingNotes(int ch) noexcept;  // noteOff every sounding pitch, clear mask
 };
 
 // -----------------------------------------------------------------------------
@@ -475,13 +495,21 @@ inline void LiveLoopEngine::processBlock(int numSamples, double bpm, double samp
             if (globalBeat_ >= recallAt)
             {
                 pendingRecallIdx_.store(-1, std::memory_order_release);
-                executeRecallScene(recallIdx);
+                executeRecallScene(recallIdx, recallAt);
             }
         }
     }
 
     for (int c = 0; c < kMaxChannels; ++c)
     {
+        // -- Mute edge: silence currently sounding playback notes -----------
+        {
+            const bool mutedNow = muted_[c].load(std::memory_order_relaxed);
+            if (mutedNow && !ch_[c].wasMuted)
+                killSoundingNotes(c);
+            ch_[c].wasMuted = mutedNow;
+        }
+
         // -- Handle stop request (highest priority) ------------------------
         if (stopReq_[c].exchange(false, std::memory_order_acq_rel))
         {
@@ -493,9 +521,16 @@ inline void LiveLoopEngine::processBlock(int numSamples, double bpm, double samp
                 const double elapsed = globalBeat_ - ch_[c].recordStartBeat;
                 if (elapsed >= 0.5)  // need at least half a beat
                 {
-                    ch_[c].loopLength = elapsed;
+                    // Round to the nearest whole beat when quantize is on, so a
+                    // free-recorded loop stays locked to the global grid instead
+                    // of drifting with a fractional length (e.g. 4.07 beats).
+                    double len = elapsed;
+                    if (quantizeStep_.load(std::memory_order_relaxed) > 0.0)
+                        len = juce::jmax(1.0, std::round(elapsed));
+
+                    ch_[c].loopLength = len;
+                    ch_[c].loopPhase  = wrapPhase(elapsed, len);  // held ends snap near "now"
                     finalizeHeldNotes(c);
-                    ch_[c].loopPhase  = 0.0;
                     ch_[c].undoNoteCount = 0;
                     state_[c].store((uint8_t)State::Looping, std::memory_order_release);
                 }
@@ -513,7 +548,8 @@ inline void LiveLoopEngine::processBlock(int numSamples, double bpm, double samp
             }
             else
             {
-                // Normal stop: silence held notes and go Idle
+                // Normal stop: silence playing + held notes and go Idle
+                killSoundingNotes(c);
                 if (onNoteOff)
                     for (int p = 0; p < 128; ++p)
                         if (ch_[c].held[p].active) { onNoteOff(c, p); }
@@ -533,6 +569,7 @@ inline void LiveLoopEngine::processBlock(int numSamples, double bpm, double samp
         // -- Handle arm request --------------------------------------------
         if (armReq_[c].exchange(false, std::memory_order_acq_rel))
         {
+            killSoundingNotes(c);   // re-arming a looping channel must not leak voices
             ch_[c].reset();
             ch_[c].loopLength = pendingLoopLength_[c].load(std::memory_order_relaxed);
             state_[c].store((uint8_t)State::Armed, std::memory_order_release);
@@ -555,6 +592,9 @@ inline void LiveLoopEngine::processBlock(int numSamples, double bpm, double samp
             const auto st = static_cast<State>(state_[c].load(std::memory_order_relaxed));
             if (st == State::Looping || st == State::Overdubbing)
             {
+                // Silence playing notes first — the rolled-back layer's noteOffs
+                // disappear with the rollback and would otherwise leak voices.
+                killSoundingNotes(c);
                 // Silence any held notes from overdub
                 if (onNoteOff)
                     for (int p = 0; p < 128; ++p)
@@ -570,6 +610,10 @@ inline void LiveLoopEngine::processBlock(int numSamples, double bpm, double samp
             const auto st = static_cast<State>(state_[c].load(std::memory_order_relaxed));
             if ((st == State::Looping || st == State::Overdubbing) && ch_[c].loopLength > 1.0)
             {
+                // Notes in the trimmed half are deleted — their pending noteOffs
+                // would never fire, so silence everything sounding first.
+                killSoundingNotes(c);
+
                 const double newLen = ch_[c].loopLength * 0.5;
                 int newCount = 0;
                 for (int n = 0; n < ch_[c].noteCount; ++n)
@@ -582,7 +626,7 @@ inline void LiveLoopEngine::processBlock(int numSamples, double bpm, double samp
                 }
                 ch_[c].noteCount  = newCount;
                 ch_[c].loopLength = newLen;
-                ch_[c].loopPhase  = std::fmod(ch_[c].loopPhase, newLen);
+                ch_[c].loopPhase  = wrapPhase(globalBeat_ - ch_[c].recordStartBeat, newLen);
                 ch_[c].undoNoteCount = juce::jmin(ch_[c].undoNoteCount, newCount);
             }
         }
@@ -629,34 +673,49 @@ inline void LiveLoopEngine::processBlock(int numSamples, double bpm, double samp
             if (elapsed >= ch_[c].loopLength)
             {
                 ch_[c].undoNoteCount = 0;  // no undo before first take
+                ch_[c].loopPhase = ch_[c].loopLength;  // finalize snaps held ends to loop end
                 finalizeHeldNotes(c);
-                ch_[c].loopPhase = 0.0;
+                ch_[c].loopPhase = wrapPhase(elapsed, ch_[c].loopLength);
                 state_[c].store((uint8_t)State::Looping, std::memory_order_release);
             }
             continue;  // no playback during first-take recording
         }
 
-        // -- Looping / Overdubbing: advance phase + fire playback ----------
+        // -- Looping / Overdubbing: fire playback --------------------------
+        // The phase is DERIVED from the global clock (anchor = recordStartBeat)
+        // instead of integrated independently. Integrating loopPhase and zeroing
+        // it on each state transition baked a one-block (~11.6 ms) origin error
+        // into every loop; deriving it keeps all loops permanently phase-locked
+        // to the global beat grid. loopPhase is kept only as a UI display cache.
         if (st == State::Looping || st == State::Overdubbing)
         {
             auto& cd = ch_[c];
-            const double prevPhase = cd.loopPhase;
-            cd.loopPhase += beatsThisBlock;
+            const double len = cd.loopLength;
+            if (len <= 0.0) continue;
 
-            // Overdubbing: finalise held notes at loop boundary, but stay in Overdubbing.
-            // (Auto-revert to Looping removed -- user must call stop() explicitly.)
-            if (st == State::Overdubbing && cd.loopPhase >= cd.loopLength)
-                finalizeHeldNotes(c);
+            double prevRel = (globalBeat_ - beatsThisBlock) - cd.recordStartBeat;
+            if (prevRel < 0.0) prevRel = 0.0;   // recall anchor may land mid-block
+            const double prevPhase     = wrapPhase(prevRel, len);
+            const double nextUnwrapped = prevPhase + beatsThisBlock;
 
-            if (cd.loopPhase >= cd.loopLength)
+            // Overdubbing: finalise held notes at loop boundary, but stay in
+            // Overdubbing. (User must call stop() explicitly.)
+            if (st == State::Overdubbing && nextUnwrapped >= len)
             {
-                firePlayback(c, prevPhase, cd.loopLength);
-                cd.loopPhase = std::fmod(cd.loopPhase, cd.loopLength);
+                cd.loopPhase = len;   // finalize snaps held ends to loop end
+                finalizeHeldNotes(c);
+            }
+
+            if (nextUnwrapped >= len)
+            {
+                firePlayback(c, prevPhase, len);
+                cd.loopPhase = wrapPhase(nextUnwrapped, len);
                 firePlayback(c, 0.0, cd.loopPhase);
             }
             else
             {
-                firePlayback(c, prevPhase, cd.loopPhase);
+                firePlayback(c, prevPhase, nextUnwrapped);
+                cd.loopPhase = nextUnwrapped;
             }
         }
     }
@@ -781,22 +840,31 @@ inline void LiveLoopEngine::processMidiEvent(const juce::MidiMessage& msg, int c
 inline void LiveLoopEngine::firePlayback(int ch, double prevPhase, double nextPhase) noexcept
 {
     if (prevPhase >= nextPhase) return;
-    if (muted_[ch].load(std::memory_order_relaxed)) return;
 
     auto& cd = ch_[ch];
-    const float vol = volume_[ch].load(std::memory_order_relaxed);
+    // Muted: suppress new noteOns only. noteOffs for notes already sounding
+    // must still fire — returning early here left voices hanging on mute.
+    const bool  muted = muted_[ch].load(std::memory_order_relaxed);
+    const float vol   = volume_[ch].load(std::memory_order_relaxed);
 
     for (int n = 0; n < cd.noteCount; ++n)
     {
         const auto& note = cd.notes[n];
         if (!note.valid) continue;
 
-        if (note.startBeat >= prevPhase && note.startBeat < nextPhase)
-            if (onNoteOn) onNoteOn(ch, note.pitch,
-                                   juce::jlimit(0.01f, 1.0f, note.velocity * vol));
+        if (!muted && onNoteOn
+            && note.startBeat >= prevPhase && note.startBeat < nextPhase)
+        {
+            onNoteOn(ch, note.pitch, juce::jlimit(0.01f, 1.0f, note.velocity * vol));
+            markSounding(cd, note.pitch);
+        }
 
-        if (note.endBeat >= prevPhase && note.endBeat < nextPhase)
+        if (note.endBeat >= prevPhase && note.endBeat < nextPhase
+            && isSounding(cd, note.pitch))
+        {
             if (onNoteOff) onNoteOff(ch, note.pitch);
+            clearSounding(cd, note.pitch);
+        }
     }
 }
 
@@ -839,7 +907,7 @@ inline void LiveLoopEngine::finalizeHeldNotes(int ch) noexcept
     }
 }
 
-inline void LiveLoopEngine::executeRecallScene(int sceneIdx) noexcept
+inline void LiveLoopEngine::executeRecallScene(int sceneIdx, double anchorBeat) noexcept
 {
     // Called on AUDIO THREAD ONLY. Reads scenes_[] written only by UI-thread saveScene.
     // saveScene and scheduleRecallScene are separated in time by user interaction,
@@ -848,12 +916,13 @@ inline void LiveLoopEngine::executeRecallScene(int sceneIdx) noexcept
     const auto& s = scenes_[sceneIdx];
     if (!s.occupied) return;
 
-    // Stop all channels and finalize any held notes
+    // Stop all channels: silence sounding voices, finalize any held notes
     for (int c = 0; c < kMaxChannels; ++c)
     {
         const auto st = static_cast<State>(state_[c].load(std::memory_order_relaxed));
         if (st == State::Overdubbing || st == State::Recording)
             finalizeHeldNotes(c);
+        killSoundingNotes(c);
         ch_[c].reset();
         state_[c].store((uint8_t)State::Idle, std::memory_order_release);
     }
@@ -862,10 +931,11 @@ inline void LiveLoopEngine::executeRecallScene(int sceneIdx) noexcept
     for (int c = 0; c < kMaxChannels; ++c)
     {
         if (!s.tracks[c].hasLoop || s.tracks[c].noteCount <= 0) continue;
-        ch_[c].loopLength    = s.tracks[c].loopLength;
-        ch_[c].loopPhase     = 0.0;
-        ch_[c].noteCount     = s.tracks[c].noteCount;
-        ch_[c].undoNoteCount = 0;
+        ch_[c].loopLength      = s.tracks[c].loopLength;
+        ch_[c].loopPhase       = 0.0;
+        ch_[c].recordStartBeat = anchorBeat;   // phase anchor = recall bar boundary
+        ch_[c].noteCount       = s.tracks[c].noteCount;
+        ch_[c].undoNoteCount   = 0;
         for (int n = 0; n < s.tracks[c].noteCount; ++n)
         {
             const auto& src = s.tracks[c].notes[n];
@@ -876,4 +946,46 @@ inline void LiveLoopEngine::executeRecallScene(int sceneIdx) noexcept
         }
         state_[c].store((uint8_t)State::Looping, std::memory_order_release);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+inline double LiveLoopEngine::wrapPhase(double x, double len) noexcept
+{
+    if (len <= 0.0) return 0.0;
+    double r = std::fmod(x, len);
+    if (r < 0.0) r += len;
+    return r;
+}
+
+inline void LiveLoopEngine::markSounding(Channel& cd, int pitch) noexcept
+{
+    if      (pitch >= 0  && pitch < 64)  cd.soundingLo |= (1ull << pitch);
+    else if (pitch >= 64 && pitch < 128) cd.soundingHi |= (1ull << (pitch - 64));
+}
+
+inline void LiveLoopEngine::clearSounding(Channel& cd, int pitch) noexcept
+{
+    if      (pitch >= 0  && pitch < 64)  cd.soundingLo &= ~(1ull << pitch);
+    else if (pitch >= 64 && pitch < 128) cd.soundingHi &= ~(1ull << (pitch - 64));
+}
+
+inline bool LiveLoopEngine::isSounding(const Channel& cd, int pitch) noexcept
+{
+    if (pitch >= 0  && pitch < 64)  return (cd.soundingLo >> pitch) & 1ull;
+    if (pitch >= 64 && pitch < 128) return (cd.soundingHi >> (pitch - 64)) & 1ull;
+    return false;
+}
+
+inline void LiveLoopEngine::killSoundingNotes(int ch) noexcept
+{
+    auto& cd = ch_[ch];
+    if (onNoteOff && (cd.soundingLo != 0 || cd.soundingHi != 0))
+        for (int p = 0; p < 128; ++p)
+            if (isSounding(cd, p))
+                onNoteOff(ch, p);
+    cd.soundingLo = 0;
+    cd.soundingHi = 0;
 }

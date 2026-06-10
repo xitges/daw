@@ -789,6 +789,12 @@ private:
     // and by audio thread (ScopedTryLock) in mixToOutput.
     mutable juce::CriticalSection pluginLock;
     std::array<std::unique_ptr<juce::AudioPluginInstance>, 16> instrumentPlugins;
+
+    // Scratch render buffers for plugins whose negotiated bus layout needs more
+    // than the 2 staging channels (multi-out instruments that refuse to disable
+    // aux buses). Sized on the message thread under pluginLock; the audio thread
+    // only wraps them in sub-buffer views under ScopedTryLock (no allocation).
+    std::array<juce::AudioBuffer<float>, 16> pluginScratchBufs_;
     std::array<std::atomic<bool>, 16> pluginLoaded_ {};
     std::array<std::atomic<int>, 16> songPluginPatternIds_ {};
 
